@@ -13,7 +13,7 @@
 - 旧 LUTVLA 实验不能作为本项目的能耗证据。
 - Fast、异步执行与调频均尚未实现；本项目当前不实现模型推理、评测或节能控制。
 - 模型、`N` 与精度保持冻结；state 默认关闭。不切块、不训练、不复制大型文件。结果写到项目目录之外。
-- 共享 FlashRT 并非干净上游：审查记录 HEAD `e4fe123` 且有 7 个 dirty 文件。正式实验须记录 commit 和补丁状态/指纹；本轮不复制或修改补丁。可直接使用 FlashRT 与 LIBERO，不必导入旧 LUTVLA。
+- 原版 FlashRT 保存在独立目录 `/home/wyk/workspace/FlashRT-upstream`，固定 Git revision 为 `e4fe1232ee49f8d3cd96e32706114fd960b320fb`；这是本地已有的上游快照，不代表最新版本。共享旧目录及其中修改保留不动。
 
 ## 设置检查
 
@@ -23,4 +23,11 @@
 /home/wyk/venvs/lutvla/bin/python scripts/check_setup.py
 ```
 
-脚本只使用 Python 标准库，检查配置、输入路径与候选参数；不会导入 torch、初始化 CUDA 或创建结果目录。外部结果目录尚不存在时不会因此判失败。
+同名包通过进程入口选择独立源码：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python scripts/run_flashrt.py your_script.py [args...]
+/home/wyk/venvs/lutvla/bin/python scripts/check_setup.py --check-import
+```
+
+入口在导入 `flash_rt` 前移除指向旧 FlashRT 的 `PYTHONPATH` 路径和 editable finder，将配置 root 放在首位，并核验真实 `flash_rt.__file__`。导入已发生时须另起进程。检查脚本只用标准库；`--check-import` 在 CPU 子进程导入包，不加载模型或初始化 CUDA。原版模型加载的内存/OOM风险与后端运行就绪状态尚未验证；不会自动安装依赖或编译扩展。

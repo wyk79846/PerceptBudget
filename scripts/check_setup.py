@@ -4,17 +4,20 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FLASHRT_REVISION = "e4fe1232ee49f8d3cd96e32706114fd960b320fb"
+FLASHRT_ENTRY = PROJECT_ROOT / "scripts" / "run_flashrt.py"
 PATHS = {
     "python_executable": "executable", "flashrt_root": "directory",
     "openpi_root": "directory", "checkpoint_path": "directory",
     "model_path": "file", "norm_stats_path": "file", "source_document": "file",
 }
 FILES = {"model_path": "model.safetensors", "norm_stats_path": "norm_stats.json"}
-REQUIRED = set(PATHS) | {"model_id", "output_root", "candidate_q", "H", "N", "precision", "state_enabled"}
+REQUIRED = set(PATHS) | {"model_id", "flashrt_revision", "output_root", "candidate_q", "H", "N", "precision", "state_enabled"}
 
 
 def add(results, name, status, message):
@@ -57,6 +60,10 @@ def validate_config(config):
         add(results, "config", "error", "缺少配置项：" + ", ".join(missing))
         return results
     paths = {key: check_path(config, key, kind, results) for key, kind in PATHS.items()}
+    revision = config["flashrt_revision"]
+    revision_ok = revision == FLASHRT_REVISION
+    add(results, "flashrt_revision", "ok" if revision_ok else "error",
+        "固定快照 " + FLASHRT_REVISION if revision_ok else "必须固定为 " + FLASHRT_REVISION)
     checkpoint, model, stats = (paths[k] for k in ("checkpoint_path", "model_path", "norm_stats_path"))
     model_id = config["model_id"]
     if not isinstance(model_id, str) or not model_id.strip():
@@ -94,10 +101,103 @@ def validate_config(config):
     return results
 
 
+def check_flashrt_checkout(config, results):
+    root_value = config.get("flashrt_root")
+    if not isinstance(root_value, str) or not root_value.strip():
+        return
+    root = Path(root_value).expanduser()
+    if not root.is_dir():
+        return
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(root), *args],
+            text=True, capture_output=True, check=False,
+        )
+
+    head = git("rev-parse", "HEAD")
+    if head.returncode:
+        add(results, "flashrt_git_revision", "error", "无法读取 Git HEAD：" + head.stderr.strip())
+    else:
+        actual = head.stdout.strip()
+        expected = config.get("flashrt_revision")
+        valid = actual == expected == FLASHRT_REVISION
+        add(results, "flashrt_git_revision", "ok" if valid else "error",
+            actual + ("（与配置固定版本一致）" if valid else "（与配置固定版本不一致）"))
+
+    status = git("status", "--porcelain", "--untracked-files=all")
+    if status.returncode:
+        add(results, "flashrt_git_clean", "error", "无法检查工作树：" + status.stderr.strip())
+    else:
+        clean = not status.stdout.strip()
+        add(results, "flashrt_git_clean", "ok" if clean else "error",
+            "工作树干净" if clean else "工作树有未提交或未跟踪文件")
+
+    origin = git("remote", "get-url", "origin")
+    if origin.returncode:
+        add(results, "flashrt_origin", "error", "无法读取 origin：" + origin.stderr.strip())
+    else:
+        url = origin.stdout.strip()
+        expected_url = "https://github.com/flashrt-project/FlashRT.git"
+        add(results, "flashrt_origin", "ok" if url == expected_url else "error",
+            url + ("（官方 origin）" if url == expected_url else "（应为 " + expected_url + "）"))
+
+
+def check_flashrt_import(config, results):
+    root_value = config.get("flashrt_root")
+    executable_value = config.get("python_executable")
+    if not isinstance(root_value, str) or not root_value.strip():
+        add(results, "flashrt_import", "error", "flashrt_root 必须是非空路径")
+        return
+    if not isinstance(executable_value, str) or not executable_value.strip():
+        add(results, "flashrt_import", "error", "python_executable 必须是非空路径")
+        return
+    root = Path(root_value).expanduser()
+    executable = Path(executable_value).expanduser()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        add(results, "flashrt_import", "error", "配置的 Python 不存在或不可执行")
+        return
+    try:
+        completed = subprocess.run(
+            [str(executable), str(FLASHRT_ENTRY), "--root", str(root), "--check-import"],
+            cwd=PROJECT_ROOT, text=True, capture_output=True, check=False, timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        add(results, "flashrt_import", "error", "隔离导入进程失败：" + str(exc))
+        return
+
+    payload = None
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            payload = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+    if not isinstance(payload, dict):
+        detail = (completed.stderr or completed.stdout).strip()[-1200:]
+        add(results, "flashrt_import", "error", "入口未返回导入报告：" + detail)
+        return
+
+    imported = payload.get("ok") is True and completed.returncode == 0
+    if imported:
+        add(results, "flashrt_import", "ok",
+            "flash_rt.__file__: " + str(payload.get("flash_rt_file")))
+        add(results, "flashrt_import_dependencies", "info",
+            "未发现 import 阶段缺项；模型运行依赖尚未验证")
+    else:
+        detail = payload.get("error", "导入失败")
+        if payload.get("missing_dependency"):
+            detail = "缺少依赖/模块 " + str(payload["missing_dependency"]) + ": " + detail
+            add(results, "flashrt_import_dependencies", "error", detail)
+        add(results, "flashrt_import", "error", detail)
+
+
 def main():
     parser = argparse.ArgumentParser(description="只读检查配置、依赖路径和基线参数。")
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config.json", help="配置文件路径")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
+    parser.add_argument("--check-import", action="store_true",
+                        help="经进程入口在配置的 Python 中导入 FlashRT，不加载模型")
     args = parser.parse_args()
     results = []
     try:
@@ -110,6 +210,9 @@ def main():
         else:
             add(results, "config", "ok", "JSON 配置可读")
             results.extend(validate_config(config))
+            check_flashrt_checkout(config, results)
+            if args.check_import:
+                check_flashrt_import(config, results)
     errors = sum(item["status"] == "error" for item in results)
     report = {"ok": errors == 0, "error_count": errors, "results": results}
     if args.json:

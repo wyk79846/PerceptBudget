@@ -1,7 +1,8 @@
 {
   "model_id": "pi05_libero_pytorch",
   "python_executable": "/home/wyk/venvs/lutvla/bin/python",
-  "flashrt_root": "/home/wyk/workspace/FlashRT",
+  "flashrt_root": "/home/wyk/workspace/FlashRT-upstream",
+  "flashrt_revision": "e4fe1232ee49f8d3cd96e32706114fd960b320fb",
   "openpi_root": "/home/wyk/workspace/openpi",
   "checkpoint_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch",
   "model_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/model.safetensors",
