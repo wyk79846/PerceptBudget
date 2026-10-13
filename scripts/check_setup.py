@@ -181,11 +181,13 @@ def check_flashrt_import(config, results):
     imported = payload.get("ok") is True and completed.returncode == 0
     if imported:
         add(results, "flashrt_import", "ok",
-            "flash_rt.__file__: " + str(payload.get("flash_rt_file")))
+            "flash_rt.__file__: {}; FLASHRT_ROOT: {}; OPENPI_ROOT: {}".format(
+                payload.get("flash_rt_file"), payload.get("FLASHRT_ROOT"),
+                payload.get("OPENPI_ROOT")))
         add(results, "flashrt_import_dependencies", "info",
             "未发现 import 阶段缺项；模型运行依赖尚未验证")
     else:
-        detail = payload.get("error", "导入失败")
+        detail = payload.get("error") or "; ".join(payload.get("issues", [])) or "导入失败"
         if payload.get("missing_dependency"):
             detail = "缺少依赖/模块 " + str(payload["missing_dependency"]) + ": " + detail
             add(results, "flashrt_import_dependencies", "error", detail)

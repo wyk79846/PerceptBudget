@@ -28,29 +28,52 @@ def _inside(path, directory):
         return False
 
 
-def _remove_foreign_flashrt_finders(package_root):
-    for finder in tuple(sys.meta_path):
-        candidates = []
-        mapping = getattr(finder, "MAPPING", {})
+def _finder_module_name(finder):
+    return (getattr(finder, "__module__", "")
+            or getattr(getattr(finder, "__func__", None), "__module__", ""))
+
+
+def _foreign_flashrt_finder(finder, package_root):
+    module_name = _finder_module_name(finder)
+    module = sys.modules.get(module_name)
+    sources = (finder, module) if module is not None else (finder,)
+    locations = []
+    for source in sources:
+        mapping = getattr(source, "MAPPING", {}) or {}
         if "flash_rt" in mapping:
-            candidates.append(mapping["flash_rt"])
-        namespaces = getattr(finder, "NAMESPACES", {})
+            locations.append(mapping["flash_rt"])
+        namespaces = getattr(source, "NAMESPACES", {}) or {}
         for name, paths in namespaces.items():
             if name == "flash_rt" or name.startswith("flash_rt."):
-                candidates.extend(paths)
-        if candidates and any(not _inside(path, package_root) for path in candidates):
+                locations.extend(paths)
+    if locations:
+        return any(not _inside(path, package_root) for path in locations)
+    return module_name.startswith("__editable___flash_rt_")
+
+
+def _remove_foreign_flashrt_finders(package_root):
+    for finder in tuple(sys.meta_path):
+        if _foreign_flashrt_finder(finder, package_root):
             sys.meta_path.remove(finder)
-
     for hook in tuple(sys.path_hooks):
-        if getattr(hook, "__module__", "").startswith("__editable___flash_rt_"):
+        if _foreign_flashrt_finder(hook, package_root):
             sys.path_hooks.remove(hook)
+    for entry in tuple(sys.path):
+        if str(entry).startswith("__editable__.flash_rt"):
+            sys.path.remove(entry)
+    for entry in tuple(sys.path_importer_cache):
+        if str(entry).startswith("__editable__.flash_rt"):
+            sys.path_importer_cache.pop(entry, None)
 
 
-def select_flashrt(root):
+def select_flashrt(root, openpi_root=None):
     root = Path(root).expanduser().resolve()
     package_root = root / "flash_rt"
     if not (package_root / "__init__.py").is_file():
         raise FileNotFoundError("FlashRT package not found under " + str(root))
+    os.environ["FLASHRT_ROOT"] = str(root)
+    if openpi_root:
+        os.environ["OPENPI_ROOT"] = str(Path(openpi_root).expanduser().resolve())
 
     loaded = sys.modules.get("flash_rt")
     if loaded is not None:
@@ -101,12 +124,13 @@ def select_flashrt(root):
     return module
 
 
-def _configured_root():
+def _configured_paths():
     config = json.loads((PROJECT_ROOT / "config.json").read_text(encoding="utf-8"))
     root = config["flashrt_root"]
     if not Path(root).is_absolute():
         raise ValueError("config.json 的 flashrt_root 必须是绝对路径")
-    return Path(root)
+    openpi_root = config.get("openpi_root")
+    return Path(root), openpi_root
 
 
 def main():
@@ -120,7 +144,9 @@ def main():
         parser.error("指定 --check-import，或指定一个 Python 脚本")
 
     try:
-        module = select_flashrt(args.root or _configured_root())
+        configured_root, openpi_root = _configured_paths()
+        root = (args.root or configured_root).expanduser().resolve()
+        module = select_flashrt(root, openpi_root)
     except ModuleNotFoundError as exc:
         print(json.dumps({"ok": False, "error_type": type(exc).__name__,
                           "error": str(exc), "missing_dependency": exc.name}, ensure_ascii=False))
@@ -132,14 +158,39 @@ def main():
 
     module_file = str(Path(module.__file__).resolve())
     if args.check_import:
-        print(json.dumps({"ok": True, "flash_rt_file": module_file}, ensure_ascii=False))
-        return 0
+        missing = importlib.util.find_spec("flash_rt.__perceptbudget_missing_probe_7f4a91__")
+        foreign_finders = sum(
+            _foreign_flashrt_finder(finder, root / "flash_rt")
+            for finder in sys.meta_path
+        )
+        expected_openpi = str(Path(openpi_root).expanduser().resolve()) if openpi_root else None
+        issues = []
+        if not _inside(module_file, root / "flash_rt"):
+            issues.append("flash_rt.__file__ 不在配置 root")
+        if os.environ.get("FLASHRT_ROOT") != str(root):
+            issues.append("FLASHRT_ROOT 未指向配置 root")
+        if expected_openpi and os.environ.get("OPENPI_ROOT") != expected_openpi:
+            issues.append("OPENPI_ROOT 未指向配置 root")
+        if foreign_finders:
+            issues.append("仍有旧 FlashRT finder")
+        if missing is not None:
+            issues.append("缺失子模块解析到了其他路径：" + str(missing.origin))
+        print(json.dumps({
+            "ok": not issues,
+            "flash_rt_file": module_file,
+            "FLASHRT_ROOT": os.environ.get("FLASHRT_ROOT"),
+            "OPENPI_ROOT": os.environ.get("OPENPI_ROOT"),
+            "foreign_flashrt_finders": foreign_finders,
+            "missing_submodule_fallback": missing is None,
+            "issues": issues,
+        }, ensure_ascii=False))
+        return 0 if not issues else 1
 
     script = Path(args.script).expanduser().resolve()
     if not script.is_file():
         parser.error("脚本不存在：" + str(script))
     script_dir = script.parent
-    if script_dir != Path(args.root or _configured_root()).expanduser().resolve():
+    if script_dir != root:
         if not (script_dir / "flash_rt" / "__init__.py").is_file():
             sys.path.insert(1, str(script_dir))
     sys.argv = [str(script), *args.script_args]
