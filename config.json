@@ -1,0 +1,17 @@
+{
+  "model_id": "pi05_libero_pytorch",
+  "python_executable": "/home/wyk/venvs/lutvla/bin/python",
+  "flashrt_root": "/home/wyk/workspace/FlashRT",
+  "openpi_root": "/home/wyk/workspace/openpi",
+  "checkpoint_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch",
+  "model_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/model.safetensors",
+  "norm_stats_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/assets/physical-intelligence/libero/norm_stats.json",
+  "source_document": "/home/wyk/workspace/任务指导与相关参考/Student_A_PerceptBudget_Revised.docx",
+  "output_root": "/home/wyk/workspace/任务产出/perceptbudget",
+  "candidate_q": [5, 8, 10],
+  "state_enabled": false,
+  "H": 10,
+  "N": 1,
+  "precision": "fp16",
+  "baseline_status": "pending_confirmation"
+}

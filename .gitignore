@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 本地结果、数据与模型权重
+results/
+outputs/
+data/
+weights/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# 图像与视频数据
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
