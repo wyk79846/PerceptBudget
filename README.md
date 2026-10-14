@@ -1,68 +1,50 @@
 # PerceptBudget
 
-研究感知计算预算与可靠动作执行之间的关系。当前已具备 FlashRT 环境预检查、隔离导入入口和外置实验目录创建工具；尚未运行真实实验，也没有性能或能耗结论。
+在 Jetson Orin NX 上评估 π0.5 的动作刷新频率与任务质量、耗电之间的关系。当前仓库只有实验管理骨架：配置检查、FlashRT 隔离导入入口和独立 run 目录工具。评测闭环、功率采集与能耗汇总仍在实现；尚无正式实验结果或节能结论。
 
-## 目录与进度
+## M1 协议
 
-- `perceptbudget/experiment.py`：读取并检查配置、验证结果根目录、创建独立 run 并保存 `run.json`。
-- `scripts/check_setup.py`：只读检查本地路径、配置和 FlashRT checkout；验证 `N` 为正整数、精度字段为 `fp16`/`bfloat16`，默认不导入 torch。字段检查不证明后端实际使用了所选精度。
-- `scripts/run_flashrt.py`：在独立进程入口中选择配置的 FlashRT 源码，避免旧同名包串入。
-- `config.json`：首轮目标候选为当前模型、`H=10`、`N=10`、`bfloat16`、`state_enabled=true`，基线仍为 `pending_confirmation`。`N` 表示去噪步数，不是动作长度；state 开启是目标配置，state 预处理和数据真实进入模型仍待 smoke 验证。
+先做 **M1.1 q 评测**，再做 **M1.2 功率与耗电核验**。
 
-阶段按顺序推进，目前均未验收：
+固定目标配置：当前 `pi05_libero_pytorch` 权重、BF16、去噪步数 `N=10`、启用机械臂 state、预测长度 `H=20`。`H=20` 是待验证目标，不代表后端已经支持。测试 `q=5、8、10、12、15`，以 `q=5` 为基准；使用相同的 9 个 LIBERO Spatial 任务（候选 ID 0–8，每个任务开跑前核对名称），每任务一次，共 **45 次正式运行**。统一 seed=7、初始状态索引 0、控制频率和最大步数。单独的 q=5 冒烟检查不计入 45 次。
 
-- M1：评估 `q` 对质量和轨迹偏差的影响、有效缓冲，以及满载空闲功率机会；`q` 初筛与复核是 M1 子任务。
-- M2：建立档位、频率和设备状态表，并完成转换标定。
-- M3：完成串行刷新、异步动作衔接和最晚启动的最小闭环。
-- M4：实现动作前瞻与联合节能调度。
-- M5：以充分调好的公平基线验证真延迟闭环/真机表现及消融收益。
-- M6：完成复现与论文交付。
+开跑前确认 BF16 实际生效、处理后的 state 确实进入模型，以及模型和后端实际支持 `H=20` 输出。若不支持，记录原因并先确认后续目标；不修改 FlashRT，也不复制旧动作凑长度。`H` 是单次预测动作数，`q` 是执行多少个动作后重新观测并推理。
 
-阶段未验收前不以计划代替结果。
+### M1.1：q 评测
 
-## 运行结果
+记录每次运行的任务、q、成功/失败/超时、已执行步数、推理次数、异常现象和可用的动作缓冲信息。输出 q 对比表、主要失败原因和候选设置。45 次结果用于看趋势，不据此声称精确验证成功率差异或 5–10 个百分点的统计门槛。
 
-所有生成结果默认写到仓库外的 `/home/wyk/workspace/任务产出/perceptbudget`，按阶段和 run 隔离：
+### M1.2：功率与耗电
 
-```text
-<output_root>/<M1…M6>/<UTC时间>-<用途标签>-<唯一后缀>/
-└── run.json
-```
+在 M1.1 后测量推理期间与无推理期间的功率，并整理各 q 的整次任务耗电。使用相同设备功耗模式，记录功率读数覆盖模块还是整板；功率积分与真实运行耗时使用同一任务窗口。没有可靠读数就标记未测，不推断节能收益。以实际能耗比较 `q=5` 与候选设置，同时报告成功次数和任务时间，避免把任务变慢误当成节能。
 
-`run.json` 保存配置快照、创建时间、用途、代码提交和工作树状态。实验实际产生后，再在对应 run 目录记录 `trace.jsonl` 原始轨迹、`summary.json`/`summary.md` 结论及 `plots/`、`videos/`；创建 run 时不会预造这些空文件或目录。实验记录应区分成功、失败、超时和运行无效，并分别记录仿真动作步数、完整刷新次数、推理墙钟、纯任务墙钟（不含加载/预热/建环境）及仿真时间。没有功率积分数据就不报告能耗收益。
+### 计时与运行模式
 
-显式创建实验目录（不会加载模型或控制设备）：
+- 任务完成时间按 **正式控制步数 × 固定控制周期** 计算；控制周期从实际配置读取并在各组保持一致。
+- 真实运行耗时单独用单调时钟计量，从正式任务开始到结束，包含推理、等待和调度开销。任务完成时间与真实运行耗时分别报告，不用单次推理时间替代。
+- 每次运行标明 **异步执行** 或 **同步诊断**。异步执行可与控制重叠；同步诊断若暂停仿真，暂停时间只计入真实运行耗时，不计入仿真控制步时间，不能当作异步闭环结果。
+- 成功、失败和超时分别记录；失败不伪造成功完成时间。只在共同成功的相同任务间比较完成时间，并同时报告成功次数。
 
-```bash
-/home/wyk/venvs/lutvla/bin/python scripts/new_run.py M1 screen
-/home/wyk/venvs/lutvla/bin/python scripts/new_run.py M2 confirm
-```
+## 当前代码与运行结果
 
-阶段只能是 `M1`–`M6`；用途可用 `screen`、`confirm`、`final` 或简短字母数字标签。省略用途时默认为 `screen`。已有 run 不会覆盖。
+- `perceptbudget/experiment.py`、`scripts/new_run.py`：读取配置并创建仓库外的独立 run 目录，保存配置快照等管理信息。
+- `scripts/check_setup.py`：只读检查路径和配置；字段检查不代表后端已实际使用相应精度或输入。
+- `scripts/run_flashrt.py`：在独立进程入口选择配置的 FlashRT 源码。
+- `config.json` 保存上述目标配置。配置值和检查脚本都不代表模型加载、H=20、state 输入或实验已经验证。
 
-## 重要边界
-
-- 不修改原版 FlashRT、旧 LUTVLA 或现有 venv；不训练、不切分 KV、不改推理逻辑。
-- M1 关注可靠执行长度。当前 LIBERO checkpoint 的动作长度为 `H=10`，仍须现场确认加载后的实际输出；本轮只考虑 `1≤q≤H`，不假设公开 API 可扩 H，也不复制旧动作或 KV。完整刷新输出 `10×7` 时只消费前 `q` 个动作、丢弃尾段；消费期间不推理，之后再完整刷新。旧 chunked 流程的逐步 `advance` 不是本项目协议。
-- Continue 消费已有动作。Fast 尚待验证，不能用旧 KV decode 冒充验证结果。
-- 原版公开 `predict(images, prompt, state=None)` 接受可选 state，frontend 通过 prompt tokens 编码；没有 `state=True` 开关，接口/token 路径也不会自动归一化或把原始 8 维补到 32，不能自行 zero-pad。基线前须从原始 8 维机器人状态追踪对应 OpenPI/Libero 预处理与 checkpoint 训练输入规范。norm_stats 同时有 mean/std 和 q01/q99，而 checkpoint config 未记录 `discrete_state_input`；这些信息不足以断言用了哪种规范。若源码仍不能确认，报告缺口并保持基线待确认，不猜规范、不做多种归一化的成功率比较。`state_enabled=true` 仅为目标配置，smoke 还须确认处理后的 state 数据真实进入模型。
-- BF16 路径需现场确认：Orin/RTX 用 `use_fp8=False`；RTX 需要时可用原版 `FVK_PI05_RTX_FORCE_BF16=1`，并排除 INT8 覆盖。Thor 关闭 FP8 会走 FP16，不可据此声称 BF16。
-- `N=10` 不保证成功率；单次策略失败先排查运行有效性，不据此改变同组基线。首轮 `libero_spatial` task ID 0–8 是快速筛查候选，须先按名称核验；它不代表覆盖任务书全部接触、精细放置和扰动类型，也不能单独验收完整 M1。旧 LUTVLA 实验不作为本项目能耗证据。
-- 原版 FlashRT checkout 位于 `/home/wyk/workspace/FlashRT-upstream`，本地快照 revision 为 `e4fe1232ee49f8d3cd96e32706114fd960b320fb`，不代表上游最新版本。
-
-## 设置检查与导入
-
-使用配置指定的 Python 做只读检查；`--check-import` 会在 CPU 子进程中导入包，但不加载模型或初始化 CUDA：
+结果放在 `/home/wyk/workspace/任务产出/perceptbudget/<阶段>/<唯一run-id>/`，不覆盖旧 run。当前目录工具只创建管理记录；实际评测实现后再保存原始轨迹、汇总和功率数据。保留每次运行的配置、代码版本、任务、q、运行模式、状态、时间和可用的能耗记录。
 
 ```bash
 /home/wyk/venvs/lutvla/bin/python scripts/check_setup.py
-```
-
-同名包通过进程入口选择独立源码：
-
-```bash
+/home/wyk/venvs/lutvla/bin/python scripts/new_run.py M1 screen
 /home/wyk/venvs/lutvla/bin/python scripts/run_flashrt.py your_script.py [args...]
-/home/wyk/venvs/lutvla/bin/python scripts/check_setup.py --check-import
 ```
 
-导入入口会移除指向其他 FlashRT checkout 的路径和 editable finder，将配置 root 放在首位，并核验实际 `flash_rt.__file__`。模型加载与后端运行就绪状态尚未验证；工具不会自动安装依赖、编译扩展或启动推理。
+M1 的顺序是：确认配置与后端能力 → 完成 q 评测 → 核验功率和耗电 → 根据结果实现最小策略。后续只做完成当前实验所需的实现；不要求论文级统计、完整设备标定或大规模重复测试。
+
+## 边界
+
+- 使用原版 FlashRT，不修改其源码；实验控制和后续策略放在本项目。
+- 不把计划、配置或管理工具描述成已完成评测；节能结论必须有实际功率/能耗记录。
+- 若 state 预处理规范未确认，不猜测归一化或自行补维；`state_enabled=true` 本身不能证明 state 已进入模型。
+- 保持旧 LUTVLA、共享依赖和现有虚拟环境不变。未经明确安排，不并发运行 GPU 作业。
