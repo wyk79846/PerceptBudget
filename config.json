@@ -13,7 +13,7 @@
   "norm_stats_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/assets/physical-intelligence/libero/norm_stats.json",
   "source_document": "/home/wyk/workspace/任务指导与相关参考/Student_A_PerceptBudget_Revised.docx",
   "output_root": "/home/wyk/workspace/任务产出/perceptbudget",
-  "candidate_q": [5],
+  "candidate_q": [5, 8, 10, 12, 15],
   "execution_mode": "synchronous_quality",
   "state_enabled": true,
   "H": 20,
@@ -32,5 +32,5 @@
       "max": 10
     }
   },
-  "baseline_status": "q5_sync_retest_running"
+  "baseline_status": "full_sync_retest_ready"
 }
