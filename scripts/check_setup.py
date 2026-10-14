@@ -81,9 +81,19 @@ def validate_config(config):
     h = config["H"]
     h_ok = type(h) is int and h > 0 and (not q_ok or max(q) <= h)
     add(results, "H", "ok" if h_ok else "error", "正整数且不小于最大 q" if h_ok else "必须为正整数且不小于最大 q")
-    for key, expected in (("N", 1), ("precision", "fp16"), ("state_enabled", False)):
-        valid = type(config[key]) is type(expected) and config[key] == expected
-        add(results, key, "ok" if valid else "error", "符合固定配置" if valid else "不符合固定配置：" + key)
+    n = config["N"]
+    n_ok = type(n) is int and n > 0
+    add(results, "N", "ok" if n_ok else "error",
+        "正整数（当前值是基线候选）" if n_ok else "必须是正整数")
+    precision = config["precision"]
+    precision_ok = isinstance(precision, str) and precision in {"fp16", "bfloat16"}
+    add(results, "precision", "ok" if precision_ok else "error",
+        "支持值 fp16/bfloat16（当前值是基线候选）" if precision_ok
+        else "必须是支持的精度：fp16 或 bfloat16")
+    state_enabled = config["state_enabled"]
+    state_ok = type(state_enabled) is bool
+    add(results, "state_enabled", "ok" if state_ok else "error",
+        "布尔值（config 默认关闭）" if state_ok else "必须是布尔值")
 
     value = config["output_root"]
     if not isinstance(value, str) or not value.strip() or not Path(value).expanduser().is_absolute():
