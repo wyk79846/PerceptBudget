@@ -1,6 +1,6 @@
 # PerceptBudget
 
-在 Jetson Orin NX 上评估 π0.5 的动作刷新频率与任务质量、耗电之间的关系。当前仓库只有实验管理骨架：配置检查、FlashRT 隔离导入入口和独立 run 目录工具。评测闭环、功率采集与能耗汇总仍在实现；尚无正式实验结果或节能结论。
+在 Jetson Orin NX 上评估 π0.5 的动作刷新频率与任务质量、耗电之间的关系。已有最小异步评测程序和功率记录工具，CPU 测试与实际环境输入检查通过；原版 CUDA 扩展正在单独构建，尚无正式成功率或节能结论。
 
 ## M1 协议
 
@@ -30,15 +30,30 @@
 - `perceptbudget/experiment.py`、`scripts/new_run.py`：读取配置并创建仓库外的独立 run 目录，保存配置快照等管理信息。
 - `scripts/check_setup.py`：只读检查路径和配置；字段检查不代表后端已实际使用相应精度或输入。
 - `scripts/run_flashrt.py`：在独立进程入口选择配置的 FlashRT 源码。
+- `perceptbudget/control.py`：一个推理请求在途的动作队列，按控制步对齐，记录过期动作和断供。
+- `perceptbudget/libero_input.py`、`model.py`：双图/state 预处理与原版前端适配，不修改 FlashRT。
+- `perceptbudget/power.py`：只读 VDD_IN 采样与积分，标明数据覆盖度，缺读不冒称总耗电。
+- `scripts/eval_q.py`：环境检查、单条 smoke 和 45 次正式 q 测试；`guarded_run.py` 在低内存时停止自己启动的进程组。
 - `config.json` 保存上述目标配置。配置值和检查脚本都不代表模型加载、H=20、state 输入或实验已经验证。
 
-结果放在 `/home/wyk/workspace/任务产出/perceptbudget/<阶段>/<唯一run-id>/`，不覆盖旧 run。当前目录工具只创建管理记录；实际评测实现后再保存原始轨迹、汇总和功率数据。保留每次运行的配置、代码版本、任务、q、运行模式、状态、时间和可用的能耗记录。
+结果放在 `/home/wyk/workspace/任务产出/perceptbudget/<阶段>/<唯一run-id>/`，不覆盖旧 run。评测时保存配置、代码版本、任务、q、原始轨迹、状态、时间和功率数据；构建产物放在同一结果根目录的 `build/`，环境检查结论单独保留。
 
 ```bash
 /home/wyk/venvs/lutvla/bin/python scripts/check_setup.py
 /home/wyk/venvs/lutvla/bin/python scripts/new_run.py M1 screen
 /home/wyk/venvs/lutvla/bin/python scripts/run_flashrt.py your_script.py [args...]
 ```
+
+单条运行检查（原版扩展构建完成且输入方案确认后）：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python scripts/guarded_run.py -- \
+  /home/wyk/venvs/lutvla/bin/python -u scripts/eval_q.py --smoke
+```
+
+当前 state 配置仍为 true，但本地 OpenPI `pi05_libero` 的 `discrete_state_input=False`，FlashRT 传入 state 会额外写入 prompt。8 维 state 按权重 q01/q99 归一化、不补维；开启时明确标记为额外输入实验，不当作官方默认。已向用户说明并请求确认输入选择。
+
+现场读到 40W mode 4，CPU policy0 的最小/最大频率均为 1497600 kHz，GPU 均为 1173000000 Hz。第一阶段保持现有锁频状态，不自行调整；不能将现状称为默认自动调频。
 
 M1 的顺序是：确认配置与后端能力 → 完成 q 评测 → 核验功率和耗电 → 根据结果实现最小策略。后续只做完成当前实验所需的实现；不要求论文级统计、完整设备标定或大规模重复测试。
 
