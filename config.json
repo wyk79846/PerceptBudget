@@ -31,5 +31,5 @@
       "max": 10
     }
   },
-  "baseline_status": "restart_m1_150_pending"
+  "baseline_status": "m1_150_running"
 }
