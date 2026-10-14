@@ -32,5 +32,5 @@
       "max": 10
     }
   },
-  "baseline_status": "full_sync_retest_running"
+  "baseline_status": "full_sync_retest_completed"
 }
