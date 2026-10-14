@@ -1,4 +1,4 @@
-"""Thin adapter to FlashRT with the recorded, loading-only memory patch."""
+"""Thin adapter to FlashRT with recorded loading and tokenizer-cache patches."""
 
 import importlib
 import os
