@@ -3,6 +3,8 @@
   "python_executable": "/home/wyk/venvs/lutvla/bin/python",
   "flashrt_root": "/home/wyk/workspace/FlashRT-upstream",
   "flashrt_revision": "e4fe1232ee49f8d3cd96e32706114fd960b320fb",
+  "flashrt_loading_patch": "/home/wyk/workspace/PerceptBudget/patches/flashrt_low_memory_load.patch",
+  "flashrt_loading_patch_sha256": "4658d612e3371cdb40717d162b9d3c7979081bca5f7628f0bc4b2effe83e46cc",
   "openpi_root": "/home/wyk/workspace/openpi",
   "checkpoint_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch",
   "model_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/model.safetensors",

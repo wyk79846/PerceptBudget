@@ -1,11 +1,11 @@
-"""Thin adapter to the unmodified FlashRT RTX/Orin frontend."""
+"""Thin adapter to FlashRT with the recorded, loading-only memory patch."""
 
 import importlib
 import os
 
 
 def load_model(config):
-    """Use the existing constructor's chunk_size; do not patch the backend."""
+    """Use the existing constructor's chunk_size; inference is unchanged."""
     if config["precision"] != "bfloat16":
         raise ValueError("This M1 adapter implements only the requested BF16 baseline")
     from scripts.run_flashrt import select_flashrt

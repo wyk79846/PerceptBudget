@@ -2,6 +2,7 @@
 """只读检查本地设置；不启动推理或创建目录。"""
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -140,8 +141,24 @@ def check_flashrt_checkout(config, results):
         add(results, "flashrt_git_clean", "error", "无法检查工作树：" + status.stderr.strip())
     else:
         clean = not status.stdout.strip()
-        add(results, "flashrt_git_clean", "ok" if clean else "error",
-            "工作树干净" if clean else "工作树有未提交或未跟踪文件")
+        approved_patch = False
+        patch_path = config.get("flashrt_loading_patch")
+        if not clean and patch_path:
+            try:
+                patch_bytes = Path(patch_path).read_bytes()
+                approved_patch = (
+                    hashlib.sha256(patch_bytes).hexdigest()
+                    == config.get("flashrt_loading_patch_sha256")
+                    and status.stdout.strip()
+                    == "M flash_rt/frontends/torch/pi05_rtx.py"
+                    and git("diff", "HEAD", "--").stdout.encode() == patch_bytes
+                )
+            except OSError:
+                pass
+        add(results, "flashrt_git_clean", "ok" if clean or approved_patch else "error",
+            "工作树干净" if clean else
+            "仅含已授权、哈希及内容匹配的加载内存补丁" if approved_patch else
+            "工作树有未确认改动")
 
     origin = git("remote", "get-url", "origin")
     if origin.returncode:

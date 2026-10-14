@@ -1,0 +1,109 @@
+diff --git a/flash_rt/frontends/torch/pi05_rtx.py b/flash_rt/frontends/torch/pi05_rtx.py
+index 5edf211..df268bf 100644
+--- a/flash_rt/frontends/torch/pi05_rtx.py
++++ b/flash_rt/frontends/torch/pi05_rtx.py
+@@ -79,6 +79,13 @@ def _interleave_qk(w: torch.Tensor, num_heads: int) -> torch.Tensor:
+     )
+ 
+ 
++def _stack_and_release(layers: list[torch.Tensor]) -> torch.Tensor:
++    """Keep identical stack arithmetic, but release the per-layer CPU copies."""
++    result = torch.stack(layers)
++    layers.clear()
++    return result
++
++
+ def convert_pi05_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict:
+     """Convert a HuggingFace Pi0.5 safetensors file to BF16 torch tensor dict.
+ 
+@@ -156,18 +163,18 @@ def convert_pi05_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict
+         ln2_w_list.append(g(f"{lp}.layer_norm2.weight"))
+         ln2_b_list.append(g(f"{lp}.layer_norm2.bias"))
+ 
+-    ckpt["vision_attn_qkv_w"] = torch.stack(qkv_w_list)
+-    ckpt["vision_attn_qkv_b"] = torch.stack(qkv_b_list)
+-    ckpt["vision_attn_o_w"] = torch.stack(o_w_list)
+-    ckpt["vision_attn_o_b"] = torch.stack(o_b_list)
+-    ckpt["vision_ffn_up_w"] = torch.stack(up_w_list)
+-    ckpt["vision_ffn_up_b"] = torch.stack(up_b_list)
+-    ckpt["vision_ffn_down_w"] = torch.stack(down_w_list)
+-    ckpt["vision_ffn_down_b"] = torch.stack(down_b_list)
+-    ckpt["vision_pre_attn_norm_w"] = torch.stack(ln1_w_list)
+-    ckpt["vision_pre_attn_norm_b"] = torch.stack(ln1_b_list)
+-    ckpt["vision_pre_ffn_norm_w"] = torch.stack(ln2_w_list)
+-    ckpt["vision_pre_ffn_norm_b"] = torch.stack(ln2_b_list)
++    ckpt["vision_attn_qkv_w"] = _stack_and_release(qkv_w_list)
++    ckpt["vision_attn_qkv_b"] = _stack_and_release(qkv_b_list)
++    ckpt["vision_attn_o_w"] = _stack_and_release(o_w_list)
++    ckpt["vision_attn_o_b"] = _stack_and_release(o_b_list)
++    ckpt["vision_ffn_up_w"] = _stack_and_release(up_w_list)
++    ckpt["vision_ffn_up_b"] = _stack_and_release(up_b_list)
++    ckpt["vision_ffn_down_w"] = _stack_and_release(down_w_list)
++    ckpt["vision_ffn_down_b"] = _stack_and_release(down_b_list)
++    ckpt["vision_pre_attn_norm_w"] = _stack_and_release(ln1_w_list)
++    ckpt["vision_pre_attn_norm_b"] = _stack_and_release(ln1_b_list)
++    ckpt["vision_pre_ffn_norm_w"] = _stack_and_release(ln2_w_list)
++    ckpt["vision_pre_ffn_norm_b"] = _stack_and_release(ln2_b_list)
+     ckpt["vision_final_norm_w"] = g(f"{vp}.post_layernorm.weight")
+     ckpt["vision_final_norm_b"] = g(f"{vp}.post_layernorm.bias")
+ 
+@@ -210,11 +217,12 @@ def convert_pi05_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict
+ 
+         enc_down_list.append(g(f"{ep}.{i}.mlp.down_proj.weight").t())
+ 
+-    ckpt["encoder_attn_qkv_w"] = torch.stack(enc_qkv_list)
+-    ckpt["encoder_attn_o_w"] = torch.stack(enc_o_list)
+-    ckpt["encoder_ffn_gate_w"] = torch.stack(enc_gate_list)
+-    ckpt["encoder_ffn_up_w"] = torch.stack(enc_up_list)
+-    ckpt["encoder_ffn_down_w"] = torch.stack(enc_down_list)
++    ckpt["encoder_attn_qkv_w"] = _stack_and_release(enc_qkv_list)
++    ckpt["encoder_attn_o_w"] = _stack_and_release(enc_o_list)
++    ckpt["encoder_ffn_gate_w"] = _stack_and_release(enc_gate_list)
++    ckpt["encoder_ffn_up_w"] = _stack_and_release(enc_up_list)
++    ckpt["encoder_ffn_down_w"] = _stack_and_release(enc_down_list)
++    del q_w, k_w, v_w, qkv, gate_w, up_w
+ 
+     # ── Decoder (18 Gemma-300M layers) ──
+     dp = "paligemma_with_expert.gemma_expert.model.layers"
+@@ -245,15 +253,15 @@ def convert_pi05_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict
+         dec_up_list.append(g(f"{dp}.{i}.mlp.up_proj.weight").t())
+         dec_down_list.append(g(f"{dp}.{i}.mlp.down_proj.weight").t())
+ 
+-    ckpt["decoder_attn_qkv_w"] = torch.stack(dec_qkv_list)
+-    ckpt["decoder_attn_o_w"] = torch.stack(dec_o_list)
+-    ckpt["decoder_ffn_gate_w"] = torch.stack(dec_gate_list)
+-    ckpt["decoder_ffn_up_w"] = torch.stack(dec_up_list)
+-    ckpt["decoder_ffn_down_w"] = torch.stack(dec_down_list)
+-    ckpt["decoder_pre_attn_norm_mod_w"] = torch.stack(dec_attn_mod_w_list)
+-    ckpt["decoder_pre_attn_norm_mod_b"] = torch.stack(dec_attn_mod_b_list)
+-    ckpt["decoder_pre_ffn_norm_mod_w"] = torch.stack(dec_ffn_mod_w_list)
+-    ckpt["decoder_pre_ffn_norm_mod_b"] = torch.stack(dec_ffn_mod_b_list)
++    ckpt["decoder_attn_qkv_w"] = _stack_and_release(dec_qkv_list)
++    ckpt["decoder_attn_o_w"] = _stack_and_release(dec_o_list)
++    ckpt["decoder_ffn_gate_w"] = _stack_and_release(dec_gate_list)
++    ckpt["decoder_ffn_up_w"] = _stack_and_release(dec_up_list)
++    ckpt["decoder_ffn_down_w"] = _stack_and_release(dec_down_list)
++    ckpt["decoder_pre_attn_norm_mod_w"] = _stack_and_release(dec_attn_mod_w_list)
++    ckpt["decoder_pre_attn_norm_mod_b"] = _stack_and_release(dec_attn_mod_b_list)
++    ckpt["decoder_pre_ffn_norm_mod_w"] = _stack_and_release(dec_ffn_mod_w_list)
++    ckpt["decoder_pre_ffn_norm_mod_b"] = _stack_and_release(dec_ffn_mod_b_list)
+ 
+     ckpt["decoder_final_norm_mod_w"] = g(
+         "paligemma_with_expert.gemma_expert.model.norm.dense.weight").t()
+@@ -577,11 +585,15 @@ class Pi05TorchFrontendRtx:
+         # Move all tensors to CUDA bf16 (retain as member attrs so their
+         # memory stays alive across pipeline rebuilds).
+         self._ckpt_bf16 = {}
+-        for k, v in raw_ckpt.items():
++        # Release each CPU group after the same CUDA copy; NX shares CPU/GPU RAM.
++        for k in tuple(raw_ckpt):
++            v = raw_ckpt.pop(k)
+             if isinstance(v, torch.Tensor):
+                 self._ckpt_bf16[k] = v.to("cuda", bf16).contiguous()
+             else:
+                 self._ckpt_bf16[k] = v
++            del v
++        del raw_ckpt
+         self.embedding_weight = self._ckpt_bf16["embedding_weight"]
+ 
+         # Pre-scale decoder action output projection by -1/num_steps.
