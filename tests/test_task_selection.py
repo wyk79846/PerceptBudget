@@ -76,6 +76,20 @@ def formal_config():
 
 
 class TaskSelectionTests(unittest.TestCase):
+    def test_sync_q5_plan_and_standard_suite_limits(self):
+        config = formal_config()
+        config["execution_mode"] = "synchronous_quality"
+        config["candidate_q"] = [5]
+        task_ids, q_values, mode = eval_q._plan(config, smoke=False)
+        self.assertEqual((len(task_ids), q_values, mode), (30, [5], "synchronous_quality"))
+        with mock_libero_api():
+            tasks = eval_q._load_tasks([0, 10, 20], SUITES)
+        self.assertEqual([task["max_steps"] for task in tasks], [220, 280, 300])
+        for task in tasks:
+            constructor = unittest.mock.Mock()
+            eval_q._make_env(constructor, task)
+            self.assertEqual(constructor.call_args.kwargs["horizon"], task["max_steps"] + 10)
+
     def test_global_ids_map_to_suite_and_local_ids_and_keep_init_state_zero(self):
         selected_ids = [0, 9, 10, 19, 20, 29]
         expected = [

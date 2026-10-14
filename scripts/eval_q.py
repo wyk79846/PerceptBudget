@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the asynchronous fixed-q LIBERO screen or inspect a host EGL environment."""
+"""Run fixed-q LIBERO quality/async evaluation or inspect the host environment."""
 
 import argparse
 import importlib
@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from perceptbudget.control import AsyncActionController, SUPPORTED_Q
+from perceptbudget.control import AsyncActionController, SynchronousActionController, SUPPORTED_Q
 from perceptbudget.experiment import create_run, load_config
 from perceptbudget.libero_input import (
     load_libero_norm_stats,
@@ -31,6 +31,7 @@ from perceptbudget.power import PowerMonitor
 
 CONTROL_FREQ_HZ = 20
 MAX_STEPS = 220
+SUITE_MAX_STEPS = {"libero_spatial": 220, "libero_object": 280, "libero_goal": 300}
 SETTLE_STEPS = 10
 RENDER_GPU_DEVICE_ID = -1
 INIT_STATE_INDEX = 0
@@ -100,7 +101,7 @@ def _save_run_status(run_dir, status, **fields):
 def _save_summary(run_dir, summary):
     _write_json_atomic(Path(run_dir) / "summary.json", summary)
     rows = [
-        "# LIBERO 固定 q 异步评测",
+        "# LIBERO 固定 q " + ("同步质量评测" if summary.get("execution_mode") == "synchronous_quality" else "异步评测"),
         "",
         "- run status: `{}`".format(summary.get("status")),
         "- mode: `{}`".format(summary.get("mode")),
@@ -168,9 +169,10 @@ def _plan(config, smoke):
             raise ValueError("正式 screen 的 task_ids 需完整覆盖所选集合的全局任务编号")
         if screen.get("trials_per_task") != 1:
             raise ValueError("本轮每任务每q仅测一次")
-        if not isinstance(q_values, list) or len(q_values) != 5:
-            raise ValueError("正式 screen 需从 config 读取 5 个 candidate_q")
-        mode = "formal_screen"
+        synchronous = config.get("execution_mode") == "synchronous_quality"
+        if not isinstance(q_values, list) or not q_values:
+            raise ValueError("candidate_q 必须为非空列表")
+        mode = "synchronous_quality" if synchronous else "formal_screen"
     if any(type(task_id) is not int or task_id < 0 for task_id in task_ids):
         raise ValueError("task_ids 必须是非负整数")
     if len(set(q_values)) != len(q_values) or any(
@@ -178,7 +180,7 @@ def _plan(config, smoke):
         for q in q_values
     ):
         raise ValueError("candidate_q 必须是 controller 支持且不大于 H 的唯一整数")
-    if not smoke and set(q_values) != set(SUPPORTED_Q):
+    if not smoke and mode != "synchronous_quality" and set(q_values) != set(SUPPORTED_Q):
         raise ValueError("正式 screen 的 q 集合必须为 {}".format(SUPPORTED_Q))
     return task_ids, q_values, mode
 
@@ -243,6 +245,7 @@ def _load_tasks(task_ids, suite_names=None):
             "task_id": task_id,
             "suite": suite_names[suite_index],
             "suite_task_id": local_id,
+            "max_steps": SUITE_MAX_STEPS[suite_names[suite_index]],
             "task_name": task.name,
             "instruction": task.language,
             "bddl_path": bddl_path,
@@ -255,8 +258,7 @@ def _make_env(env_class, task):
     return env_class(
         bddl_file_name=str(task["bddl_path"]),
         control_freq=CONTROL_FREQ_HZ,
-        # robosuite counts settle steps too; keep 220 formal steps after 10 settles.
-        horizon=MAX_STEPS + SETTLE_STEPS,
+        horizon=task.get("max_steps", MAX_STEPS) + SETTLE_STEPS,
         camera_heights=256,
         camera_widths=256,
         camera_names=["agentview", "robot0_eye_in_hand"],
@@ -379,6 +381,7 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
     task_error = None
     control_steps = 0
     actual_frequency = None
+    max_steps = task.get("max_steps", MAX_STEPS)
     try:
         observation, actual_frequency = _prepare_env_episode(
             env, task, np
@@ -410,7 +413,9 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
             request_records.append(request)
             return future
 
-        controller = AsyncActionController(
+        synchronous = episode.get("execution_mode") == "synchronous_quality"
+        controller_class = SynchronousActionController if synchronous else AsyncActionController
+        controller = controller_class(
             submit,
             q=q,
             horizon=horizon,
@@ -452,7 +457,7 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
         terminal_status = None
         deadline_misses = 0
         pacing_sleep_seconds = 0.0
-        while control_steps < MAX_STEPS:
+        while control_steps < max_steps:
             step = controller.control_step
             cycle_start = time.monotonic()
             snapshot = _make_snapshot(current_observation, norm_stats, state_enabled)
@@ -478,7 +483,7 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
             success = bool(env.check_success())
             if success:
                 terminal_status = "success"
-            elif control_steps >= MAX_STEPS:
+            elif control_steps >= max_steps:
                 terminal_status = "timeout"
             elif env_done:
                 terminal_status = "failure"
@@ -492,8 +497,8 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
                 deadline_missed = now > next_deadline
                 if deadline_missed:
                     deadline_misses += 1
-                    # Skip the missed tick and wait a fresh interval; never burst steps.
-                    next_deadline = now + period
+                    # Re-anchor without adding another full period to an overdue step.
+                    next_deadline = now
                 while True:
                     remaining = next_deadline - time.monotonic()
                     if remaining <= 0:
@@ -638,9 +643,12 @@ def _run_episode(env, task, q, model, norm_stats, state_enabled, horizon, np,
                     if task_seconds and task_seconds > 0 else None
                 ),
                 "dropped_actions": controller.dropped_actions,
+                "expired_actions": controller.expired_actions,
+                "overwritten_unused_actions": controller.overwritten_actions,
                 "underflow_steps": list(controller.underflow_steps),
                 "buffer_summary_actions": controller.buffer_summary,
-                "chunk_policy": (
+                "chunk_policy": ("synchronous q-step replanning; execute new prefix from zero"
+                    if episode.get("execution_mode") == "synchronous_quality" else
                     "discard expired action prefixes by absolute control step; overlapping "
                     "actions may also be overwritten; this is not RTC"
                 ),
@@ -796,6 +804,8 @@ def _run_screen(config, tasks, q_values, mode, norm_stats, torch, cuda_report,
                     "task_id": task["task_id"],
                     "suite": task.get("suite", "libero_spatial"),
                     "suite_task_id": task.get("suite_task_id", task["task_id"]),
+                    "execution_mode": config.get("execution_mode", "asynchronous"),
+                    "max_steps": task.get("max_steps", MAX_STEPS),
                     "task_name": task["task_name"],
                     "instruction": task["instruction"],
                     "q": q,
@@ -858,7 +868,7 @@ def main(argv=None):
         print("准备失败：{}: {}".format(type(exc).__name__, exc), file=sys.stderr)
         return 1
 
-    purpose = "smoke" if args.smoke else "q-screen"
+    purpose = "smoke" if args.smoke else ("q-sync" if mode == "synchronous_quality" else "q-screen")
     try:
         run_dir = create_run(config, "M1", purpose, repo_root=PROJECT_ROOT)
     except Exception as exc:
@@ -886,8 +896,9 @@ def main(argv=None):
         "egl_cleanup": egl_cleanup,
         "render_gpu_device_id": RENDER_GPU_DEVICE_ID,
         "control_freq_hz": CONTROL_FREQ_HZ,
-        "max_steps": MAX_STEPS,
-        "env_horizon_including_settle": MAX_STEPS + SETTLE_STEPS,
+        "max_steps_by_suite": SUITE_MAX_STEPS,
+        "env_horizon_rule": "suite max_steps + 10 settle steps",
+        "execution_mode": config.get("execution_mode", "asynchronous"),
         "seed": SEED,
         "init_state_index": INIT_STATE_INDEX,
         "settle_steps_outside_timing": SETTLE_STEPS,

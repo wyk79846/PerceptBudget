@@ -69,6 +69,8 @@ class AsyncActionController:
         self.skipped_trigger_steps = []
         self.submitted_actions = 0
         self.dropped_actions = 0
+        self.expired_actions = 0
+        self.overwritten_actions = 0
         self.underflow_steps = []
         self._buffer_samples = []
 
@@ -197,10 +199,12 @@ class AsyncActionController:
             if action_step < current_step:
                 # The observation became stale while its prediction was running.
                 self.dropped_actions += 1
+                self.expired_actions += 1
                 continue
             if action_step in self._buffer:
                 # A newer prediction supersedes the old action at this step.
                 self.dropped_actions += 1
+                self.overwritten_actions += 1
             self._buffer[action_step] = action
         return True
 
@@ -240,3 +244,20 @@ class AsyncActionController:
         self._inflight = future
         self._inflight_step = observation_step
         self.submitted_requests += 1
+
+
+class SynchronousActionController(AsyncActionController):
+    """Pause control until prediction completes; execute its prefix from step 0.
+
+    For quality measurement only: inference waiting is real elapsed time, not
+    simulated robot motion. Replanning still happens at the configured q steps.
+    """
+
+    def pop(self):
+        if self._inflight is not None:
+            try:
+                self._inflight.result()
+            except BaseException:
+                self.poll()  # Harvest failures through the shared bookkeeping.
+                raise
+        return super().pop()
