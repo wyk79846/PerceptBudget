@@ -3,9 +3,6 @@ import json
 import unittest
 from pathlib import Path
 
-import torch
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_PATH = (
     Path(json.loads((PROJECT_ROOT / "config.json").read_text(encoding="utf-8"))["flashrt_root"])
@@ -16,7 +13,7 @@ FRONTEND_PATH = (
 )
 
 
-def _load_stack_and_release():
+def _load_stack_and_release(torch):
     tree = ast.parse(FRONTEND_PATH.read_text(encoding="utf-8"), filename=str(FRONTEND_PATH))
     matches = [
         node for node in tree.body
@@ -33,7 +30,9 @@ def _load_stack_and_release():
 
 class StackAndReleaseTests(unittest.TestCase):
     def test_bf16_noncontiguous_stack_is_bit_equal_and_clears_list(self):
-        stack_and_release = _load_stack_and_release()
+        import torch
+
+        stack_and_release = _load_stack_and_release(torch)
         source = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4).to(torch.bfloat16)
         layers = [source[index].transpose(0, 1) for index in range(2)]
         self.assertTrue(all(not layer.is_contiguous() for layer in layers))
