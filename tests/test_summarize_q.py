@@ -134,6 +134,9 @@ class SummarizeQTests(unittest.TestCase):
             self.assertEqual(q10["all_attempts_real_time_sample_count"], 0)
             self.assertEqual(q5["underflow_step_count"], 1)
             self.assertEqual(q5["dropped_actions_total"], 3)
+            self.assertIsNone(q5["expired_actions_total"])
+            self.assertEqual(q5["expired_actions_reported_episode_count"], 0)
+            self.assertIsNone(q10["underflow_step_count"])
 
             q8_episode = next(row for row in report["episodes"] if row["q"] == 8)
             self.assertEqual(q8_episode["buffer_summary_seconds"]["median_s"], 0.2)
@@ -149,9 +152,75 @@ class SummarizeQTests(unittest.TestCase):
             self.assertEqual(comparison["real_time"]["delta_mean_s"], 1.0)
 
             markdown = markdown_path.read_text(encoding="utf-8")
-            self.assertIn("partial（未完成）", markdown)
+            self.assertIn("partial（未齐，非最终结果）", markdown)
+            self.assertIn("## 阶段汇总（非最终）", markdown)
+            self.assertNotIn("## 最终总表", markdown)
+            self.assertIn("expired actions", markdown)
+            self.assertIn("— (0/1有记录)", markdown)
             self.assertIn("不合并各 episode 的 median", markdown)
             self.assertIn("P_onidle 尚未独立测量", markdown)
+
+    def test_mode_compact_table_and_distinct_action_counts(self):
+        source = {
+            "status": "completed",
+            "mode": "synchronous_quality",
+            "execution_mode": "synchronous_quality",
+            "expected_episodes": 2,
+            "task_ids": [0, 1],
+            "q_values": [5],
+            "control_freq_hz": 20,
+            "tasks": [
+                {"task_id": 0, "suite": "libero_spatial"},
+                {"task_id": 1, "suite": "libero_object"},
+            ],
+            "episodes": [
+                {
+                    "task_id": 0, "q": 5, "status": "success",
+                    "mode": "synchronous_quality",
+                    "execution_mode": "synchronous_quality",
+                    "simulated_control_seconds": 2.0, "real_task_seconds": 3.0,
+                    "power": {"total_energy_mj": 1000, "coverage_fraction": 1.0},
+                    "inference": {
+                        "underflow_steps": [], "dropped_actions": 5,
+                        "expired_actions": 2, "overwritten_unused_actions": 3,
+                    },
+                },
+                {
+                    "task_id": 1, "q": 5, "status": "success",
+                    "mode": "synchronous_quality",
+                    "execution_mode": "synchronous_quality",
+                    "simulated_control_seconds": 4.0, "real_task_seconds": 5.0,
+                    "power": {"total_energy_mj": 3000, "coverage_fraction": 1.0},
+                    "inference": {
+                        "underflow_steps": [], "dropped_actions": 5,
+                        "expired_actions": 1, "overwritten_unused_actions": 4,
+                    },
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            run_dir = Path(temporary_dir)
+            (run_dir / "summary.json").write_text(json.dumps(source), encoding="utf-8")
+            report = summarize(run_dir)
+            markdown_path = write_report(run_dir)[1]
+            markdown = markdown_path.read_text(encoding="utf-8")
+
+        q5 = report["q_summaries"][0]
+        self.assertEqual(report["mode"], "synchronous_quality")
+        self.assertEqual(report["execution_mode"], "synchronous_quality")
+        self.assertEqual(q5["expired_actions_total"], 3)
+        self.assertEqual(q5["overwritten_unused_actions_total"], 7)
+        self.assertEqual(q5["underflow_step_count"], 0)
+        self.assertEqual(q5["success_rate"], 1.0)
+        self.assertEqual(q5["energy_per_success_j"], 2.0)
+        self.assertEqual(report["episodes"][0]["expired_actions"], 2)
+        self.assertEqual(report["episodes"][0]["overwritten_unused_actions"], 3)
+
+        self.assertIn("同步质量测试，能耗不代表异步节能", markdown)
+        self.assertIn("## 最终总表", markdown)
+        self.assertIn("Spatial 成功（实际/目标）", markdown)
+        self.assertIn("underflow 步/expired 动作", markdown)
+        self.assertIn("overwritten unused actions", markdown)
 
 
 if __name__ == "__main__":
