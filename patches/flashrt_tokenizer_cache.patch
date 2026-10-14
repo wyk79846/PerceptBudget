@@ -1,0 +1,32 @@
+diff --git a/flash_rt/utils/paligemma_tokenizer.py b/flash_rt/utils/paligemma_tokenizer.py
+index c051fd0..a6ebb3b 100644
+--- a/flash_rt/utils/paligemma_tokenizer.py
++++ b/flash_rt/utils/paligemma_tokenizer.py
+@@ -28,6 +28,7 @@ download command spelled out — no hidden failure modes.
+ from __future__ import annotations
+ 
+ import os
++from functools import lru_cache
+ from pathlib import Path
+ from typing import Optional
+ 
+@@ -123,8 +124,18 @@ def load_paligemma_sentencepiece():
+     PaliGemma model. Raises FileNotFoundError with a helpful download
+     command if the model file can't be located.
+     """
++    path = str(Path(resolve_paligemma_tokenizer_path()).resolve())
++    stat = Path(path).stat()
++    return _load_sentencepiece_cached(path, stat.st_mtime_ns, stat.st_size)
++
++
++@lru_cache(maxsize=4)
++def _load_sentencepiece_cached(path: str, mtime_ns: int, size: int):
++    """Reuse parsed vocabularies; path/file changes invalidate the cache.
++
++    Failed loads are not cached. No tokenization or model math changes.
++    """
+     import sentencepiece as spm
+-    path = resolve_paligemma_tokenizer_path()
+     sp = spm.SentencePieceProcessor()
+     if not sp.Load(path):
+         raise RuntimeError(

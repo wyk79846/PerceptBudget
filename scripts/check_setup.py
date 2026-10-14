@@ -146,18 +146,27 @@ def check_flashrt_checkout(config, results):
         if not clean and patch_path:
             try:
                 patch_bytes = Path(patch_path).read_bytes()
+                expected_status = "M flash_rt/frontends/torch/pi05_rtx.py"
+                tokenizer_patch = config.get("flashrt_tokenizer_patch")
+                tokenizer_valid = True
+                if tokenizer_patch:
+                    tokenizer_bytes = Path(tokenizer_patch).read_bytes()
+                    tokenizer_valid = (hashlib.sha256(tokenizer_bytes).hexdigest()
+                                       == config.get("flashrt_tokenizer_patch_sha256"))
+                    patch_bytes += tokenizer_bytes
+                    expected_status += "\n M flash_rt/utils/paligemma_tokenizer.py"
                 approved_patch = (
-                    hashlib.sha256(patch_bytes).hexdigest()
+                    hashlib.sha256(Path(patch_path).read_bytes()).hexdigest()
                     == config.get("flashrt_loading_patch_sha256")
-                    and status.stdout.strip()
-                    == "M flash_rt/frontends/torch/pi05_rtx.py"
+                    and tokenizer_valid
+                    and status.stdout.strip() == expected_status
                     and git("diff", "HEAD", "--").stdout.encode() == patch_bytes
                 )
             except OSError:
                 pass
         add(results, "flashrt_git_clean", "ok" if clean or approved_patch else "error",
             "工作树干净" if clean else
-            "仅含已授权、哈希及内容匹配的加载内存补丁" if approved_patch else
+            "仅含已授权、哈希及内容匹配的补丁" if approved_patch else
             "工作树有未确认改动")
 
     origin = git("remote", "get-url", "origin")

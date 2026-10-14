@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare paired synchronous inference latency with and without LIBERO state."""
+"""Measure synchronous inference latency for no-state and state input paths."""
 
 import argparse
 import json
@@ -19,7 +19,7 @@ from perceptbudget.libero_input import load_libero_norm_stats, prepare_libero_ob
 from perceptbudget.model import validate_actions
 from scripts import eval_q
 
-SEED, WARMUPS, PAIRS = 7, 2, 5
+SEED, WARMUPS, MEASUREMENTS = 7, 2, 5
 
 def _graph_info(pipe, with_state):
     active = pipe.pipeline
@@ -35,15 +35,15 @@ def _graph_info(pipe, with_state):
         "num_views": getattr(active, "num_views", None),
     }
 
-def _predict(model, snapshot, prompt, with_state, torch):
+def _predict(model, snapshot, prompt, state, torch, *, measure=True):
     kwargs = {"prompt": prompt}
-    if with_state:
-        kwargs["state"] = snapshot["state"]
+    if state is not None:
+        kwargs["state"] = state
     torch.cuda.synchronize()
-    started = time.perf_counter()
+    started = time.perf_counter() if measure else None
     actions = model.predict(snapshot["images"], **kwargs)
     torch.cuda.synchronize()
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    elapsed_ms = (time.perf_counter() - started) * 1000.0 if measure else None
     actions = validate_actions(actions, model._pipe.chunk_size)
     return elapsed_ms, list(actions.shape)
 
@@ -54,21 +54,35 @@ def _save_summary(run_dir, summary):
         f"- run directory: `{run_dir}`",
         f"- task: {summary.get('task_name', 'pending')} (`{summary.get('task_id', 0)}`), init 0, settle 10",
         f"- sync diagnostic; H={summary['config_snapshot']['H']}, N=10, BF16, two views; action shape: `{summary.get('action_shape', 'pending')}`",
-        "- timed: `predict()` through CUDA sync; excludes load, input prep, and warmup graph build.",
-        "- seed 7 is reset before each call; state/no-state calls alternate.", "",
-        "| pair | state ms | no-state ms | added ms with state | added % vs no-state |",
-        "|---:|---:|---:|---:|---:|",
+        "- order: `no_state` → `fixed_state` → `changing_state`; each path runs contiguously.",
+        "- each path has 2 unclocked warmups followed by 5 measured calls; seed 7 resets before every call.",
+        "- timed boundary: `predict()` through CUDA sync; excludes model load, input preparation, and all warmups.",
+        "- `fixed_state` reuses one observed normalized 8D state. `changing_state` uses fixed images and copies that normalized state, adding `index × 0.02` to the first component without clipping; all other components retain their observed values. This is synthetic input, not an actual robot state sequence or a closed-loop run.", "",
+        "## Path measurements", "",
+        "| path | warmups | measured calls | mean ms | median ms | raw ms |",
+        "|---|---:|---:|---:|---:|---|",
     ]
-    for p in summary.get("pairs", []):
-        rows.append(f"| {p['pair']} | {p['state_ms']:.3f} | {p['no_state_ms']:.3f} | {p['delta_ms']:+.3f} | {p['delta_percent']:+.2f}% |")
     stats = summary.get("statistics")
     if stats:
-        rows.extend(("", "| path | mean ms | median ms | raw ms |", "|---|---:|---:|---|"))
-        for key, label in (("state", "state"), ("no_state", "no-state")):
+        for key, label in (("no_state", "no_state"), ("fixed_state", "fixed_state"),
+                           ("changing_state", "changing_state")):
             item = stats[key]
             raw = ", ".join("{:.3f}".format(x) for x in item["raw_ms"])
-            rows.append(f"| {label} | {item['mean_ms']:.3f} | {item['median_ms']:.3f} | {raw} |")
-        rows.append(f"\nMean delta: {stats['delta_mean_ms']:+.3f} ms ({stats['delta_mean_percent']:+.2f}%); median paired: {stats['delta_median_ms']:+.3f} ms ({stats['delta_median_percent']:+.2f}%).")
+            rows.append(f"| {label} | {WARMUPS} | {len(item['raw_ms'])} | {item['mean_ms']:.3f} | {item['median_ms']:.3f} | {raw} |")
+        differences = summary.get("mean_differences", {})
+        rows.extend(("", "## Differences of path means", ""))
+        for key, label, denominator in (
+            ("fixed_state_minus_no_state", "fixed_state − no_state", "no_state"),
+            ("changing_state_minus_fixed_state", "changing_state − fixed_state", "fixed_state"),
+        ):
+            item = differences.get(key)
+            if item:
+                rows.append(
+                    "- {}: {:+.3f} ms ({:+.2f}% vs {} mean).".format(
+                        label, item["mean_ms"], item["mean_percent_vs_baseline"], denominator
+                    )
+                )
+        rows.append("- Paths were measured sequentially and are not paired; no per-call deltas are reported.")
     if summary.get("graph_paths"):
         rows.extend(("", "## Actual frontend graph paths", "", "```json",
                      json.dumps(summary["graph_paths"], ensure_ascii=False, indent=2), "```"))
@@ -108,7 +122,7 @@ def main(argv=None):
         egl_cleanup = eval_q._patch_egl_cleanup()
         run_dir = create_run(config, "M1", "state-latency", repo_root=PROJECT_ROOT)
         summary = {
-            "schema_version": 1, "status": "running", "purpose": "state-latency",
+            "schema_version": 2, "status": "running", "purpose": "state-latency",
             "run_mode": "synchronous_diagnostic", "run_dir": str(run_dir),
             "config_snapshot": config, "state_enabled_config_unchanged": config["state_enabled"],
             "base_config_snapshot": base_config,
@@ -116,14 +130,17 @@ def main(argv=None):
             "task_q_evaluation_started": False,
             "task_id": 0, "init_state_index": 0, "settle_steps": 10,
             "control_freq_hz": 20, "seed": SEED, "warmups_per_path": WARMUPS,
-            "measured_pairs": PAIRS,
+            "measurements_per_path": MEASUREMENTS,
+            "path_order": ["no_state", "fixed_state", "changing_state"],
             "state_protocol": "8D checkpoint q01/q99 normalization; extra prompt tokens",
             "normalization": "(x-q01)/(q99-q01+1e-6)*2-1",
             "timing_boundary": "wall time around predict() through torch.cuda.synchronize",
-            "excluded_from_measurement": ["model load", "input preparation", "first graph build in warmup"],
+            "excluded_from_measurement": ["model load", "input preparation", "all unclocked warmups"],
+            "comparison_note": "Paths are measured sequentially, not as paired calls; only differences of path means are computed.",
             "egl_environment": {k: os.environ[k] for k in (
                 "MUJOCO_GL", "MUJOCO_EGL_DEVICE_ID", "PYOPENGL_PLATFORM")},
-            "egl_cleanup": egl_cleanup, "warmup_ms": {"state": [], "no_state": []}, "pairs": [],
+            "egl_cleanup": egl_cleanup,
+            "measurements": {"no_state": [], "fixed_state": [], "changing_state": []},
         }
         eval_q._save_run_status(run_dir, "running", run_mode=summary["run_mode"])
         _save_summary(run_dir, summary)
@@ -156,43 +173,75 @@ def main(argv=None):
             "full_bf16_confirmed": True,
         }
 
-        for with_state, label in ((True, "state"), (False, "no_state")):
-            for _ in range(WARMUPS):
+        if snapshot["state"].shape != (8,):
+            raise ValueError("changing_state 要求原始 observation 对应 8D normalized state")
+        synthetic_base = snapshot["state"].copy()
+        synthetic_states = []
+        for index in range(WARMUPS + MEASUREMENTS):
+            state = synthetic_base.copy()
+            state[0] = synthetic_base[0] + index * 0.02
+            synthetic_states.append(state)
+        if any(np.array_equal(left, right)
+               for left, right in zip(synthetic_states, synthetic_states[1:])):
+            raise RuntimeError("changing_state 合成 state 必须在每次调用间发生变化")
+        summary["changing_state_protocol"] = {
+            "description": "synthetic perturbations of one observed normalized state with fixed images; not an actual robot state sequence and not a closed-loop run",
+            "synthetic_base": "copy of snapshot['state']",
+            "first_component_formula": "base[0] + index * 0.02; index spans all warmups and measurements; no clipping",
+            "first_component_step": 0.02,
+            "warmup_first_components": [float(state[0]) for state in synthetic_states[:WARMUPS]],
+            "measured_first_components": [float(state[0]) for state in synthetic_states[WARMUPS:]],
+            "other_components": "copied unchanged from snapshot['state']",
+        }
+        summary["fixed_state_protocol"] = {
+            "description": "same normalized state from the single prepared observation on every call",
+            "first_component": float(snapshot["state"][0]),
+        }
+
+        paths = (
+            ("no_state", [None] * WARMUPS, [None] * MEASUREMENTS),
+            ("fixed_state", [snapshot["state"]] * WARMUPS,
+             [snapshot["state"]] * MEASUREMENTS),
+            ("changing_state", synthetic_states[:WARMUPS], synthetic_states[WARMUPS:]),
+        )
+        for label, warmup_states, measured_states in paths:
+            for state in warmup_states:
                 eval_q._seed_process(SEED, np, torch)
-                elapsed, _ = _predict(model, snapshot, task["instruction"], with_state, torch)
-                summary["warmup_ms"][label].append(elapsed)
-            summary.setdefault("graph_paths", {})[label] = _graph_info(pipe, with_state)
-        _save_summary(run_dir, summary)
-        for pair in range(1, PAIRS + 1):
-            values = {}
-            for with_state, label in ((True, "state"), (False, "no_state")):
-                target = snapshot["state"] if with_state else None
-                if model._prompt_state_equal(model._current_prompt_state, target):
-                    raise RuntimeError("交替测量未触发 state prompt 更新")
+                _predict(model, snapshot, task["instruction"], state, torch, measure=False)
+            summary.setdefault("graph_paths", {})[label] = _graph_info(pipe, warmup_states[0] is not None)
+            for sample, state in enumerate(measured_states, start=1):
                 eval_q._seed_process(SEED, np, torch)
-                elapsed, shape = _predict(model, snapshot, task["instruction"], with_state, torch)
-                values[label] = elapsed
+                elapsed, shape = _predict(model, snapshot, task["instruction"], state, torch)
                 summary["action_shape"] = shape
-            delta = values["state"] - values["no_state"]
-            summary["pairs"].append({
-                "pair": pair, "state_ms": values["state"], "no_state_ms": values["no_state"],
-                "delta_ms": delta, "delta_percent": delta / values["no_state"] * 100.0,
-                "same_seed": SEED,
-            })
+                summary["measurements"][label].append({
+                    "sample": sample, "elapsed_ms": elapsed, "action_shape": shape,
+                    **({"state_first_component": float(state[0])} if state is not None else {}),
+                })
             _save_summary(run_dir, summary)
 
-        state_ms, no_state_ms = ([p["state_ms"] for p in summary["pairs"]], [p["no_state_ms"] for p in summary["pairs"]])
-        stats = {
-            "state": {"raw_ms": state_ms, "mean_ms": statistics.mean(state_ms), "median_ms": statistics.median(state_ms)},
-            "no_state": {"raw_ms": no_state_ms, "mean_ms": statistics.mean(no_state_ms), "median_ms": statistics.median(no_state_ms)},
-        }
-        delta = stats["state"]["mean_ms"] - stats["no_state"]["mean_ms"]
-        stats.update(
-            delta_mean_ms=delta, delta_mean_percent=delta / stats["no_state"]["mean_ms"] * 100.0,
-            delta_median_ms=statistics.median(p["delta_ms"] for p in summary["pairs"]),
-            delta_median_percent=statistics.median(p["delta_percent"] for p in summary["pairs"]),
+        stats = {}
+        for label, samples in summary["measurements"].items():
+            raw_ms = [sample["elapsed_ms"] for sample in samples]
+            stats[label] = {
+                "raw_ms": raw_ms,
+                "mean_ms": statistics.mean(raw_ms),
+                "median_ms": statistics.median(raw_ms),
+            }
+        fixed_vs_no_state = stats["fixed_state"]["mean_ms"] - stats["no_state"]["mean_ms"]
+        changing_vs_fixed = stats["changing_state"]["mean_ms"] - stats["fixed_state"]["mean_ms"]
+        summary.update(
+            status="completed", statistics=stats,
+            mean_differences={
+                "fixed_state_minus_no_state": {
+                    "mean_ms": fixed_vs_no_state,
+                    "mean_percent_vs_baseline": fixed_vs_no_state / stats["no_state"]["mean_ms"] * 100.0,
+                },
+                "changing_state_minus_fixed_state": {
+                    "mean_ms": changing_vs_fixed,
+                    "mean_percent_vs_baseline": changing_vs_fixed / stats["fixed_state"]["mean_ms"] * 100.0,
+                },
+            },
         )
-        summary.update(status="completed", statistics=stats)
         _save_summary(run_dir, summary)
         eval_q._save_run_status(run_dir, "completed", run_mode=summary["run_mode"])
         print("完成：" + str(run_dir), flush=True)
