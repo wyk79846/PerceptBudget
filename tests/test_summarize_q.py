@@ -3,10 +3,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.summarize_q import write_report
+from scripts.summarize_q import summarize, write_report
 
 
 class SummarizeQTests(unittest.TestCase):
+    def test_suite_partition_does_not_mix_local_task_numbers(self):
+        source = self._summary()
+        source["tasks"] = [
+            {"task_id": 0, "suite": "libero_spatial"},
+            {"task_id": 1, "suite": "libero_object"},
+        ]
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            run_dir = Path(temporary_dir)
+            (run_dir / "summary.json").write_text(json.dumps(source), encoding="utf-8")
+            report = summarize(run_dir)
+        suites = {item["suite"]: item for item in report["suite_summaries"]}
+        self.assertEqual(set(suites), {"libero_spatial", "libero_object"})
+        self.assertEqual(suites["libero_spatial"]["task_count"], 1)
+        self.assertEqual(suites["libero_object"]["q_summaries"][0]["timeout_count"], 1)
+        self.assertEqual(suites["libero_spatial"]["q_summaries"][0]["success_count"], 1)
+
     def _summary(self):
         return {
             "status": "running",

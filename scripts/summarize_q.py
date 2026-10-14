@@ -144,6 +144,13 @@ def summarize(run_dir):
     period = 1.0 / frequency if frequency and frequency > 0 else None
     rows = [_episode(ep, period) for ep in episodes]
     q_values, task_ids = source["q_values"], source["task_ids"]
+    task_suites = {task["task_id"]: task.get("suite", "libero_spatial")
+                   for task in source.get("tasks", [])}
+    for row, episode in zip(rows, episodes):
+        row["suite"] = episode.get("suite", task_suites.get(row["task_id"], "libero_spatial"))
+    suite_ids = defaultdict(list)
+    for task_id in task_ids:
+        suite_ids[task_suites.get(task_id, "libero_spatial")].append(task_id)
     by_q = {q: [row for row in rows if row["q"] == q] for q in q_values}
     q_summaries = [_q_summary(q, by_q[q], task_ids) for q in q_values]
 
@@ -180,6 +187,11 @@ def summarize(run_dir):
         "expected_episodes": expected, "observed_episodes": len(rows),
         "control_freq_hz": frequency, "control_period_s": period,
         "q_values": q_values, "q_summaries": q_summaries,
+        "suite_summaries": [
+            {"suite": suite, "task_count": len(ids), "q_summaries": [
+                _q_summary(q, [row for row in by_q[q] if row["task_id"] in ids], ids)
+                for q in q_values]}
+            for suite, ids in suite_ids.items()],
         "q5_paired_comparisons": comparisons, "episodes": rows,
     }
 
@@ -215,6 +227,15 @@ def render_markdown(report):
                 q["all_attempts_real_time_sample_count"], q["attempt_count"],
             )
         )
+    rows.extend(["", "## 分集合结果", "",
+                 "| 集合 | q | 已测 / 任务数 | 成功 | 超时 | invalid | 每成功任务能量 J |",
+                 "|---|---:|---:|---:|---:|---:|---:|"])
+    for suite in report.get("suite_summaries", []):
+        for item in suite["q_summaries"]:
+            rows.append("| {} | {} | {} / {} | {} | {} | {} | {} |".format(
+                suite["suite"], item["q"], item["attempt_count"], suite["task_count"],
+                item["success_count"], item["timeout_count"], item["invalid_count"],
+                _fmt(item["energy_per_success_j"])))
     rows.extend([
         "", "## 能耗与异步动作", "",
         "| q | 全尝试能耗小计 (J) | 每成功任务能耗 (J) | 完整覆盖数 / 次数 | underflow 步数 | dropped actions | busy 占空比（耗时加权） |",

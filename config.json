@@ -19,9 +19,9 @@
   "N": 10,
   "precision": "bfloat16",
   "screen": {
-    "suite": "libero_spatial",
-    "task_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-    "task_ids_status": "verified_20261014",
+    "suites": ["libero_spatial", "libero_object", "libero_goal"],
+    "task_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+    "task_ids_status": "verified_30_unique_tasks_20261014",
     "trials_per_task": 1,
     "init_state_index": 0,
     "seed": 7,
@@ -31,5 +31,5 @@
       "max": 10
     }
   },
-  "baseline_status": "screen_completed_simulation_not_realtime"
+  "baseline_status": "restart_m1_150_pending"
 }

@@ -158,8 +158,16 @@ def _plan(config, smoke):
             raise ValueError("config.screen 必须是对象")
         task_ids = screen.get("task_ids")
         q_values = config.get("candidate_q")
-        if task_ids != list(range(9)):
-            raise ValueError("正式 screen 需从 config 读取 task_ids 0..8")
+        suites = screen.get("suites", [screen.get("suite", "libero_spatial")])
+        if (not isinstance(suites, list) or not suites
+                or len(set(suites)) != len(suites)
+                or any(s not in ("libero_spatial", "libero_object", "libero_goal") for s in suites)):
+            raise ValueError("screen.suites 需为不重复的 Spatial/Object/Goal 集合列表")
+        legacy = suites == ["libero_spatial"] and task_ids == list(range(9))
+        if not legacy and task_ids != list(range(10 * len(suites))):
+            raise ValueError("正式 screen 的 task_ids 需完整覆盖所选集合的全局任务编号")
+        if screen.get("trials_per_task") != 1:
+            raise ValueError("本轮每任务每q仅测一次")
         if not isinstance(q_values, list) or len(q_values) != 5:
             raise ValueError("正式 screen 需从 config 读取 5 个 candidate_q")
         mode = "formal_screen"
@@ -202,23 +210,39 @@ def _patch_egl_cleanup():
     return {"reason": EGL_CLEANUP_REASON, "patched_methods": patched, "errors": errors}
 
 
-def _load_tasks(task_ids):
+def _load_tasks(task_ids, suite_names=None):
     benchmark, _ = _libero_api()
-    benchmark_class = benchmark.get_benchmark_dict().get("libero_spatial")
-    if benchmark_class is None:
-        raise RuntimeError("LIBERO 中没有注册 libero_spatial")
-    suite = benchmark_class(task_order_index=0)
+    suite_names = ["libero_spatial"] if suite_names is None else suite_names
+    registry = benchmark.get_benchmark_dict()
+    suites = []
+    for name in suite_names:
+        if name not in registry:
+            raise RuntimeError("LIBERO 中没有注册 " + name)
+        suite = registry[name](task_order_index=0)
+        if suite.n_tasks != 10:
+            raise RuntimeError(name + " 不包含预期的10个任务")
+        suites.append(suite)
     tasks = []
+    seen_names = set()
     for task_id in task_ids:
-        task = suite.get_task(task_id)
-        initial_states = suite.get_task_init_states(task_id)
+        if type(task_id) is not int or not 0 <= task_id < 10 * len(suites):
+            raise ValueError("全局task_id超出所选集合范围")
+        suite_index, local_id = divmod(task_id, 10)
+        suite = suites[suite_index]
+        task = suite.get_task(local_id)
+        if task.name in seen_names:
+            raise ValueError("任务名称重复：" + task.name)
+        seen_names.add(task.name)
+        initial_states = suite.get_task_init_states(local_id)
         if len(initial_states) <= INIT_STATE_INDEX:
             raise RuntimeError("task {} 没有 init state index 0".format(task_id))
-        bddl_path = Path(suite.get_task_bddl_file_path(task_id))
+        bddl_path = Path(suite.get_task_bddl_file_path(local_id))
         if not bddl_path.is_file():
             raise FileNotFoundError("LIBERO BDDL 不存在：" + str(bddl_path))
         tasks.append({
             "task_id": task_id,
+            "suite": suite_names[suite_index],
+            "suite_task_id": local_id,
             "task_name": task.name,
             "instruction": task.language,
             "bddl_path": bddl_path,
@@ -633,7 +657,7 @@ def _prepare_only(config, norm_stats, task_ids, egl_cleanup):
     import numpy as np
 
     _, env_class = _libero_api()
-    tasks = _load_tasks(task_ids)
+    tasks = _load_tasks(task_ids, config["screen"].get("suites"))
     task = tasks[0]
     env = _make_env(env_class, task)
     try:
@@ -653,7 +677,7 @@ def _prepare_only(config, norm_stats, task_ids, egl_cleanup):
             "task_name": task["task_name"],
             "instruction": task["instruction"],
             "tasks": [
-                {key: item[key] for key in ("task_id", "task_name", "instruction")}
+                {key: item[key] for key in ("task_id", "suite", "suite_task_id", "task_name", "instruction")}
                 for item in tasks
             ],
             "control_freq_requested_hz": CONTROL_FREQ_HZ,
@@ -770,6 +794,8 @@ def _run_screen(config, tasks, q_values, mode, norm_stats, torch, cuda_report,
                 )
                 episode = {
                     "task_id": task["task_id"],
+                    "suite": task.get("suite", "libero_spatial"),
+                    "suite_task_id": task.get("suite_task_id", task["task_id"]),
                     "task_name": task["task_name"],
                     "instruction": task["instruction"],
                     "q": q,
@@ -888,9 +914,9 @@ def main(argv=None):
                 state_enabled=config["state_enabled"],
                 egl_cleanup=egl_cleanup,
             )
-            tasks = _load_tasks(task_ids)
+            tasks = _load_tasks(task_ids, config["screen"].get("suites"))
             summary["tasks"] = [
-                {key: task[key] for key in ("task_id", "task_name", "instruction")}
+                {key: task[key] for key in ("task_id", "suite", "suite_task_id", "task_name", "instruction")}
                 for task in tasks
             ]
             print("run_dir=" + str(run_dir), flush=True)
