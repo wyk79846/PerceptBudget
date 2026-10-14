@@ -93,7 +93,7 @@ def validate_config(config):
     state_enabled = config["state_enabled"]
     state_ok = type(state_enabled) is bool
     add(results, "state_enabled", "ok" if state_ok else "error",
-        "布尔值（config 默认关闭）" if state_ok else "必须是布尔值")
+        "布尔字段（不代表 state 预处理或模型输入已验证）" if state_ok else "必须是布尔值")
 
     value = config["output_root"]
     if not isinstance(value, str) or not value.strip() or not Path(value).expanduser().is_absolute():

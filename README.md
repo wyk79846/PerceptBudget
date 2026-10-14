@@ -5,9 +5,9 @@
 ## 目录与进度
 
 - `perceptbudget/experiment.py`：读取并检查配置、验证结果根目录、创建独立 run 并保存 `run.json`。
-- `scripts/check_setup.py`：只读检查本地路径、配置和 FlashRT checkout；验证 `N` 为正整数、精度为 `fp16`/`bfloat16`，默认不导入 torch。
+- `scripts/check_setup.py`：只读检查本地路径、配置和 FlashRT checkout；验证 `N` 为正整数、精度字段为 `fp16`/`bfloat16`，默认不导入 torch。字段检查不证明后端实际使用了所选精度。
 - `scripts/run_flashrt.py`：在独立进程入口中选择配置的 FlashRT 源码，避免旧同名包串入。
-- `config.json`：保留设置检查器所需字段。模型、`H=10`、`N=1`、`fp16` 是首个基线前的候选；基线确认后由各 run 的配置快照记录并在同组比较中冻结。state 默认关闭。
+- `config.json`：首轮目标候选为当前模型、`H=10`、`N=10`、`bfloat16`、`state_enabled=true`，基线仍为 `pending_confirmation`。`N` 表示去噪步数，不是动作长度；state 开启是目标配置，state 预处理和数据真实进入模型仍待 smoke 验证。
 
 阶段按顺序推进，目前均未验收：
 
@@ -43,10 +43,11 @@
 ## 重要边界
 
 - 不修改原版 FlashRT、旧 LUTVLA 或现有 venv；不训练、不切分 KV、不改推理逻辑。
-- M1 关注可靠执行长度。完整刷新输出 `10×7` 时只消费前 `q` 个动作、丢弃尾段；消费期间不推理，之后再完整刷新。旧 chunked 流程的逐步 `advance` 不是本项目协议。
+- M1 关注可靠执行长度。当前 LIBERO checkpoint 的动作长度为 `H=10`，仍须现场确认加载后的实际输出；本轮只考虑 `1≤q≤H`，不假设公开 API 可扩 H，也不复制旧动作或 KV。完整刷新输出 `10×7` 时只消费前 `q` 个动作、丢弃尾段；消费期间不推理，之后再完整刷新。旧 chunked 流程的逐步 `advance` 不是本项目协议。
 - Continue 消费已有动作。Fast 尚待验证，不能用旧 KV decode 冒充验证结果。
-- 读取机器人状态日志不等于模型启用了 state 输入。同步仿真暂停期间的墙钟也不代表真实机器人完成时间。
-- `N=1` 不保证成功率；单次策略失败先排查运行有效性，不据此改变同组基线。旧 LUTVLA 实验不作为本项目能耗证据。
+- 原版公开 `predict(images, prompt, state=None)` 接受可选 state，frontend 通过 prompt tokens 编码；没有 `state=True` 开关，接口/token 路径也不会自动归一化或把原始 8 维补到 32，不能自行 zero-pad。基线前须从原始 8 维机器人状态追踪对应 OpenPI/Libero 预处理与 checkpoint 训练输入规范。norm_stats 同时有 mean/std 和 q01/q99，而 checkpoint config 未记录 `discrete_state_input`；这些信息不足以断言用了哪种规范。若源码仍不能确认，报告缺口并保持基线待确认，不猜规范、不做多种归一化的成功率比较。`state_enabled=true` 仅为目标配置，smoke 还须确认处理后的 state 数据真实进入模型。
+- BF16 路径需现场确认：Orin/RTX 用 `use_fp8=False`；RTX 需要时可用原版 `FVK_PI05_RTX_FORCE_BF16=1`，并排除 INT8 覆盖。Thor 关闭 FP8 会走 FP16，不可据此声称 BF16。
+- `N=10` 不保证成功率；单次策略失败先排查运行有效性，不据此改变同组基线。首轮 `libero_spatial` task ID 0–8 是快速筛查候选，须先按名称核验；它不代表覆盖任务书全部接触、精细放置和扰动类型，也不能单独验收完整 M1。旧 LUTVLA 实验不作为本项目能耗证据。
 - 原版 FlashRT checkout 位于 `/home/wyk/workspace/FlashRT-upstream`，本地快照 revision 为 `e4fe1232ee49f8d3cd96e32706114fd960b320fb`，不代表上游最新版本。
 
 ## 设置检查与导入

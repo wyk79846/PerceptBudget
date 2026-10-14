@@ -9,10 +9,23 @@
   "norm_stats_path": "/home/wyk/workspace/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch/assets/physical-intelligence/libero/norm_stats.json",
   "source_document": "/home/wyk/workspace/任务指导与相关参考/Student_A_PerceptBudget_Revised.docx",
   "output_root": "/home/wyk/workspace/任务产出/perceptbudget",
-  "candidate_q": [5, 8, 10],
-  "state_enabled": false,
+  "candidate_q": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "state_enabled": true,
   "H": 10,
-  "N": 1,
-  "precision": "fp16",
+  "N": 10,
+  "precision": "bfloat16",
+  "screen": {
+    "suite": "libero_spatial",
+    "task_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    "task_ids_status": "pending_name_verification",
+    "trials_per_task": 1,
+    "init_state_index": 0,
+    "seed": 7,
+    "baseline_q": 5,
+    "allowable_drop_pp": {
+      "target": 5,
+      "max": 10
+    }
+  },
   "baseline_status": "pending_confirmation"
 }
