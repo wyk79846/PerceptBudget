@@ -44,7 +44,7 @@ def _predict(model, snapshot, prompt, with_state, torch):
     actions = model.predict(snapshot["images"], **kwargs)
     torch.cuda.synchronize()
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    actions = validate_actions(actions, 20)
+    actions = validate_actions(actions, model._pipe.chunk_size)
     return elapsed_ms, list(actions.shape)
 
 def _save_summary(run_dir, summary):
@@ -53,7 +53,7 @@ def _save_summary(run_dir, summary):
         "# State 推理延迟对比", "", f"- status: `{summary['status']}`",
         f"- run directory: `{run_dir}`",
         f"- task: {summary.get('task_name', 'pending')} (`{summary.get('task_id', 0)}`), init 0, settle 10",
-        f"- sync diagnostic; H=20, N=10, BF16, two views; action shape: `{summary.get('action_shape', 'pending')}`",
+        f"- sync diagnostic; H={summary['config_snapshot']['H']}, N=10, BF16, two views; action shape: `{summary.get('action_shape', 'pending')}`",
         "- timed: `predict()` through CUDA sync; excludes load, input prep, and warmup graph build.",
         "- seed 7 is reset before each call; state/no-state calls alternate.", "",
         "| pair | state ms | no-state ms | added ms with state | added % vs no-state |",
@@ -79,17 +79,25 @@ def _save_summary(run_dir, summary):
     (run_dir / "summary.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 def _validate_config(config):
-    if ((config.get("model_id"), config.get("H"), config.get("N"), config.get("precision"))
-            != ("pi05_libero_pytorch", 20, 10, "bfloat16") or type(config.get("state_enabled")) is not bool):
-        raise ValueError("要求 pi05_libero_pytorch、H=20、N=10、BF16 和布尔 state_enabled")
+    if ((config.get("model_id"), config.get("N"), config.get("precision"))
+            != ("pi05_libero_pytorch", 10, "bfloat16")
+            or config.get("H") not in (10, 20)
+            or type(config.get("state_enabled")) is not bool):
+        raise ValueError("要求 pi05_libero_pytorch、H=10/20、N=10、BF16 和布尔 state_enabled")
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config.json")
+    parser.add_argument("--horizon", type=int, choices=(10, 20),
+                        help="Override H for this diagnostic only; config.json is unchanged")
     args = parser.parse_args(argv)
     run_dir = summary = None
     try:
         config = load_config(args.config, repo_root=PROJECT_ROOT)
+        base_config = json.loads(json.dumps(config))
+        if args.horizon is not None:
+            config["H"] = args.horizon
+            config["candidate_q"] = [q for q in config["candidate_q"] if q <= args.horizon]
         _validate_config(config)
         norm_stats = load_libero_norm_stats(config["norm_stats_path"])
         state_stats = norm_stats.get("state", {})
@@ -103,6 +111,9 @@ def main(argv=None):
             "schema_version": 1, "status": "running", "purpose": "state-latency",
             "run_mode": "synchronous_diagnostic", "run_dir": str(run_dir),
             "config_snapshot": config, "state_enabled_config_unchanged": config["state_enabled"],
+            "base_config_snapshot": base_config,
+            "diagnostic_horizon_override": args.horizon,
+            "task_q_evaluation_started": False,
             "task_id": 0, "init_state_index": 0, "settle_steps": 10,
             "control_freq_hz": 20, "seed": SEED, "warmups_per_path": WARMUPS,
             "measured_pairs": PAIRS,
