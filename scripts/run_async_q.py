@@ -107,6 +107,8 @@ def worker(run_dir, task_id):
     progress = task_dir / 'summary.json'
     summary = json.loads(progress.read_text()) if progress.exists() else {'episodes': []}
     summary.update(status='running', task_id=task_id)
+    summary.pop('error', None)
+    summary.pop('traceback', None)
     env = None
     try:
         summary['egl_cleanup'] = base._patch_egl_cleanup()
@@ -248,6 +250,7 @@ def main():
                        'checkpoint_sha256': file_sha256(config['model_path']),
                        'norm_stats_sha256': file_sha256(config['norm_stats_path'])}
         summary['status'] = 'running'
+        summary.pop('error', None)
         write_progress(run_dir, summary)
         try:
             for task_id in config['screen']['task_ids']:

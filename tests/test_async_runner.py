@@ -1,4 +1,6 @@
 import copy
+from pathlib import Path
+import tempfile
 import unittest
 
 from scripts.run_async_q import validate_episode, validate_pairing
@@ -41,6 +43,26 @@ class AsyncRunnerTests(unittest.TestCase):
         second['initial_frames_sha256'] = 'different'
         with self.assertRaises(RuntimeError):
             validate_pairing([first, second])
+
+    def test_measured_render_roundoff_is_distinguished_from_scene_change(self):
+        import numpy as np
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = self.episode(), self.episode()
+            first.update(q=5, artifact_dir='a')
+            second.update(q=12, artifact_dir='b', initial_frames_sha256='different')
+            (root/'a').mkdir()
+            (root/'b').mkdir()
+            image = np.zeros((1, 256, 512, 3), dtype=np.uint8)
+            np.savez(root/'a/q5_frames.npz', frames=image)
+            image.flat[:4] = 1
+            np.savez(root/'b/q12_frames.npz', frames=image)
+            validate_pairing([first, second], root)
+            self.assertTrue(second['initial_frame_comparison']['accepted'])
+            image.flat[0] = 2
+            np.savez(root/'b/q12_frames.npz', frames=image)
+            with self.assertRaises(RuntimeError):
+                validate_pairing([first, second], root)
 
 
 if __name__ == '__main__':
