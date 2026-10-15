@@ -50,7 +50,8 @@ def main():
     parser.add_argument('--task-id', type=int, default=0, choices=range(30))
     parser.add_argument('--q', type=int, default=5, choices=(5, 8, 10, 12, 15))
     parser.add_argument('--modes', nargs='+', default=['crop', 'prefix', 'prefix_t0'],
-                        choices=('crop', 'prefix', 'prefix_t0', 'progress', 'head'))
+                        choices=('crop', 'prefix', 'prefix_t0', 'progress', 'head',
+                                 'crop_due', 'head_due', 'progress_due'))
     parser.add_argument('--trials', type=int, default=1)
     args = parser.parse_args()
     if not 1 <= args.trials <= 3:
@@ -121,7 +122,8 @@ def main():
                             env, task, args.q, model, stats, config, np, torch,
                             case_dir, stream, adapter if mode.startswith('prefix') else None,
                             condition=mode, trial_index=trial,
-                            alignment_policy=mode if mode in ('progress', 'head') else None)
+                            alignment_policy=mode.split('_')[0] if mode.split('_')[0] in ('progress', 'head') else None,
+                            refresh_policy='latest_due' if mode.endswith('_due') else 'boundary')
                     episode.update(artifact_dir=str(case_dir.relative_to(run_dir)),
                                    suite=task['suite'], clean_prefix_t0=mode == 'prefix_t0')
                     episode['restored_style_sha256'] = style_fingerprints(model, np)

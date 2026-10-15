@@ -1,9 +1,16 @@
 import unittest
 
-from scripts.probe_delay_buffer import buffer_count, commit_aligned
+from scripts.probe_delay_buffer import buffer_count, commit_aligned, refresh_due
 
 
 class HandoffAlignmentTests(unittest.TestCase):
+    def test_overdue_request_uses_first_free_current_frame(self):
+        self.assertTrue(refresh_due(12, 5, 5, 'latest_due'))
+        self.assertFalse(refresh_due(12, 5, 5, 'boundary'))
+        self.assertFalse(refresh_due(16, 12, 5, 'latest_due'))
+        self.assertTrue(refresh_due(17, 12, 5, 'latest_due'))
+        self.assertFalse(refresh_due(0, 0, 5, 'latest_due'))
+
     def actions(self):
         return [[1., 0., 0., 0., 0., 0., -1.] for _ in range(20)]
 

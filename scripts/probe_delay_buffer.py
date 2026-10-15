@@ -32,6 +32,14 @@ def reference_prefix_count(queue, step, q):
     return end - step
 
 
+def refresh_due(step, previous_request_step, q, policy):
+    if policy == 'latest_due':
+        return step > 0 and step-previous_request_step >= q
+    if policy == 'boundary':
+        return step > 0 and step % q == 0
+    raise ValueError('unknown refresh policy')
+
+
 def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     expired = overwritten = 0
     for offset, action in enumerate(actions):
@@ -238,7 +246,7 @@ def device_state():
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False,
-                artifact_tag='', alignment_policy=None):
+                artifact_tag='', alignment_policy=None, refresh_policy='boundary'):
     if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
         raise ValueError('phase alignment is a separate diagnostic condition')
     observation, hz = base._prepare_env_episode(env, task, np)
@@ -247,6 +255,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     period = 1 / hz
     queue, requests, commits, rows, frames, raw_chunks = {}, [], [], [], [], []
     future = None
+    previous_request_step = 0
     current_request = None
     missed_triggers, underflows = [], []
     selector = None
@@ -398,9 +407,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             frames.append(np.concatenate((observation['agentview_image'],
                                          observation['robot0_eye_in_hand_image']), axis=1))
             harvest(step)
-            if step and step % q == 0:
+            if refresh_due(step, previous_request_step, q, refresh_policy):
                 if future is None:
                     future, current_request = submit(observation, step)
+                    previous_request_step = step
                     if future is None:
                         prefix_rejection = current_request
                         frames.pop()  # No action was executed for this tick.
@@ -494,6 +504,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'action_blend': action_blend_enabled,
               'rtc_action_fusion': rtc_fusion_enabled,
               'alignment_policy': alignment_policy,
+              'refresh_policy': refresh_policy,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
