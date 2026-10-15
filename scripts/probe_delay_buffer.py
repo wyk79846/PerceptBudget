@@ -353,6 +353,8 @@ def main():
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
+    parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
+                        help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
                         help='run paired q=8 baseline/blending episodes in one loaded model process')
     parser.add_argument('--pairs', type=int, default=None,
@@ -365,6 +367,8 @@ def main():
         parser.error('action blending is tested separately from prefix locking')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
         parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
+    if args.compare_action_blend_q8 and args.q is not None:
+        parser.error('--compare-action-blend-q8 fixes q=8')
     if args.pairs is not None and not args.compare_action_blend_q8:
         parser.error('--pairs requires --compare-action-blend-q8')
     if args.compare_action_blend_q8 and args.pairs is not None and args.pairs < 1:
@@ -372,7 +376,7 @@ def main():
     if args.interface_only and not args.prefix_lock:
         parser.error('--interface-only requires --prefix-lock')
     pair_count = args.pairs if args.pairs is not None else 3
-    q_values = [8] if args.compare_action_blend_q8 else [8, 12]
+    q_values = [8] if args.compare_action_blend_q8 else args.q or [8, 12]
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
     config.update(candidate_q=q_values,
