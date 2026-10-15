@@ -50,7 +50,7 @@ def main():
     parser.add_argument('--task-id', type=int, default=0, choices=range(30))
     parser.add_argument('--q', type=int, default=5, choices=(5, 8, 10, 12, 15))
     parser.add_argument('--modes', nargs='+', default=['crop', 'prefix', 'prefix_t0'],
-                        choices=('crop', 'prefix', 'prefix_t0'))
+                        choices=('crop', 'prefix', 'prefix_t0', 'progress', 'head'))
     parser.add_argument('--trials', type=int, default=1)
     args = parser.parse_args()
     if not 1 <= args.trials <= 3:
@@ -93,29 +93,35 @@ def main():
             task = base._load_tasks([args.task_id], config['screen']['suites'])[0]
             summary['task'] = {k: v for k, v in task.items() if k != 'init_state'}
             model = base._load_and_check_model(config, torch)
-            adapter = PrefixModel(model, prefix_len=8, clean_prefix_t0=True)
+            needs_prefix = any(mode.startswith('prefix') for mode in args.modes)
+            adapter = PrefixModel(model, prefix_len=8, clean_prefix_t0=True) if needs_prefix else None
             _, env_class = base._libero_api()
             env = base._make_env(env_class, task)
             obs, _ = base._prepare_env_episode(env, task, np)
             # Capture and any repair preparation occur before episode timing.
-            adapter.predict(base._make_snapshot(obs, stats, config['state_enabled']),
-                            task['instruction'], {})
-            if hasattr(adapter, 'prepare_clean_prefix_styles'):
+            snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
+            if adapter:
+                adapter.predict(snapshot, task['instruction'], {})
+            else:
+                base._infer_actions(model, snapshot, task['instruction'], config['H'], {})
+            if adapter and 'prefix_t0' in args.modes:
                 adapter.prepare_clean_prefix_styles()
             summary['original_style_sha256'] = style_fingerprints(model, np)
             first_bootstrap = None
             for trial in range(1, args.trials+1):
                 modes = args.modes if trial % 2 else list(reversed(args.modes))
                 for mode in modes:
-                    adapter.clean_prefix_t0 = mode == 'prefix_t0'
+                    if adapter:
+                        adapter.clean_prefix_t0 = mode == 'prefix_t0'
                     case_dir = run_dir/f'trial{trial:02d}_{mode}'
                     case_dir.mkdir()
                     print(f'trial={trial} mode={mode} task={args.task_id} q={args.q}', flush=True)
                     with (case_dir/'trace.jsonl').open('w', encoding='utf-8') as stream:
                         episode = probe.run_episode(
                             env, task, args.q, model, stats, config, np, torch,
-                            case_dir, stream, None if mode == 'crop' else adapter,
-                            condition=mode, trial_index=trial)
+                            case_dir, stream, adapter if mode.startswith('prefix') else None,
+                            condition=mode, trial_index=trial,
+                            alignment_policy=mode if mode in ('progress', 'head') else None)
                     episode.update(artifact_dir=str(case_dir.relative_to(run_dir)),
                                    suite=task['suite'], clean_prefix_t0=mode == 'prefix_t0')
                     episode['restored_style_sha256'] = style_fingerprints(model, np)

@@ -45,6 +45,68 @@ def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     return expired, overwritten
 
 
+def commit_aligned(queue, actions, origin, step, prediction_id,
+                   origin_xyz, current_xyz, history, policy):
+    """Experimental phase alignment, with the original horizon end unchanged.
+
+    A fresh chunk is never recycled, and delayed arrivals never gain H new
+    slots. Retain H-elapsed actions, selecting a prefix offset by measured
+    motion rather than assuming elapsed steps equal completed motion.
+    """
+    import numpy as np
+    elapsed = max(0, step-origin)
+    remaining = max(0, len(actions)-elapsed)
+    limit = min(elapsed, len(actions))
+    gain = 0.01  # m per normalized command; fallback before enough motion.
+    useful = [r for r in history[-32:]
+              if np.linalg.norm(np.subtract(r['after']['raw_state'][:3],
+                                             r['before']['raw_state'][:3])) > 0.001]
+    if useful:
+        commands = np.clip(np.asarray([r['action'][:3] for r in useful]), -1, 1)
+        displacements = np.asarray([np.subtract(r['after']['raw_state'][:3],
+                                                r['before']['raw_state'][:3]) for r in useful])
+        gain = float(np.clip(np.sum(commands*displacements) /
+                             max(float(np.sum(commands*commands)), 1e-9), 0.001, 0.05))
+    offset = 0
+    distance = None
+    if policy == 'progress' and limit:
+        xyz = np.asarray(origin_xyz) + np.vstack([
+            np.zeros(3), np.cumsum(np.clip(np.asarray(actions)[:limit, :3], -1, 1)*gain, axis=0)])
+        distances = np.linalg.norm(xyz-np.asarray(current_xyz), axis=1)
+        offset = int(np.argmin(distances))
+        distance = float(distances[offset])
+        # No plausible spatial match: keep the fresh near-term feedback command.
+        if distance > 0.02:
+            offset = 0
+        old = [r['action'][6] for r in history if origin <= r['step'] < step]
+        for i in range(1, min(offset+1, len(actions))):
+            if actions[i-1][6]*actions[i][6] < 0:
+                target_sign = np.sign(actions[i][6])
+                if not any(np.sign(value) == target_sign for value in old[i:]):
+                    offset = min(offset, i)
+                    break
+    elif policy not in ('progress', 'head'):
+        raise ValueError('unknown alignment policy')
+    overwritten = 0
+    for i in range(remaining):
+        target = step+i
+        overwritten += target in queue
+        queue[target] = (actions[offset+i], prediction_id, origin, offset+i,
+                         {'alignment': policy, 'scheduled_step': target,
+                          'elapsed_steps': elapsed, 'selected_offset': offset})
+    return offset, overwritten, {
+        'policy': policy, 'elapsed_control_steps': elapsed,
+        'selected_prediction_offset': offset,
+        'retained_prediction_offset_interval': [offset, offset+remaining],
+        'discarded_prefix_actions': offset,
+        'discarded_tail_actions': len(actions)-offset-remaining,
+        'remaining_actions': remaining, 'scheduled_interval_steps': [step, step+remaining],
+        'original_horizon_end_step': origin+len(actions),
+        'tracking_gain_m_per_command': gain, 'best_waypoint_distance_m': distance,
+        'fallback_distance_threshold_m': 0.02,
+    }
+
+
 def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
     """Same absolute-step alignment as baseline; change only overlap update."""
     from perceptbudget.action_blend import blend_actions
@@ -176,7 +238,9 @@ def device_state():
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False,
-                artifact_tag=''):
+                artifact_tag='', alignment_policy=None):
+    if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
+        raise ValueError('phase alignment is a separate diagnostic condition')
     observation, hz = base._prepare_env_episode(env, task, np)
     assert hz == 20
     base._seed_process(7, np, torch)
@@ -206,6 +270,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'observation_monotonic': observation_started,
                    'input_ready_monotonic': time.monotonic(),
                    'model_state': snapshot.get('state'),
+                   'observation_raw_state': snapshot['raw_state'].tolist(),
                    'queue_before_submit_actions': buffer_count(queue, step)}
         raw_prefix = None
         prefix_len = None
@@ -269,8 +334,14 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         reference_remaining = reference_prefix_count(queue, step, q)
         blend = None
         rtc_fusion = None
+        alignment = None
         merge_start = time.monotonic()
-        if action_blend_enabled:
+        if alignment_policy is not None:
+            expired, overwritten, alignment = commit_aligned(
+                queue, actions, origin, step, current_request['prediction_id'],
+                current_request['observation_raw_state'][:3],
+                raw_libero_state(observation)[:3], rows, alignment_policy)
+        elif action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
                 beta=config['action_blend']['beta'])
@@ -294,10 +365,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                   'control_steps_until_commit': step - origin,
                   'prefix_exact': current_request.get('prefix_exact'),
                   'expired_new_actions': expired, 'overwritten_old_actions': overwritten,
-                  'new_prediction_remaining_actions': len(actions) - expired,
-                  'new_prediction_remaining_nominal_seconds': (len(actions) - expired) * period,
+                  'new_prediction_remaining_actions': alignment['remaining_actions'] if alignment else len(actions) - expired,
+                  'new_prediction_remaining_nominal_seconds': (alignment['remaining_actions'] if alignment else len(actions) - expired) * period,
                   'new_prediction_remaining_interval_steps': [max(origin, step), max(step, origin + len(actions))],
                   'new_queue_actions': buffer_count(queue, step)}
+        if alignment is not None:
+            result['action_alignment'] = alignment
         if blend is not None:
             result['blend'] = blend
             result['merge_seconds'] = time.monotonic() - merge_start
@@ -352,6 +425,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                     source['blend'] = item[4]
                 elif rtc_fusion_enabled and len(item) > 4:
                     source['rtc_action_fusion'] = item[4]
+                elif alignment_policy and len(item) > 4:
+                    source['action_alignment'] = item[4]
             action_start = time.monotonic()
             observation, reward, done, info = env.step(action)
             action_end = time.monotonic()
@@ -418,6 +493,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'trial_index': trial_index, 'condition': condition,
               'action_blend': action_blend_enabled,
               'rtc_action_fusion': rtc_fusion_enabled,
+              'alignment_policy': alignment_policy,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
