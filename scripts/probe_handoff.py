@@ -51,7 +51,9 @@ def main():
     parser.add_argument('--q', type=int, default=5, choices=(5, 8, 10, 12, 15))
     parser.add_argument('--modes', nargs='+', default=['crop', 'prefix', 'prefix_t0'],
                         choices=('crop', 'prefix', 'prefix_t0', 'progress', 'head',
-                                 'crop_due', 'head_due', 'progress_due'))
+                                 'crop_due', 'head_due', 'progress_due',
+                                 'prefix_noisy', 'prefix_noisy_due'))
+    parser.add_argument('--prefix-len', type=int, default=8, choices=(6, 7, 8))
     parser.add_argument('--trials', type=int, default=1)
     args = parser.parse_args()
     if not 1 <= args.trials <= 3:
@@ -64,7 +66,7 @@ def main():
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
     config.update(execution_mode='async_handoff_repair_diagnostic', candidate_q=[args.q],
-                  repair_modes=args.modes, prefix_lock={'length': 8, 'full_rtc': False})
+                  repair_modes=args.modes, prefix_lock={'length': args.prefix_len, 'full_rtc': False})
     config['screen'] = {**config['screen'], 'task_ids': [args.task_id], 'trials_per_task': args.trials}
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -95,7 +97,7 @@ def main():
             summary['task'] = {k: v for k, v in task.items() if k != 'init_state'}
             model = base._load_and_check_model(config, torch)
             needs_prefix = any(mode.startswith('prefix') for mode in args.modes)
-            adapter = PrefixModel(model, prefix_len=8, clean_prefix_t0=True) if needs_prefix else None
+            adapter = PrefixModel(model, prefix_len=args.prefix_len, clean_prefix_t0=False) if needs_prefix else None
             _, env_class = base._libero_api()
             env = base._make_env(env_class, task)
             obs, _ = base._prepare_env_episode(env, task, np)
@@ -107,13 +109,17 @@ def main():
                 base._infer_actions(model, snapshot, task['instruction'], config['H'], {})
             if adapter and 'prefix_t0' in args.modes:
                 adapter.prepare_clean_prefix_styles()
+            if adapter and any(mode.startswith('prefix_noisy') for mode in args.modes):
+                adapter.prepare_noisy_prefix_graph()
             summary['original_style_sha256'] = style_fingerprints(model, np)
             first_bootstrap = None
             for trial in range(1, args.trials+1):
                 modes = args.modes if trial % 2 else list(reversed(args.modes))
                 for mode in modes:
                     if adapter:
+                        adapter.noisy_prefix = False
                         adapter.clean_prefix_t0 = mode == 'prefix_t0'
+                        adapter.noisy_prefix = mode.startswith('prefix_noisy')
                     case_dir = run_dir/f'trial{trial:02d}_{mode}'
                     case_dir.mkdir()
                     print(f'trial={trial} mode={mode} task={args.task_id} q={args.q}', flush=True)

@@ -85,10 +85,12 @@ def _temporary_t0_styles(pl, rows, prefix_len, synchronize, timing=None):
         yield
     finally:
         timing.setdefault('prefix_style_switch_seconds', time.monotonic() - switch_start)
-        restore_start = time.monotonic()
+        wait_start = time.monotonic()
         try:
             synchronize()
         finally:
+            timing['prefix_style_replay_wait_seconds'] = time.monotonic() - wait_start
+            restore_start = time.monotonic()
             # Attempt every restore even if one upload raises.
             failure = None
             for name, original in originals.items():
@@ -107,15 +109,120 @@ def _temporary_t0_styles(pl, rows, prefix_len, synchronize, timing=None):
                 raise failure
 
 
+def _fill_noisy_prefix_schedule(schedule, known, noise):
+    """Use the frontend's iterative float32 times; retain BF16 graph storage."""
+    import torch
+    steps = schedule.shape[0] - 1
+    t = torch.tensor(1.0, dtype=torch.float32)
+    known, noise = known.float(), noise.float()
+    for k in range(steps):
+        # CPU scalar matches the upstream style precomputation exactly.
+        value = t.item()
+        schedule[k].copy_((1.0 - value) * known + value * noise)
+        t = t + (-1.0 / steps)
+    schedule[-1].copy_(known)
+
+
+@contextmanager
+def _noisy_prefix_decoder(pl, schedule, prefix_len, stream):
+    """Patch only this instance during capture, including its warmup calls."""
+    missing = object()
+    original = vars(pl).get('_copy_rtc_prefix', missing)
+    counter = 0
+
+    def copy(length, stream=0):
+        nonlocal counter
+        if length != prefix_len or counter >= 2 * pl.num_steps:
+            raise RuntimeError('unexpected noisy prefix decoder copy sequence')
+        index = (counter + 1) // 2
+        pl.fvk.gpu_copy(pl.bufs['diffusion_noise'].ptr.value,
+                        schedule[index].data_ptr(), length * 32 * 2, stream)
+        counter += 1
+
+    def decode():
+        nonlocal counter
+        counter = 0
+        pl.transformer_decoder(stream, rtc_prefix_len=prefix_len)
+        if counter != 2 * pl.num_steps:
+            raise RuntimeError('incomplete noisy prefix decoder copy sequence')
+
+    pl._copy_rtc_prefix = copy
+    try:
+        yield decode
+    finally:
+        if original is missing:
+            del pl._copy_rtc_prefix
+        else:
+            pl._copy_rtc_prefix = original
+
+
 class PrefixModel:
-    def __init__(self, model, prefix_len=8, clean_prefix_t0=False):
+    def __init__(self, model, prefix_len=8, clean_prefix_t0=False, noisy_prefix=False):
+        if type(noisy_prefix) is not bool:
+            raise ValueError('noisy_prefix must be bool')
+        if noisy_prefix and (clean_prefix_t0 or prefix_len != 8):
+            raise ValueError('noisy_prefix requires prefix_len=8 and excludes clean_prefix_t0')
         from flash_rt.subgraphs.pi05.rtc_prefix import enable
         self.model = model
         self.prefix_len = prefix_len
         self._variants = {}
         self.clean_prefix_t0 = clean_prefix_t0
+        self.noisy_prefix = noisy_prefix
+        self._noisy_plan = None
+        self.noisy_prefix_prepare_seconds = 0.0
         self._t0_rows = None
         enable(model, prefix_len=prefix_len)
+
+    @property
+    def noisy_prefix(self):
+        return getattr(self, '_noisy_prefix', False)
+
+    @noisy_prefix.setter
+    def noisy_prefix(self, value):
+        if type(value) is not bool or (value and (
+                self.clean_prefix_t0 or self.prefix_len != 8)):
+            raise ValueError('noisy_prefix requires bool, prefix_len=8 and excludes clean_prefix_t0')
+        self._noisy_prefix = value
+
+    @property
+    def clean_prefix_t0(self):
+        return getattr(self, '_clean_prefix_t0', False)
+
+    @clean_prefix_t0.setter
+    def clean_prefix_t0(self, value):
+        if value and self.noisy_prefix:
+            raise ValueError('clean_prefix_t0 excludes noisy_prefix')
+        self._clean_prefix_t0 = value
+
+    def prepare_noisy_prefix_graph(self):
+        """Call after warmup on the frontend stream, outside task timing.
+
+        Return False if the pipeline does not exist yet; predict prepares it
+        lazily after prompt setup. Storage stays alive with its captured graph.
+        """
+        import torch
+        from flash_rt.subgraphs.capture import capture_graph
+        pipe = self.model._pipe
+        pl = pipe.pipeline
+        if pl is None:
+            return False
+        if self.prefix_len != 8 or self.clean_prefix_t0:
+            raise ValueError('noisy_prefix requires prefix_len=8 and excludes clean_prefix_t0')
+        if (not hasattr(pl, '_decode_rtc_prefix_graph') or
+                pl.chunk_size != 20 or pipe._force_bf16 is not True):
+            raise RuntimeError('warm up the BF16/H20 prefix pipeline before preparing noisy prefix')
+        if self._noisy_plan is not None and self._noisy_plan[0] is pl:
+            return True
+        start = time.monotonic()
+        with torch.cuda.stream(pipe._graph_torch_stream):
+            schedule = torch.zeros((pl.num_steps + 1, self.prefix_len, 32),
+                                   dtype=torch.bfloat16, device=pipe._noise_buf.device)
+            with _noisy_prefix_decoder(pl, schedule, self.prefix_len,
+                                       pipe._graph_torch_stream.cuda_stream) as decode:
+                graph = capture_graph(pl, pl._graph_stream, decode)
+        self._noisy_plan = (pl, schedule, graph)
+        self.noisy_prefix_prepare_seconds = time.monotonic() - start
+        return True
 
     def prepare_clean_prefix_styles(self):
         """Precompute t=0 rows after ordinary pipeline warmup, before timing.
@@ -136,8 +243,8 @@ class PrefixModel:
 
     def prepare_variants(self, lengths):
         """Capture extra plans before task timing; share weights and buffers."""
-        if self.clean_prefix_t0:
-            raise ValueError('clean_prefix_t0 uses only the fixed prefix_len; no variants')
+        if self.clean_prefix_t0 or self.noisy_prefix:
+            raise ValueError('prefix conditioning uses only the fixed prefix_len; no variants')
         import torch
         from flash_rt.subgraphs.capture import capture_graph
         pipe = self.model._pipe
@@ -160,6 +267,7 @@ class PrefixModel:
 
         pipe = self.model._pipe
         timing['inference_started_monotonic'] = time.monotonic()
+        timing['noisy_prefix'] = self.noisy_prefix
         if raw_prefix is None:
             actions = self.model.predict(snapshot['images'], prompt=prompt,
                                          state=snapshot.get('state'))
@@ -168,8 +276,8 @@ class PrefixModel:
             return actions, raw
 
         length = self.prefix_len if prefix_len is None else prefix_len
-        if self.clean_prefix_t0 and length != self.prefix_len:
-            raise ValueError('clean_prefix_t0 requires the fixed prefix_len')
+        if (self.clean_prefix_t0 or self.noisy_prefix) and length != self.prefix_len:
+            raise ValueError('prefix conditioning requires the fixed prefix_len')
         raw_prefix = np.asarray(raw_prefix, dtype=np.float32)
         if raw_prefix.shape != (length, 32) or not np.isfinite(raw_prefix).all():
             raise ValueError('prefix must be finite (prefix_len,32) raw model actions')
@@ -185,10 +293,23 @@ class PrefixModel:
             graphs = self._variants.get(id(pl), {self.prefix_len: pl._decode_rtc_prefix_graph})
             if length not in graphs:
                 raise RuntimeError('prefix length was not prepared before task execution')
+            action_graph = graphs[length]
+            if self.noisy_prefix:
+                prepare_start = time.monotonic()
+                self.prepare_noisy_prefix_graph()
+                timing['noisy_prefix_prepare_seconds'] = time.monotonic() - prepare_start
+                timing['noisy_prefix_graph_prepare_seconds'] = self.noisy_prefix_prepare_seconds
+                _, schedule, action_graph = self._noisy_plan
             packed = torch.zeros((pl.chunk_size, 32), dtype=torch.bfloat16, device='cuda')
             packed[:length].copy_(torch.as_tensor(raw_prefix, device='cuda', dtype=torch.bfloat16))
             pipe._copy_tensor_to_pipeline_buf_stream(packed, pl.input_rtc_prev_action_chunk_buf, stream)
             pipe._noise_buf.normal_()
+            if self.noisy_prefix:
+                schedule_start = time.monotonic()
+                known = torch.as_tensor(raw_prefix, device=pipe._noise_buf.device,
+                                        dtype=torch.float32)
+                _fill_noisy_prefix_schedule(schedule, known, pipe._noise_buf[:length])
+                timing['noisy_prefix_schedule_seconds'] = time.monotonic() - schedule_start
             pipe._copy_tensor_to_pipeline_buf_stream(pipe._noise_buf, pl.input_noise_buf, stream)
             observation = {'images': snapshot['images']}
             pipe._fill_img_buf(observation)
@@ -204,7 +325,7 @@ class PrefixModel:
                     timing)
             with styles:
                 pl._context_graph.replay(pl._graph_stream)
-                graphs[length].replay(pl._graph_stream)
+                action_graph.replay(pl._graph_stream)
                 pipe._cudart.cudaMemcpyAsync(ctypes.c_void_p(pipe._noise_out.data_ptr()),
                                             pl.input_noise_buf.ptr,
                                             pipe._noise_out.numel() * 2, 3, stream)

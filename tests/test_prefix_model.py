@@ -7,6 +7,7 @@ import numpy as np
 
 from perceptbudget.prefix_model import (
     PrefixModel, _clean_t0_styles, _temporary_t0_styles,
+    _fill_noisy_prefix_schedule, _noisy_prefix_decoder,
 )
 
 
@@ -62,6 +63,7 @@ class PrefixStylesTest(unittest.TestCase):
                 np.testing.assert_array_equal(buf.data, before[name])
             for key in ('backup', 'switch', 'restore', 'overhead'):
                 self.assertGreaterEqual(timing[f'prefix_style_{key}_seconds'], 0)
+            self.assertGreaterEqual(timing['prefix_style_replay_wait_seconds'], 0)
             self.assertAlmostEqual(timing['prefix_style_overhead_seconds'], sum(
                 timing[f'prefix_style_{key}_seconds'] for key in ('backup', 'switch', 'restore')))
         self.assertGreaterEqual(sync.call_count, 12)
@@ -175,6 +177,7 @@ class PrefixStylesTest(unittest.TestCase):
         build.assert_called_once_with(pipe._ckpt_bf16, 20)
         self.assertIs(adapter._t0_rows, rows)
         self.assertFalse(adapter.clean_prefix_t0)
+        self.assertFalse(adapter.noisy_prefix)
         for name, buf in pl.bufs.items():
             np.testing.assert_array_equal(buf.data, before[name])
 
@@ -228,6 +231,16 @@ class PrefixStylesTest(unittest.TestCase):
                     np.testing.assert_array_equal(data, before['decoder_' + name])
             pipe._noise_out.copy_(packed[0])
         pl._decode_rtc_prefix_graph = SimpleNamespace(replay=replay)
+        schedule = torch.zeros(3, 8, 32, dtype=torch.bfloat16)
+        def noisy_replay(handle):
+            self.assertTrue(torch.equal(schedule[0], pipe._noise_buf[:8]))
+            self.assertTrue(torch.equal(schedule[-1], packed[0][:8]))
+            for name, buf in pl.bufs.items():
+                np.testing.assert_array_equal(buf.data, before[name])
+            pipe._noise_out.copy_(packed[0])
+        adapter._noisy_plan = (pl, schedule, SimpleNamespace(replay=noisy_replay))
+        adapter.prepare_noisy_prefix_graph = Mock(return_value=True)
+        adapter.noisy_prefix_prepare_seconds = .25
         real_zeros, real_as_tensor = torch.zeros, torch.as_tensor
         def cpu_zeros(*args, **kwargs):
             kwargs.pop('device', None)
@@ -240,14 +253,156 @@ class PrefixStylesTest(unittest.TestCase):
                 'torch.cuda.stream', side_effect=lambda _: nullcontext()), patch(
                 'torch.zeros', side_effect=cpu_zeros), patch(
                 'torch.as_tensor', side_effect=cpu_tensor):
-            for mode in (False, True, False):
+            for mode, noisy in ((False, False), (True, False), (False, True), (False, False)):
+                adapter.noisy_prefix = False
                 adapter.clean_prefix_t0 = mode
+                adapter.noisy_prefix = noisy
                 timing = {}
                 adapter.predict({'images': []}, 'task', timing, np.ones((8, 32)))
                 self.assertEqual(timing['clean_prefix_t0'], mode)
+                self.assertEqual(timing['noisy_prefix'], noisy)
+                self.assertTrue(timing['prefix_exact'])
+                self.assertEqual('noisy_prefix_schedule_seconds' in timing, noisy)
                 self.assertEqual('prefix_style_overhead_seconds' in timing, mode)
                 for name, buf in pl.bufs.items():
                     np.testing.assert_array_equal(buf.data, before[name])
+        self.assertEqual(pl._context_graph.replay.call_count, 4)
+        adapter.prepare_noisy_prefix_graph.assert_called_once()
+
+    def test_style_replay_wait_is_excluded_from_overhead(self):
+        pl, rows = fake_pipeline()
+        clock = [0.0]
+        syncs = [0]
+        def sync():
+            syncs[0] += 1
+            if syncs[0] == 3:  # Fence after replay, before restore.
+                clock[0] += 397.0
+        timing = {}
+        with patch('perceptbudget.prefix_model.time.monotonic', side_effect=lambda: clock[0]):
+            with _temporary_t0_styles(pl, rows, 8, sync, timing):
+                pass
+        self.assertEqual(timing['prefix_style_replay_wait_seconds'], 397.0)
+        self.assertEqual(timing['prefix_style_restore_seconds'], 0.0)
+        self.assertEqual(timing['prefix_style_overhead_seconds'], 0.0)
+
+
+class NoisyPrefixTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        global torch
+        import torch
+
+    def test_schedule_matches_iterative_float32_and_same_noise(self):
+        gen = torch.Generator().manual_seed(11)
+        known = torch.randn(8, 32, generator=gen).bfloat16()
+        noise = torch.randn(20, 32, generator=gen).bfloat16()
+        saved = noise.clone()
+        schedule = torch.empty(11, 8, 32, dtype=torch.bfloat16)
+        ptr = schedule.data_ptr()
+        _fill_noisy_prefix_schedule(schedule, known, noise[:8])
+        self.assertTrue(torch.equal(schedule[0], noise[:8]))
+        self.assertTrue(torch.equal(schedule[-1], known))
+        t = np.float32(1)
+        for k in range(10):
+            expected = ((1 - float(t)) * known.float() + float(t) * noise[:8].float()).bfloat16()
+            self.assertTrue(torch.equal(schedule[k], expected))
+            t = np.float32(t + np.float32(-.1))
+        self.assertTrue(torch.equal(saved, noise))
+        _fill_noisy_prefix_schedule(schedule, known + 1, noise[:8] + 2)
+        self.assertEqual(schedule.data_ptr(), ptr)
+        self.assertTrue(torch.equal(schedule[0], noise[:8] + 2))
+        self.assertTrue(torch.equal(schedule[-1], known + 1))
+
+    def test_capture_copy_order_reset_and_restore_even_on_exception(self):
+        class Pipeline:
+            def _copy_rtc_prefix(self, length, stream=0):
+                raise AssertionError('original copy called during capture')
+            def transformer_decoder(self, stream, rtc_prefix_len):
+                for _ in range(self.num_steps):
+                    self._copy_rtc_prefix(rtc_prefix_len, stream)
+                    self._copy_rtc_prefix(rtc_prefix_len, stream)
+        schedule = torch.zeros(4, 8, 32, dtype=torch.bfloat16)
+        for override in (False, True):
+            pl = Pipeline()
+            pl.num_steps = 3
+            pl.bufs = {'diffusion_noise': SimpleNamespace(ptr=SimpleNamespace(value=123))}
+            pl.fvk = SimpleNamespace(gpu_copy=Mock())
+            original = Mock() if override else pl._copy_rtc_prefix
+            if override:
+                pl._copy_rtc_prefix = original
+            with self.assertRaisesRegex(RuntimeError, 'callback'):
+                with _noisy_prefix_decoder(pl, schedule, 8, 99) as decode:
+                    for _ in range(4):  # capture_graph's three warmups and capture.
+                        decode()
+                    expected = [schedule[i].data_ptr() for i in (0, 1, 1, 2, 2, 3)] * 4
+                    self.assertEqual([c.args[1] for c in pl.fvk.gpu_copy.call_args_list], expected)
+                    for call in pl.fvk.gpu_copy.call_args_list:
+                        self.assertEqual((call.args[0], *call.args[2:]), (123, 512, 99))
+                    raise RuntimeError('callback failed')
+            self.assertEqual(pl._copy_rtc_prefix, original)
+            self.assertEqual('_copy_rtc_prefix' in vars(pl), override)
+
+    def test_modes_validate_toggles_and_reject_variants(self):
+        with patch.dict('sys.modules', {'flash_rt.subgraphs.pi05.rtc_prefix':
+                SimpleNamespace(enable=Mock())}):
+            adapter = PrefixModel(object(), noisy_prefix=True)
+            with self.assertRaises(ValueError):
+                adapter.clean_prefix_t0 = True
+            with self.assertRaises(ValueError):
+                adapter.noisy_prefix = 1
+            with self.assertRaises(ValueError):
+                PrefixModel(object(), noisy_prefix=True, prefix_len=5)
+            with self.assertRaises(ValueError):
+                PrefixModel(object(), noisy_prefix=True, clean_prefix_t0=True)
+            adapter.noisy_prefix = False
+            adapter.clean_prefix_t0 = True
+            with self.assertRaises(ValueError):
+                adapter.noisy_prefix = True
+            adapter.clean_prefix_t0 = False
+            adapter.noisy_prefix = True
+            with self.assertRaisesRegex(ValueError, 'no variants'):
+                adapter.prepare_variants([8])
+
+    def test_prepare_deferred_cached_and_pipeline_specific(self):
+        capture = Mock()
+        with patch.dict('sys.modules', {
+                'flash_rt.subgraphs.pi05.rtc_prefix': SimpleNamespace(enable=Mock()),
+                'flash_rt.subgraphs.capture': SimpleNamespace(capture_graph=capture)}):
+            pipe = SimpleNamespace(pipeline=None, _force_bf16=True,
+                _noise_buf=torch.zeros(20, 32, dtype=torch.bfloat16),
+                _graph_torch_stream=SimpleNamespace(cuda_stream=99))
+            adapter = PrefixModel(SimpleNamespace(_pipe=pipe), noisy_prefix=True)
+            self.assertFalse(adapter.prepare_noisy_prefix_graph())
+            def make_pipeline():
+                def decoder(stream, rtc_prefix_len):
+                    for _ in range(4):
+                        pl._copy_rtc_prefix(rtc_prefix_len, stream)
+                pl = SimpleNamespace(chunk_size=20, num_steps=2,
+                    _decode_rtc_prefix_graph=object(), _graph_stream=object(),
+                    transformer_decoder=decoder, fvk=SimpleNamespace(gpu_copy=Mock()),
+                    bufs={'diffusion_noise': SimpleNamespace(ptr=SimpleNamespace(value=123))})
+                return pl
+            def capture_body(pl, stream, body):
+                for _ in range(4):
+                    body()
+                return object()
+            capture.side_effect = capture_body
+            with patch('torch.cuda.stream', side_effect=lambda _: nullcontext()):
+                pipe.pipeline = make_pipeline()
+                ordinary = pipe.pipeline._decode_rtc_prefix_graph
+                self.assertTrue(adapter.prepare_noisy_prefix_graph())
+                first = adapter._noisy_plan
+                self.assertEqual(first[1].shape, (3, 8, 32))
+                self.assertEqual(first[1].dtype, torch.bfloat16)
+                self.assertIs(pipe.pipeline._decode_rtc_prefix_graph, ordinary)
+                self.assertNotIn('_copy_rtc_prefix', vars(pipe.pipeline))
+                adapter.prepare_noisy_prefix_graph()
+                self.assertIs(first, adapter._noisy_plan)
+                self.assertEqual(capture.call_count, 1)
+                pipe.pipeline = make_pipeline()
+                adapter.prepare_noisy_prefix_graph()
+                self.assertIsNot(first, adapter._noisy_plan)
+                self.assertEqual(capture.call_count, 2)
 
 
 if __name__ == '__main__':
