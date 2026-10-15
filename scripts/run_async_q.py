@@ -132,7 +132,8 @@ def validate_pairing(episodes, run_dir=None):
 def write_progress(run_dir, summary):
     base._write_json_atomic(run_dir / 'summary.json', summary)
     lines = ['# 固定 q 异步测试', '',
-             '异步 q=5 为基线；同任务和初态与 q=8/10/12/15 配对。', '',
+             '异步 q=5 为基线；同任务和初态比较本轮所选q。', '',
+             f"衔接配置：{summary['config'].get('action_handoff', 'crop_overwrite')}；请求q不代表实际刷新间隔，实际间隔见requests记录。", '',
              f"状态：{summary['status']}；完成 {len(summary['episodes'])}/{summary['expected_episodes']} 次。", '',
              '| task | q | 结果 | 步数 | 真实秒 | 实际Hz | 断供步 |',
              '|---:|---:|---|---:|---:|---:|---:|']

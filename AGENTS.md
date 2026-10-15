@@ -1,5 +1,13 @@
 # 协作规则
 
+## 最新修复状态（2026-10-15，以本节优先）
+
+- 原150次停止。用户授权解决衔接问题，限小规模修复验证，不自行重启150次。
+- 新可选profile `latency_limited_progress`：latest_due及时补发，推理在途时机械臂0–5维乘0.5、夹爪不变；按实际EEF位移选择新chunk偏移，裁掉相等数量尾段，剩余长度仍H减elapsed，绝不延长observation_step+H。不是RTC/前缀，不改FlashRT。原crop默认不变。
+- 诊断task0 q5三次139/141/139步成功；task1一次220步成功、task2一次208步成功，均无断供；task1处于超时边界，不称总体质量通过。同样减速但纯时间裁切的task1/2均超时。实际q5多6–7步，控制约15–16Hz，不能宣称严格q5/20Hz。
+- 087603b集成profile及对应事件时序/缓冲校验；项目venv全139项CPU测试通过。小规模正式入口集成run=M1/20261015T074553.575495Z-handoff-integration-814479b6，仅task0/1/2×q5/8共6回合。首次用系统Python因缺torch在模型加载前退出，改项目venv原run继续，无已完成回合被覆盖。在途不改评测源码。
+- 失败方案代码保留于archive/async-handoff-investigation-20261015，各run独立源码快照保留。优先审查集成结果，再向用户报告；不得把小样本称95%成功率或混入旧数据。
+
 ## 当前范围与同步质量试分析（2026-10-15）
 
 - 用户最新授权“解决动作衔接问题”：允许项目侧最小修复及小规模GPU对照，旧150次仍停止。当前新增scripts/probe_handoff.py，用同task0/q5/seed7/init0对照crop、原prefix、clean-prefix t0条件；主模型精度/N/H/感知及FlashRT源文件不变。发现原前缀逐轮写入干净动作但使用统一非零扩散时间；t0前缀是待验证修订，不以prefix_exact数值锁定宣称质量改善。

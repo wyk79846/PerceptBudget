@@ -62,6 +62,17 @@ class HandoffAlignmentTests(unittest.TestCase):
         self.assertEqual(info['remaining_actions'], 0)
         self.assertEqual(queue, {})
 
+    def test_latest_executed_gripper_change_counts_as_performed(self):
+        actions = self.actions()
+        for action in actions[3:]:
+            action[6] = 1
+        history = [{'step': i, 'action': [1, 0, 0, 0, 0, 0, 1 if i == 6 else -1],
+                    'before': {'raw_state': [0, 0, 0]},
+                    'after': {'raw_state': [0, 0, 0]}} for i in range(7)]
+        _, _, info = commit_aligned({}, actions, 0, 7, 1,
+                                   [0, 0, 0], [.07, 0, 0], history, 'progress')
+        self.assertEqual(info['selected_prediction_offset'], 7)
+
 
 if __name__ == '__main__':
     unittest.main()

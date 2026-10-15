@@ -320,7 +320,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
 
         return executor.submit(predict), request
 
-    def harvest(step):
+    def harvest(step, completed_row=None):
         nonlocal future, current_request
         if future is None or not future.done():
             return
@@ -352,7 +352,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             expired, overwritten, alignment = commit_aligned(
                 queue, actions, origin, step, current_request['prediction_id'],
                 current_request['observation_raw_state'][:3],
-                raw_libero_state(observation)[:3], rows, alignment_policy)
+                raw_libero_state(observation)[:3],
+                rows if completed_row is None else rows + [completed_row], alignment_policy)
         elif action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
@@ -442,6 +443,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                     source['action_alignment'] = item[4]
             action_start = time.monotonic()
             planned_action = action.copy()
+            inference_active_at_action = future is not None
             arm_gain = pending_arm_gain if future is not None else 1.0
             action = action.copy()
             action[:6] *= arm_gain
@@ -450,7 +452,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             after = snapshot_scene(env, observation)
             success = bool(env.check_success())
             # Harvest only on control thread, also after a step, never block it.
-            harvest(step + 1)
+            harvest(step + 1, {'step': step, 'action': action.tolist(),
+                               'before': before, 'after': after})
             terminal = success or done or step + 1 == task['max_steps']
             deadline += period
             overrun = max(0.0, time.monotonic() - deadline)
@@ -462,6 +465,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'source': source, 'queue_before_pop_actions': queued,
                    'queue_after_step_actions': buffer_count(queue, step + 1),
                    'inference_active': future is not None,
+                   'inference_active_at_action': inference_active_at_action,
                    'deadline_overrun_seconds': overrun,
                    'success': success, 'env_done': bool(done), 'reward': float(reward)}
             rows.append(row)

@@ -125,6 +125,21 @@ class AsyncAnalysisTest(unittest.TestCase):
             'action_alignment': {'discarded_prefix_actions': 3, 'discarded_tail_actions': 4}}])
         self.assertTrue(result['records'][0]['h20_consistent'])
 
+    def test_retimed_zero_gripper_retains_full_sign_history(self):
+        actions = [[.2, 0, 0, 0, 0, 0, 0] for _ in range(20)]
+        actions[0][6] = -1
+        for i in range(5, 20):
+            actions[i][6] = 1
+        actual = [row(i, [.2, 0, 0, 0, 0, 0, 1 if i >= 14 else -1])
+                  for i in range(25)]
+        result = prediction_events(actual,
+            [{'prediction_id': 1, 'observation_step': 5, 'actions': actions}],
+            [{'prediction_id': 1, 'commit_step': 12,
+              'action_alignment': {'retained_prediction_offset_interval': [3, 16],
+                                   'remaining_actions': 13}}])[0]
+        self.assertTrue(any(m['type'] == 'gripper_switch' and m['predicted_step'] == 14
+                            for m in result['matches']))
+
     def test_compare_common_prefix_and_eef_only_xyz(self):
         base = [row(i) for i in range(4)]
         candidate = [row(i, position=[i*.01, .1, 0]) for i in range(2)]

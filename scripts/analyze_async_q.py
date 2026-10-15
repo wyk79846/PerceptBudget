@@ -114,7 +114,7 @@ def prediction_events(rows, requests, commits):
             low, high = alignment['retained_prediction_offset_interval']
             end = start + alignment['remaining_actions']
             forecast_rows = [{'step': start+i-low, 'action': request['actions'][i]}
-                             for i in range(max(0, low-1), high)]
+                             for i in range(high)]
         else:
             forecast_rows = [{'step': origin+i, 'action': a}
                              for i, a in enumerate(request['actions'])]
@@ -300,6 +300,11 @@ def analyze(run_dir):
             episode['problem_metadata'] = task_summary['problem_metadata']
         episode['rows'] = rows
         episode['event_comparisons'] = prediction_events(rows, requests, commits)
+        planned_rows = [dict(r, action=r.get('planned_action', r['action'])) for r in rows]
+        episode['planned_command_event_comparisons'] = prediction_events(planned_rows, requests, commits)
+        episode['command_events_before_after_gain'] = {
+            'planned': command_events(planned_rows), 'applied': command_events(rows),
+            'note': 'Applied command events include pending arm gain changes; not isolated model prediction error.'}
         complete_requests = [r for r in requests if len(r.get('actions', [])) == H]
         episode['raw_prediction_event_comparisons'] = prediction_events(
             rows, complete_requests,
@@ -408,6 +413,7 @@ def analyze(run_dir):
                 'No trajectory tolerance is specified; no trajectory pass/fail conclusion.',
                 'Same-step distances are phase-sensitive; path-progress distances describe prefix shape, not truth error.',
                 'Prediction comparisons count command events per committed forecast, not physical grasp/contact detection.',
+                'Applied command events include deliberate pending arm gain changes; planned-command comparisons are separate, not independent ground truth.',
                 'Unmatched events near either matching boundary are censored; forecast beyond observed termination is right-censored.',
                 'Stage labels are transparent geom-name/contact/motion proxies; stable transport and fine placement remain unknown.',
                 'External disturbance not tested; remaining valid prediction interval is not B_safe.',
