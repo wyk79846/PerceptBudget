@@ -45,6 +45,33 @@ def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     return expired, overwritten
 
 
+def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
+    """Same absolute-step alignment as baseline; change only overlap update."""
+    from perceptbudget.action_blend import blend_actions
+    begin = max(step, origin)
+    count = min(buffer_count(queue, begin), max(0, origin + len(actions) - begin))
+    old = [[float(v) for v in queue[begin + i][0]] for i in range(count)]
+    new = [[float(v) for v in actions[begin - origin + i]] for i in range(count)]
+    sources = [{'prediction_id': queue[begin + i][1], 'origin_step': queue[begin + i][2],
+                'offset': queue[begin + i][3], 'already_blended': len(queue[begin + i]) > 4}
+               for i in range(count)]
+    merged, weights = blend_actions(old, new, beta=beta)
+    expired, overwritten = commit(queue, actions, origin, step, prediction_id)
+    for i in range(count):
+        target = begin + i
+        item = queue[target]
+        metadata = {'old_source': sources[i], 'new_prediction_id': prediction_id,
+                    'weight_old': weights[i], 'overlap_index': i, 'overlap_length': count}
+        queue[target] = (merged[i], item[1], item[2], item[3], metadata)
+    return expired, overwritten, {
+        'overlap_actions': count, 'global_interval_steps': [begin, begin + count],
+        'new_offset_interval': [begin - origin, begin - origin + count],
+        'beta': beta, 'weights_old': weights, 'old_actions': old,
+        'new_actions': new, 'merged_actions': merged, 'old_sources': sources,
+        'single_overlap_policy': 'new action directly; paper only defines N>=2',
+    }
+
+
 def snapshot_scene(env, observation):
     import numpy as np
     sim = env.env.sim
@@ -168,8 +195,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         before = buffer_count(queue, step)
         origin = current_request['observation_step']
         reference_remaining = reference_prefix_count(queue, step, q)
-        expired, overwritten = commit(queue, actions, origin, step,
-                                      current_request['prediction_id'], current_request.get('actions_raw'))
+        blend = None
+        merge_start = time.monotonic()
+        if config.get('action_blend'):
+            expired, overwritten, blend = commit_blended(
+                queue, actions, origin, step, current_request['prediction_id'],
+                beta=config['action_blend']['beta'])
+        else:
+            expired, overwritten = commit(queue, actions, origin, step,
+                                          current_request['prediction_id'], current_request.get('actions_raw'))
         result = {'prediction_id': current_request['prediction_id'],
                   'observation_step': origin, 'commit_step': step,
                   'commit_monotonic': time.monotonic(),
@@ -182,6 +216,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                   'prefix_exact': current_request.get('prefix_exact'),
                   'expired_new_actions': expired, 'overwritten_old_actions': overwritten,
                   'new_queue_actions': buffer_count(queue, step)}
+        if blend is not None:
+            result['blend'] = blend
+            result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
                     request=current_request, **result)
@@ -224,6 +261,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 action = np.asarray(item[0], dtype=np.float32)
                 source = {'prediction_id': item[1], 'origin_step': item[2],
                           'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
+                if config.get('action_blend') and len(item) > 4:
+                    source['blend'] = item[4]
             action_start = time.monotonic()
             observation, reward, done, info = env.step(action)
             action_end = time.monotonic()
@@ -284,6 +323,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'prefix_lock': prefix_adapter is not None,
               'prefix_len': None if selector else prefix_adapter.prefix_len if prefix_adapter else 0,
               'adaptive_prefix': selector is not None,
+              'action_blend': config.get('action_blend'),
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
@@ -303,10 +343,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--adaptive-prefix', action='store_true')
+    parser.add_argument('--action-blend', action='store_true')
     parser.add_argument('--interface-only', action='store_true')
     args = parser.parse_args()
     if args.adaptive_prefix:
         args.prefix_lock = True
+    if args.action_blend and args.prefix_lock:
+        parser.error('action blending is tested separately from prefix locking')
     if args.interface_only and not args.prefix_lock:
         parser.error('--interface-only requires --prefix-lock')
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
@@ -322,13 +365,24 @@ def main():
                                      'tick_estimator': 'recent16 nearest-rank p20; at least nominal50ms',
                                      'no_feasible_choice': 'stop episode explicitly; no silent clamp'}
         config['execution_mode'] = 'adaptive_prefix_diagnostic'
+    if args.action_blend:
+        config['action_blend'] = {
+            'beta': 1.2, 'source': 'https://arxiv.org/html/2609.22587v1#S4.SS3',
+            'equations': [8, 9], 'all_action_dimensions': True,
+            'alignment': 'absolute observation-step grid, expired new prefix discarded',
+            'event_estimator': False, 'prefix_lock': False,
+            'N1_policy': 'direct new action (paper formula requires N>=2)',
+            'claim': 'blending mechanism transplant, not complete paper reproduction'}
+        config['execution_mode'] = 'action_blend_diagnostic'
     config['screen'] = {**config['screen'], 'task_ids': [0], 'trials_per_task': 1}
-    purpose = 'adaptive-prefix-pilot' if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot'
+    purpose = ('action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
+               if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
     print('run_dir=' + str(run_dir), flush=True)
     for name in ('scripts/probe_delay_buffer.py', 'scripts/eval_q.py', 'perceptbudget/model.py',
                  'perceptbudget/libero_input.py', 'perceptbudget/power.py', 'perceptbudget/prefix_model.py') + (
-                     ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()):
+                     ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()) + (
+                     ('perceptbudget/action_blend.py',) if args.action_blend else ()):
         source = ROOT / name
         target = run_dir / 'source' / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -343,6 +397,9 @@ def main():
                'state_protocol': base.STATE_PROTOCOL_NOTE,
                'norm_stats_sha256': hashlib.sha256(Path(config['norm_stats_path']).read_bytes()).hexdigest(),
                'device_before': device_state()}
+    if args.action_blend:
+        summary['action_blend'] = dict(config['action_blend'])
+        summary['limitations'][0] = 'paper overlap blending only; no prefix locking, RTC or event estimator'
     env = None
     prefix_adapter = None
     try:
