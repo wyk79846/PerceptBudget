@@ -355,8 +355,13 @@ def analyze(run_dir):
                 missing.append({'suite': suite, 'task_id': task_id,
                                 'missing_q': 5 if base is None else q})
                 continue
-            mismatch = [name for name in ('initial_sim_state_sha256', 'initial_frames_sha256', 'initial_raw_state')
+            mismatch = [name for name in ('initial_sim_state_sha256', 'initial_raw_state')
                         if name in base and name in cand and base[name] != cand[name]]
+            if base.get('initial_frames_sha256') != cand.get('initial_frames_sha256'):
+                comparison = cand.get('initial_frame_comparison', {})
+                if not (comparison.get('accepted') and
+                        comparison.get('baseline_sha256') == base.get('initial_frames_sha256')):
+                    mismatch.append('initial_frames_sha256')
             if mismatch:
                 missing.append({'suite': suite, 'task_id': task_id,
                                 'reason': 'initial conditions mismatch', 'fields': mismatch})

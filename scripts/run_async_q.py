@@ -49,12 +49,36 @@ def validate_episode(episode, horizon):
         raise RuntimeError('Bootstrap must not advance the simulator while waiting')
 
 
-def validate_pairing(episodes):
+def validate_pairing(episodes, run_dir=None):
     if not episodes:
         return
-    for key in ('initial_sim_state_sha256', 'initial_frames_sha256'):
-        if len({ep[key] for ep in episodes}) != 1:
-            raise RuntimeError('Initial conditions differ across q: ' + key)
+    if len({ep['initial_sim_state_sha256'] for ep in episodes}) != 1:
+        raise RuntimeError('Initial conditions differ across q: initial_sim_state_sha256')
+    baseline = episodes[0]
+    for ep in episodes[1:]:
+        if ep['initial_frames_sha256'] == baseline['initial_frames_sha256']:
+            continue
+        if run_dir is None:
+            raise RuntimeError('Initial conditions differ across q: initial_frames_sha256')
+        import numpy as np
+        def frame(record):
+            path = Path(run_dir) / record['artifact_dir'] / f"q{record['q']}_frames.npz"
+            with np.load(path) as data:
+                return data['frames'][0].astype(np.int16)
+        a, b = frame(baseline), frame(ep)
+        if a.shape != b.shape:
+            raise RuntimeError('Initial image shapes differ')
+        difference = np.abs(a-b)
+        comparison = {'baseline_sha256': baseline['initial_frames_sha256'],
+                      'max_channel_difference': int(difference.max()),
+                      'changed_channel_fraction': float(np.mean(difference != 0)),
+                      'mean_channel_difference': float(difference.mean()),
+                      'rule': 'same sim state; max uint8 difference<=1; changed fraction<=0.0001'}
+        comparison['accepted'] = (comparison['max_channel_difference'] <= 1 and
+                                  comparison['changed_channel_fraction'] <= 0.0001)
+        ep['initial_frame_comparison'] = comparison
+        if not comparison['accepted']:
+            raise RuntimeError('Initial frame differs beyond rendering tolerance: ' + repr(comparison))
 
 
 def write_progress(run_dir, summary):
@@ -120,7 +144,7 @@ def worker(run_dir, task_id):
                                artifact_dir=str(episode_dir.relative_to(run_dir)),
                                execution_mode=config['execution_mode'])
                 validate_episode(episode, config['H'])
-                validate_pairing(summary['episodes'] + [episode])
+                validate_pairing(summary['episodes'] + [episode], run_dir)
                 base._write_json_atomic(episode_dir / 'episode.json', episode)
                 summary['episodes'].append(episode)
                 base._write_json_atomic(progress, summary)
@@ -144,6 +168,7 @@ def main():
     parser.add_argument('--q', nargs='+', type=int, choices=(5, 8, 10, 12, 15))
     parser.add_argument('--purpose', default='async-q-paired')
     parser.add_argument('--resume', type=Path)
+    parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
     args = parser.parse_args()
@@ -180,9 +205,23 @@ def main():
             raise RuntimeError('An async-q runner is already active')
         if args.resume:
             summary = json.loads((run_dir / 'summary.json').read_text())
+            changed = {}
             for name, expected in summary['source_sha256'].items():
                 if file_sha256(ROOT / name) != expected:
-                    raise RuntimeError('Source changed since this run: ' + name)
+                    changed[name] = {'old_sha256': expected, 'new_sha256': file_sha256(ROOT / name)}
+            if changed:
+                permitted = {'scripts/run_async_q.py', 'scripts/analyze_async_q.py'}
+                if not args.validation_amendment or set(changed) - permitted:
+                    raise RuntimeError('Evaluation source changed since this run: ' + repr(changed))
+                revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+                for name, hashes in changed.items():
+                    target = run_dir / 'source' / 'amendments' / revision / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((ROOT / name).read_bytes())
+                    summary['source_sha256'][name] = hashes['new_sha256']
+                summary.setdefault('validation_amendments', []).append({
+                    'reason': args.validation_amendment, 'revision': revision,
+                    'files': changed, 'prior_completed_episodes': len(summary['episodes'])})
         else:
             names = ['scripts/run_async_q.py', 'scripts/probe_delay_buffer.py',
                      'scripts/eval_q.py', 'scripts/run_flashrt.py',
@@ -242,7 +281,7 @@ def main():
                 if (len(data['episodes']) != len(config['candidate_q']) or
                         {ep['q'] for ep in data['episodes']} != set(config['candidate_q'])):
                     raise RuntimeError(f'Incomplete q group for task {task_id}')
-                validate_pairing(data['episodes'])
+                validate_pairing(data['episodes'], run_dir)
                 write_progress(run_dir, summary)
                 print(f"completed={len(summary['episodes'])}/{summary['expected_episodes']} task={task_id}", flush=True)
             summary.update(status='completed', active_task_id=None, active_worker_pid=None)
