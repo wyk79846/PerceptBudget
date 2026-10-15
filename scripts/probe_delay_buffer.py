@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-episode actual-delay diagnostic, not a validated asynchronous policy."""
+"""Actual-delay LIBERO diagnostic episodes; not a validated async policy."""
 
 import argparse
 import hashlib
@@ -108,7 +108,8 @@ def device_state():
 
 
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
-                prefix_adapter=None):
+                prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
+                action_blend_enabled=False, artifact_tag=''):
     observation, hz = base._prepare_env_episode(env, task, np)
     assert hz == 20
     base._seed_process(7, np, torch)
@@ -127,6 +128,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     monitor.start()
     start = time.monotonic()
     base._trace(stream, 'episode_start', task_id=task['task_id'], q=q,
+                trial_index=trial_index, condition=condition,
                 task_name=task['task_name'], start_monotonic=start,
                 execution_mode=config.get('execution_mode', 'actual_delay_diagnostic'))
 
@@ -187,6 +189,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if prefix_adapter is not None and scheduled and step > scheduled:
             future.result()  # Propagate model errors even for a late result.
             base._trace(stream, 'late_prefix_result_discarded', task_id=task['task_id'], q=q,
+                        trial_index=trial_index, condition=condition,
                         request=current_request, step=step, scheduled=scheduled)
             current_request['late_discarded'] = True
             future, current_request = None, None
@@ -197,7 +200,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         reference_remaining = reference_prefix_count(queue, step, q)
         blend = None
         merge_start = time.monotonic()
-        if config.get('action_blend'):
+        if action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
                 beta=config['action_blend']['beta'])
@@ -221,6 +224,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
+                    trial_index=trial_index, condition=condition,
                     request=current_request, **result)
         future, current_request = None, None
 
@@ -249,7 +253,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                         break
                 else:
                     missed_triggers.append(step)
-                    base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q, step=step)
+                    base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q,
+                                trial_index=trial_index, condition=condition, step=step)
             queued = buffer_count(queue, step)
             item = queue.pop(step, None)
             if item is None:
@@ -261,7 +266,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 action = np.asarray(item[0], dtype=np.float32)
                 source = {'prediction_id': item[1], 'origin_step': item[2],
                           'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
-                if config.get('action_blend') and len(item) > 4:
+                if action_blend_enabled and len(item) > 4:
                     source['blend'] = item[4]
             action_start = time.monotonic()
             observation, reward, done, info = env.step(action)
@@ -273,7 +278,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             terminal = success or done or step + 1 == task['max_steps']
             deadline += period
             overrun = max(0.0, time.monotonic() - deadline)
-            row = {'step': step, 'tick_monotonic': tick,
+            row = {'step': step, 'trial_index': trial_index, 'condition': condition,
+                   'tick_monotonic': tick,
                    'action_start_monotonic': action_start, 'action_end_monotonic': action_end,
                    'before': before, 'after': after, 'action': action.tolist(),
                    'source': source, 'queue_before_pop_actions': queued,
@@ -284,7 +290,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             rows.append(row)
             base._trace(stream, 'control_step', task_id=task['task_id'], q=q, **row)
             if step % 20 == 0:
-                base._trace(stream, 'device_state', q=q, step=step,
+                base._trace(stream, 'device_state', q=q, trial_index=trial_index,
+                            condition=condition, step=step,
                             timestamp_monotonic=time.monotonic(), values=device_state())
             if terminal:
                 status = 'success' if success else 'timeout' if step + 1 == task['max_steps'] else 'failure'
@@ -303,13 +310,14 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         for request in requests:
             if 'actions' in request and not any(c['prediction_id'] == request['prediction_id'] for c in commits):
                 base._trace(stream, 'uncommitted_prediction', task_id=task['task_id'], q=q,
+                            trial_index=trial_index, condition=condition,
                             request=request, reason=('not committed before task termination; may be ready before committed prefix ends'
                                                      if prefix_adapter else 'completed after final harvest; not executed'))
-        base._write_json_atomic(run_dir / f'q{q}_requests.json', requests)
+        base._write_json_atomic(run_dir / f'q{q}{artifact_tag}_requests.json', requests)
         if frames:
             frames.append(np.concatenate((observation['agentview_image'],
                                          observation['robot0_eye_in_hand_image']), axis=1))
-            np.savez_compressed(run_dir / f'q{q}_frames.npz',
+            np.savez_compressed(run_dir / f'q{q}{artifact_tag}_frames.npz',
                                 frames=np.asarray(frames), control_period_s=period,
                                 note='raw LIBERO images; rotate180 for viewing; final frame included')
     busy = sum(max(0, min(stop, r['inference_ended_monotonic']) -
@@ -323,7 +331,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'prefix_lock': prefix_adapter is not None,
               'prefix_len': None if selector else prefix_adapter.prefix_len if prefix_adapter else 0,
               'adaptive_prefix': selector is not None,
-              'action_blend': config.get('action_blend'),
+              'trial_index': trial_index, 'condition': condition,
+              'action_blend': action_blend_enabled,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
@@ -344,17 +353,32 @@ def main():
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
+    parser.add_argument('--compare-action-blend-q8', action='store_true',
+                        help='run paired q=8 baseline/blending episodes in one loaded model process')
+    parser.add_argument('--pairs', type=int, default=None,
+                        help='number of q=8 baseline/blending pairs; default: 3')
     parser.add_argument('--interface-only', action='store_true')
     args = parser.parse_args()
     if args.adaptive_prefix:
         args.prefix_lock = True
     if args.action_blend and args.prefix_lock:
         parser.error('action blending is tested separately from prefix locking')
+    if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
+        parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
+    if args.pairs is not None and not args.compare_action_blend_q8:
+        parser.error('--pairs requires --compare-action-blend-q8')
+    if args.compare_action_blend_q8 and args.pairs is not None and args.pairs < 1:
+        parser.error('--pairs must be at least 1')
     if args.interface_only and not args.prefix_lock:
         parser.error('--interface-only requires --prefix-lock')
+    pair_count = args.pairs if args.pairs is not None else 3
+    q_values = [8] if args.compare_action_blend_q8 else [8, 12]
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
-    config.update(candidate_q=[8, 12], execution_mode='prefix_lock_diagnostic' if args.prefix_lock else 'actual_delay_diagnostic')
+    config.update(candidate_q=q_values,
+                  execution_mode=('q8_paired_action_blend_comparison' if args.compare_action_blend_q8
+                                  else 'prefix_lock_diagnostic' if args.prefix_lock
+                                  else 'actual_delay_diagnostic'))
     if args.prefix_lock:
         config['prefix_lock'] = {'length': 8, 'full_rtc': False,
                                  'early_result': 'wait until committed prefix ends',
@@ -365,7 +389,7 @@ def main():
                                      'tick_estimator': 'recent16 nearest-rank p20; at least nominal50ms',
                                      'no_feasible_choice': 'stop episode explicitly; no silent clamp'}
         config['execution_mode'] = 'adaptive_prefix_diagnostic'
-    if args.action_blend:
+    if args.action_blend or args.compare_action_blend_q8:
         config['action_blend'] = {
             'beta': 1.2, 'source': 'https://arxiv.org/html/2609.22587v1#S4.SS3',
             'equations': [8, 9], 'all_action_dimensions': True,
@@ -374,21 +398,34 @@ def main():
             'N1_policy': 'direct new action (paper formula requires N>=2)',
             'claim': 'blending mechanism transplant, not complete paper reproduction'}
         config['execution_mode'] = 'action_blend_diagnostic'
-    config['screen'] = {**config['screen'], 'task_ids': [0], 'trials_per_task': 1}
-    purpose = ('action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
+    if args.compare_action_blend_q8:
+        config['execution_mode'] = 'q8_paired_action_blend_comparison'
+        config['comparison'] = {
+            'q': 8, 'pairs': pair_count,
+            'conditions': ['crop_overwrite', 'paper_action_blend_beta_1.2'],
+            'order': 'alternate AB and BA by pair',
+            'fixed_task_seed_init': [0, 7, 0],
+        }
+    config['screen'] = {**config['screen'], 'task_ids': [0],
+                        'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
+    purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
+               'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
     print('run_dir=' + str(run_dir), flush=True)
     for name in ('scripts/probe_delay_buffer.py', 'scripts/eval_q.py', 'perceptbudget/model.py',
                  'perceptbudget/libero_input.py', 'perceptbudget/power.py', 'perceptbudget/prefix_model.py') + (
                      ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()) + (
-                     ('perceptbudget/action_blend.py',) if args.action_blend else ()):
+                     ('perceptbudget/action_blend.py',)
+                     if args.action_blend or args.compare_action_blend_q8 else ()):
         source = ROOT / name
         target = run_dir / 'source' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
-    summary = {'status': 'running', 'purpose': 'two actual-delay episodes; feasibility diagnostic only',
-               'task_ids': [0], 'q_values': [8, 12], 'episodes': [],
+    summary = {'status': 'running',
+               'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
+                           else 'two actual-delay episodes; feasibility diagnostic only'),
+               'task_ids': [0], 'q_values': q_values, 'episodes': [],
                'limitations': ['no RTC or fusion; expired-prefix crop/overwrite explicitly logged',
                               'queued buffer is not verified safe buffer',
                               'same q means requested trigger interval; skipped busy triggers reported',
@@ -397,9 +434,15 @@ def main():
                'state_protocol': base.STATE_PROTOCOL_NOTE,
                'norm_stats_sha256': hashlib.sha256(Path(config['norm_stats_path']).read_bytes()).hexdigest(),
                'device_before': device_state()}
-    if args.action_blend:
+    if args.action_blend or args.compare_action_blend_q8:
         summary['action_blend'] = dict(config['action_blend'])
-        summary['limitations'][0] = 'paper overlap blending only; no prefix locking, RTC or event estimator'
+        summary['limitations'][0] = ('paired comparison of crop/overwrite and paper overlap blending; '
+                                     'no prefix locking, RTC or event estimator'
+                                     if args.compare_action_blend_q8 else
+                                     'paper overlap blending only; no prefix locking, RTC or event estimator')
+    if args.compare_action_blend_q8:
+        summary['comparison'] = dict(config['comparison'])
+        summary['limitations'].append('single task and fixed seed/init; diagnostic pairs do not estimate LIBERO-wide success rate')
     env = None
     prefix_adapter = None
     try:
@@ -457,13 +500,34 @@ def main():
             base._save_run_status(run_dir, 'interface_only_completed', completed_episodes=0)
             return
         with (run_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
-            for q in (8, 12):
-                summary['episodes'].append(run_episode(env, task, q, model, stats, config,
-                                                       np, torch, run_dir, stream, prefix_adapter))
-                base._write_json_atomic(run_dir / 'summary.json', summary)
+            if args.compare_action_blend_q8:
+                schedule = []
+                for pair_index in range(pair_count):
+                    pair = [('crop_overwrite', False), ('paper_action_blend', True)]
+                    if pair_index % 2:
+                        pair.reverse()
+                    schedule.extend((pair_index + 1, condition, enabled)
+                                    for condition, enabled in pair)
+                for trial_index, (pair_index, condition, enabled) in enumerate(schedule, 1):
+                    episode = run_episode(env, task, 8, model, stats, config, np, torch,
+                                          run_dir, stream, prefix_adapter,
+                                          trial_index=trial_index, condition=condition,
+                                          action_blend_enabled=enabled,
+                                          artifact_tag=f'_trial{trial_index:02d}')
+                    episode['pair_index'] = pair_index
+                    summary['episodes'].append(episode)
+                    base._write_json_atomic(run_dir / 'summary.json', summary)
+            else:
+                condition = 'paper_action_blend' if args.action_blend else 'crop_overwrite'
+                for trial_index, q in enumerate(q_values, 1):
+                    summary['episodes'].append(run_episode(
+                        env, task, q, model, stats, config, np, torch, run_dir, stream,
+                        prefix_adapter, trial_index=trial_index, condition=condition,
+                        action_blend_enabled=args.action_blend))
+                    base._write_json_atomic(run_dir / 'summary.json', summary)
         summary['status'] = 'completed'
         summary['device_after'] = device_state()
-        base._save_run_status(run_dir, 'completed', completed_episodes=2)
+        base._save_run_status(run_dir, 'completed', completed_episodes=len(summary['episodes']))
     except BaseException as exc:
         summary.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
         base._save_run_status(run_dir, 'invalid', error=summary['error'])
