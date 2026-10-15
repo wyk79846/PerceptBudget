@@ -1,6 +1,9 @@
 import unittest
 
-from scripts.probe_delay_buffer import buffer_count, commit, commit_blended, reference_prefix_count
+from scripts.probe_delay_buffer import (
+    buffer_count, commit, commit_blended, commit_rtc_fused,
+    reference_prefix_count,
+)
 
 
 class DelayBufferTest(unittest.TestCase):
@@ -74,3 +77,31 @@ class DelayBufferTest(unittest.TestCase):
         self.assertEqual(merged[6], new[1][6])
         self.assertEqual(info['blended_dimensions'], 6)
         self.assertEqual(info['gripper_policy'], 'new_prediction')
+
+    def test_rtc_fusion_uses_temporal_weights_and_latest_gripper(self):
+        import math
+        queue, chunks = {}, []
+        old = [[float(i)] * 7 for i in range(20)]
+        new = [[float(100 + i)] * 7 for i in range(20)]
+        commit_rtc_fused(queue, chunks, old, 0, 0, 0)
+        for step in range(8):
+            queue.pop(step)
+        _, _, info = commit_rtc_fused(queue, chunks, new, 8, 8, 1,
+                                     decay=0.1, max_chunks=3)
+        old_weight = math.exp(-0.1 * 8)
+        expected = (old_weight * 8 + 100) / (old_weight + 1)
+        self.assertAlmostEqual(queue[8][0][0], expected)
+        self.assertEqual(queue[8][0][6], new[0][6])
+        self.assertEqual(queue[8][4]['source_prediction_ids'], [1, 0])
+        self.assertEqual(info['arm_dimensions'], 6)
+        self.assertEqual(info['gripper_policy'], 'latest_prediction')
+
+    def test_rtc_fusion_does_not_reblend_single_source_steps(self):
+        queue, chunks = {}, []
+        first = [[1.0] * 7 for _ in range(4)]
+        second = [[3.0] * 7 for _ in range(4)]
+        commit_rtc_fused(queue, chunks, first, 0, 0, 0, max_chunks=3)
+        queue.pop(0)
+        commit_rtc_fused(queue, chunks, second, 4, 4, 1, max_chunks=3)
+        self.assertEqual(queue[4][0], second[0])
+        self.assertEqual(queue[4][4]['source_count'], 1)

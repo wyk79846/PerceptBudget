@@ -82,6 +82,66 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2,
     }
 
 
+def commit_rtc_fused(queue, raw_chunks, actions, origin, step, prediction_id,
+                     decay=0.1, max_chunks=3):
+    """Apply FlashRT's host-side temporal-fusion equations to arm dims only."""
+    import math
+    if not math.isfinite(decay) or decay < 0:
+        raise ValueError('RTC decay must be finite and non-negative')
+    if type(max_chunks) is not int or max_chunks < 1:
+        raise ValueError('RTC max_chunks must be a positive integer')
+    if any(len(action) != 7 for action in actions):
+        raise ValueError('RTC six-dimensional fusion requires 7D LIBERO actions')
+
+    latest = {'prediction_id': prediction_id, 'origin_step': origin,
+              'actions': [[float(v) for v in action] for action in actions]}
+    chunks = [chunk for chunk in raw_chunks
+              if chunk['origin_step'] + len(chunk['actions']) > step]
+    chunks.append(latest)
+    expired, overwritten = commit(queue, actions, origin, step, prediction_id)
+    begin = max(step, origin)
+    overlap_counts = {}
+    fused_steps = 0
+    for target in range(begin, origin + len(actions)):
+        candidates = [chunk for chunk in chunks
+                      if chunk['origin_step'] <= target <
+                      chunk['origin_step'] + len(chunk['actions'])]
+        candidates.sort(key=lambda chunk: chunk['prediction_id'], reverse=True)
+        candidates = candidates[:max_chunks]
+        latest_index = target - origin
+        total_weight = 0.0
+        arm = [0.0] * 6
+        weights = []
+        for chunk in candidates:
+            source_index = target - chunk['origin_step']
+            weight = math.exp(-decay * abs(source_index - latest_index))
+            weights.append(weight)
+            total_weight += weight
+            for dim in range(6):
+                arm[dim] += weight * chunk['actions'][source_index][dim]
+        if not candidates or total_weight <= 0:
+            raise RuntimeError('RTC fusion found no valid action source')
+        if len(candidates) > 1:
+            fused_steps += 1
+        overlap_counts[len(candidates)] = overlap_counts.get(len(candidates), 0) + 1
+        action = list(latest['actions'][latest_index])
+        for dim in range(6):
+            action[dim] = arm[dim] / total_weight
+        # Gripper dim 6 stays exactly equal to the latest model prediction.
+        item = queue[target]
+        metadata = {'prediction_id': prediction_id, 'source_prediction_ids':
+                    [chunk['prediction_id'] for chunk in candidates],
+                    'source_count': len(candidates), 'source_weights': weights,
+                    'arm_dimensions': 6, 'gripper_policy': 'latest_prediction'}
+        queue[target] = (action, item[1], item[2], item[3], metadata)
+    raw_chunks[:] = chunks[-max_chunks:]
+    return expired, overwritten, {
+        'fused_steps': fused_steps, 'source_count_histogram': overlap_counts,
+        'decay': decay, 'max_chunks': max_chunks, 'arm_dimensions': 6,
+        'gripper_policy': 'latest_prediction',
+    }
+
+
 def snapshot_scene(env, observation):
     import numpy as np
     sim = env.env.sim
@@ -119,12 +179,13 @@ def device_state():
 
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
-                action_blend_enabled=False, artifact_tag=''):
+                action_blend_enabled=False, rtc_fusion_enabled=False,
+                artifact_tag=''):
     observation, hz = base._prepare_env_episode(env, task, np)
     assert hz == 20
     base._seed_process(7, np, torch)
     period = 1 / hz
-    queue, requests, commits, rows, frames = {}, [], [], [], []
+    queue, requests, commits, rows, frames, raw_chunks = {}, [], [], [], [], []
     future = None
     current_request = None
     missed_triggers, underflows = [], []
@@ -209,12 +270,19 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         origin = current_request['observation_step']
         reference_remaining = reference_prefix_count(queue, step, q)
         blend = None
+        rtc_fusion = None
         merge_start = time.monotonic()
         if action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
                 beta=config['action_blend']['beta'],
                 blend_dims=config['action_blend']['blend_dims'])
+        elif rtc_fusion_enabled:
+            expired, overwritten, rtc_fusion = commit_rtc_fused(
+                queue, raw_chunks, actions, origin, step,
+                current_request['prediction_id'],
+                decay=config['rtc_action_fusion']['decay'],
+                max_chunks=config['rtc_action_fusion']['max_chunks'])
         else:
             expired, overwritten = commit(queue, actions, origin, step,
                                           current_request['prediction_id'], current_request.get('actions_raw'))
@@ -232,6 +300,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                   'new_queue_actions': buffer_count(queue, step)}
         if blend is not None:
             result['blend'] = blend
+            result['merge_seconds'] = time.monotonic() - merge_start
+        if rtc_fusion is not None:
+            result['rtc_action_fusion'] = rtc_fusion
             result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
@@ -279,6 +350,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                           'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
                 if action_blend_enabled and len(item) > 4:
                     source['blend'] = item[4]
+                elif rtc_fusion_enabled and len(item) > 4:
+                    source['rtc_action_fusion'] = item[4]
             action_start = time.monotonic()
             observation, reward, done, info = env.step(action)
             action_end = time.monotonic()
@@ -344,6 +417,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'adaptive_prefix': selector is not None,
               'trial_index': trial_index, 'condition': condition,
               'action_blend': action_blend_enabled,
+              'rtc_action_fusion': rtc_fusion_enabled,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
@@ -364,6 +438,8 @@ def main():
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
+    parser.add_argument('--rtc-action-fusion', action='store_true',
+                        help='use controller-side RTC temporal fusion on arm dims only')
     parser.add_argument('--blend-dims', type=int, choices=(6, 7), default=7,
                         help='blend 6 arm dimensions and use new gripper (6), or blend all 7')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
@@ -378,6 +454,8 @@ def main():
         args.prefix_lock = True
     if args.action_blend and args.prefix_lock:
         parser.error('action blending is tested separately from prefix locking')
+    if args.rtc_action_fusion and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8):
+        parser.error('RTC action fusion is a separate controller-side condition')
     if args.blend_dims != 7 and not args.action_blend:
         parser.error('--blend-dims requires --action-blend')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
@@ -419,6 +497,17 @@ def main():
             'N1_policy': 'direct new action (paper formula requires N>=2)',
             'claim': 'blending mechanism transplant, not complete paper reproduction'}
         config['execution_mode'] = 'action_blend_diagnostic'
+    if args.rtc_action_fusion:
+        config['rtc_action_fusion'] = {
+            'source': 'FlashRT host-side rtc_temporal_fusion equations',
+            'weight': 'exp(-decay * abs(old_index - latest_index))',
+            'combine': 'normalized weighted mean over raw overlapping chunks',
+            'decay': 0.1, 'max_chunks': 3,
+            'arm_dimensions': [0, 1, 2, 3, 4, 5],
+            'gripper_policy': 'latest_prediction',
+            'model_vjp': False,
+        }
+        config['execution_mode'] = 'rtc_action_fusion_diagnostic'
     if args.compare_action_blend_q8:
         config['execution_mode'] = 'q8_paired_action_blend_comparison'
         config['comparison'] = {
@@ -430,6 +519,7 @@ def main():
     config['screen'] = {**config['screen'], 'task_ids': [0],
                         'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
+               'rtc-action-fusion-6d' if args.rtc_action_fusion else
                'action-blend-6d-pilot' if args.action_blend and args.blend_dims == 6 else
                'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
@@ -444,12 +534,19 @@ def main():
         target = run_dir / 'source' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
+    if args.rtc_action_fusion:
+        rtc_source = Path(config['flashrt_root']) / 'flash_rt/runtime/rtc_temporal_fusion.py'
+        rtc_target = run_dir / 'source/flash_rt/runtime/rtc_temporal_fusion.py'
+        rtc_target.parent.mkdir(parents=True, exist_ok=True)
+        rtc_target.write_bytes(rtc_source.read_bytes())
     summary = {'status': 'running',
                'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
                            else 'single-task six-dimensional arm blend; diagnostic only'
                            if args.action_blend and args.blend_dims == 6
                            else 'single-task action-blend pilot; diagnostic only'
                            if args.action_blend
+                           else 'single-task six-dimensional RTC temporal fusion; diagnostic only'
+                           if args.rtc_action_fusion
                            else 'actual-delay episode; feasibility diagnostic only'),
                'task_ids': [0], 'q_values': q_values, 'episodes': [],
                'limitations': ['no RTC or fusion; expired-prefix crop/overwrite explicitly logged',
@@ -466,6 +563,10 @@ def main():
                                      'no prefix locking, RTC or event estimator'
                                      if args.compare_action_blend_q8 else
                                      'paper overlap blending only; no prefix locking, RTC or event estimator')
+    if args.rtc_action_fusion:
+        summary['rtc_action_fusion'] = dict(config['rtc_action_fusion'])
+        summary['limitations'][0] = ('host-side RTC temporal fusion on arm dimensions only; '
+                                     'no denoiser VJP or model changes')
     if args.compare_action_blend_q8:
         summary['comparison'] = dict(config['comparison'])
         summary['limitations'].append('single task and fixed seed/init; diagnostic pairs do not estimate LIBERO-wide success rate')
@@ -544,12 +645,14 @@ def main():
                     summary['episodes'].append(episode)
                     base._write_json_atomic(run_dir / 'summary.json', summary)
             else:
-                condition = 'paper_action_blend' if args.action_blend else 'crop_overwrite'
+                condition = ('rtc_temporal_fusion_6d' if args.rtc_action_fusion else
+                             'paper_action_blend' if args.action_blend else 'crop_overwrite')
                 for trial_index, q in enumerate(q_values, 1):
                     summary['episodes'].append(run_episode(
                         env, task, q, model, stats, config, np, torch, run_dir, stream,
                         prefix_adapter, trial_index=trial_index, condition=condition,
-                        action_blend_enabled=args.action_blend))
+                        action_blend_enabled=args.action_blend,
+                        rtc_fusion_enabled=args.rtc_action_fusion))
                     base._write_json_atomic(run_dir / 'summary.json', summary)
         summary['status'] = 'completed'
         summary['device_after'] = device_state()
