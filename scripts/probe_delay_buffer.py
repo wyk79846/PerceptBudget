@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""Two-episode actual-delay diagnostic, not a validated asynchronous policy."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts import eval_q as base
+from perceptbudget.experiment import create_run, load_config
+from perceptbudget.libero_input import load_libero_norm_stats, raw_libero_state
+from perceptbudget.power import PowerMonitor
+
+
+def buffer_count(queue, step):
+    end = step
+    while end in queue:
+        end += 1
+    return end - step
+
+
+def reference_prefix_count(queue, step, q):
+    end = step
+    while end in queue and queue[end][3] < q:
+        end += 1
+    return end - step
+
+
+def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
+    expired = overwritten = 0
+    for offset, action in enumerate(actions):
+        target = origin + offset
+        if target < step:
+            expired += 1
+            continue
+        overwritten += target in queue
+        item = (action, prediction_id, origin, offset)
+        queue[target] = item if raw_actions is None else item + (raw_actions[offset],)
+    return expired, overwritten
+
+
+def snapshot_scene(env, observation):
+    import numpy as np
+    sim = env.env.sim
+    numeric = {}
+    for key, value in observation.items():
+        if 'image' in key:
+            continue
+        array = np.asarray(value)
+        if array.dtype.kind in 'biuf':
+            numeric[key] = array.tolist()
+    contacts = []
+    for index in range(sim.data.ncon):
+        contact = sim.data.contact[index]
+        contacts.append({'geom1': sim.model.geom_id2name(contact.geom1),
+                         'geom2': sim.model.geom_id2name(contact.geom2),
+                         'distance': float(contact.dist)})
+    return {'raw_state': raw_libero_state(observation).tolist(),
+            'observations': numeric, 'sim_time': float(sim.data.time),
+            'sim_state': sim.get_state().flatten().tolist(), 'contacts': contacts}
+
+
+def device_state():
+    import glob
+    patterns = ['/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq',
+                '/sys/class/devfreq/*/cur_freq', '/sys/class/thermal/thermal_zone*/temp']
+    result = {}
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            try:
+                result[path] = Path(path).read_text().strip()
+            except OSError as exc:
+                result[path] = str(exc)
+    return result
+
+
+def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
+                prefix_adapter=None):
+    observation, hz = base._prepare_env_episode(env, task, np)
+    assert hz == 20
+    base._seed_process(7, np, torch)
+    period = 1 / hz
+    queue, requests, commits, rows, frames = {}, [], [], [], []
+    future = None
+    current_request = None
+    missed_triggers, underflows = [], []
+    selector = None
+    prefix_rejection = None
+    if config.get('adaptive_prefix'):
+        from perceptbudget.prefix_timing import PrefixTiming
+        selector = PrefixTiming(latency_seconds=config['adaptive_prefix']['initial_latency_s'])
+    monitor = PowerMonitor(poll_interval=0.1)
+    executor = ThreadPoolExecutor(max_workers=1)
+    monitor.start()
+    start = time.monotonic()
+    base._trace(stream, 'episode_start', task_id=task['task_id'], q=q,
+                task_name=task['task_name'], start_monotonic=start,
+                execution_mode=config.get('execution_mode', 'actual_delay_diagnostic'))
+
+    def submit(obs, step):
+        snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
+        request = {'prediction_id': len(requests), 'observation_step': step,
+                   'observation_monotonic': time.monotonic(),
+                   'model_state': snapshot.get('state'),
+                   'queue_before_submit_actions': buffer_count(queue, step)}
+        raw_prefix = None
+        prefix_len = None
+        if prefix_adapter is not None and step > 0:
+            prefix_len = prefix_adapter.prefix_len
+            if selector is not None:
+                decision = selector.choose(q=q, buffer_actions=buffer_count(queue, step))
+                request['prefix_decision'] = decision
+                prefix_len = decision['selected']
+                if prefix_len is None:
+                    base._trace(stream, 'prefix_plan_infeasible', task_id=task['task_id'],
+                                q=q, step=step, decision=decision)
+                    return None, request
+            if buffer_count(queue, step) < prefix_len:
+                raise RuntimeError('insufficient queued actions for committed prefix')
+            raw_prefix = np.asarray([queue[step + i][4] for i in range(prefix_len)])
+            request.update(committed_prefix_raw=raw_prefix.tolist(),
+                           committed_prefix_actions=[np.asarray(queue[step + i][0]).tolist() for i in range(prefix_len)],
+                           committed_interval_steps=[step, step + prefix_len],
+                           prefix_len=prefix_len,
+                           scheduled_commit_step=step + prefix_len)
+        requests.append(request)
+
+        def predict():
+            if prefix_adapter is None:
+                actions = base._infer_actions(model, snapshot, task['instruction'],
+                                              config['H'], request)
+            else:
+                actions, raw = prefix_adapter.predict(snapshot, task['instruction'], request, raw_prefix,
+                                                     prefix_len=prefix_len)
+                request['actions_raw'] = raw.tolist()
+            request['ready_monotonic'] = time.monotonic()
+            request['actions'] = actions.tolist()
+            return actions
+
+        return executor.submit(predict), request
+
+    def harvest(step):
+        nonlocal future, current_request
+        if future is None or not future.done():
+            return
+        ready_actions = future.result()
+        if selector is not None and not current_request.get('latency_observed'):
+            selector.observe_latency(current_request['ready_monotonic'] - current_request['observation_monotonic'])
+            current_request['latency_observed'] = True
+        current_request.setdefault('ready_observed_step', step)
+        scheduled = current_request.get('scheduled_commit_step', 0)
+        if step < scheduled:
+            return  # Never replace a prefix already committed for execution.
+        if prefix_adapter is not None and scheduled and step > scheduled:
+            future.result()  # Propagate model errors even for a late result.
+            base._trace(stream, 'late_prefix_result_discarded', task_id=task['task_id'], q=q,
+                        request=current_request, step=step, scheduled=scheduled)
+            current_request['late_discarded'] = True
+            future, current_request = None, None
+            return
+        actions = ready_actions
+        before = buffer_count(queue, step)
+        origin = current_request['observation_step']
+        reference_remaining = reference_prefix_count(queue, step, q)
+        expired, overwritten = commit(queue, actions, origin, step,
+                                      current_request['prediction_id'], current_request.get('actions_raw'))
+        result = {'prediction_id': current_request['prediction_id'],
+                  'observation_step': origin, 'commit_step': step,
+                  'commit_monotonic': time.monotonic(),
+                  'old_queue_remaining_actions': before,
+                  'old_queue_remaining_nominal_seconds': before * period,
+                  'old_reference_prefix_remaining_actions': reference_remaining,
+                  'B_safe_seconds': None,
+                  'control_steps_during_inference': current_request['ready_observed_step'] - origin,
+                  'control_steps_until_commit': step - origin,
+                  'prefix_exact': current_request.get('prefix_exact'),
+                  'expired_new_actions': expired, 'overwritten_old_actions': overwritten,
+                  'new_queue_actions': buffer_count(queue, step)}
+        commits.append(result)
+        base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
+                    request=current_request, **result)
+        future, current_request = None, None
+
+    stop = None
+    status = 'invalid'
+    try:
+        future, current_request = submit(observation, 0)
+        future.result()  # Only bootstrap blocks; no control ticks yet.
+        harvest(0)
+        deadline = time.monotonic()
+        for step in range(task['max_steps']):
+            tick = time.monotonic()
+            if selector is not None and rows:
+                selector.observe_tick(tick - rows[-1]['tick_monotonic'])
+            before = snapshot_scene(env, observation)
+            frames.append(np.concatenate((observation['agentview_image'],
+                                         observation['robot0_eye_in_hand_image']), axis=1))
+            harvest(step)
+            if step and step % q == 0:
+                if future is None:
+                    future, current_request = submit(observation, step)
+                    if future is None:
+                        prefix_rejection = current_request
+                        frames.pop()  # No action was executed for this tick.
+                        status = 'infeasible_prefix_plan'
+                        break
+                else:
+                    missed_triggers.append(step)
+                    base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q, step=step)
+            queued = buffer_count(queue, step)
+            item = queue.pop(step, None)
+            if item is None:
+                underflows.append(step)
+                # Explicit zero-translation, zero-rotation, neutral gripper command.
+                action = np.zeros(7, dtype=np.float32)
+                source = None
+            else:
+                action = np.asarray(item[0], dtype=np.float32)
+                source = {'prediction_id': item[1], 'origin_step': item[2],
+                          'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
+            action_start = time.monotonic()
+            observation, reward, done, info = env.step(action)
+            action_end = time.monotonic()
+            after = snapshot_scene(env, observation)
+            success = bool(env.check_success())
+            # Harvest only on control thread, also after a step, never block it.
+            harvest(step + 1)
+            terminal = success or done or step + 1 == task['max_steps']
+            deadline += period
+            overrun = max(0.0, time.monotonic() - deadline)
+            row = {'step': step, 'tick_monotonic': tick,
+                   'action_start_monotonic': action_start, 'action_end_monotonic': action_end,
+                   'before': before, 'after': after, 'action': action.tolist(),
+                   'source': source, 'queue_before_pop_actions': queued,
+                   'queue_after_step_actions': buffer_count(queue, step + 1),
+                   'inference_active': future is not None,
+                   'deadline_overrun_seconds': overrun,
+                   'success': success, 'env_done': bool(done), 'reward': float(reward)}
+            rows.append(row)
+            base._trace(stream, 'control_step', task_id=task['task_id'], q=q, **row)
+            if step % 20 == 0:
+                base._trace(stream, 'device_state', q=q, step=step,
+                            timestamp_monotonic=time.monotonic(), values=device_state())
+            if terminal:
+                status = 'success' if success else 'timeout' if step + 1 == task['max_steps'] else 'failure'
+                break
+            # No catch-up bursts. Slow simulation is recorded, not called real 20Hz.
+            if time.monotonic() > deadline:
+                deadline = time.monotonic()
+            else:
+                time.sleep(max(0, deadline - time.monotonic()))
+        stop = time.monotonic()
+    finally:
+        if stop is None:
+            stop = time.monotonic()
+        monitor.stop()
+        executor.shutdown(wait=True)
+        for request in requests:
+            if 'actions' in request and not any(c['prediction_id'] == request['prediction_id'] for c in commits):
+                base._trace(stream, 'uncommitted_prediction', task_id=task['task_id'], q=q,
+                            request=request, reason=('not committed before task termination; may be ready before committed prefix ends'
+                                                     if prefix_adapter else 'completed after final harvest; not executed'))
+        base._write_json_atomic(run_dir / f'q{q}_requests.json', requests)
+        if frames:
+            frames.append(np.concatenate((observation['agentview_image'],
+                                         observation['robot0_eye_in_hand_image']), axis=1))
+            np.savez_compressed(run_dir / f'q{q}_frames.npz',
+                                frames=np.asarray(frames), control_period_s=period,
+                                note='raw LIBERO images; rotate180 for viewing; final frame included')
+    busy = sum(max(0, min(stop, r['inference_ended_monotonic']) -
+                   max(start, r['inference_started_monotonic'])) for r in requests)
+    intervals = [b['observation_step'] - a['observation_step'] for a, b in zip(requests, requests[1:])]
+    result = {'task_id': task['task_id'], 'task_name': task['task_name'], 'q': q,
+              'status': status, 'steps': len(rows), 'simulated_seconds': len(rows) * period,
+              'real_seconds': stop - start, 'start_monotonic': start, 'stop_monotonic': stop,
+              'inference_busy_seconds': busy, 'inference_duty': busy / (stop - start),
+              'busy_trigger_steps': missed_triggers, 'actual_refresh_intervals_steps': intervals,
+              'prefix_lock': prefix_adapter is not None,
+              'prefix_len': None if selector else prefix_adapter.prefix_len if prefix_adapter else 0,
+              'adaptive_prefix': selector is not None,
+              'prefix_plan_rejection': prefix_rejection,
+              'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
+              'underflow_steps': underflows, 'commits': commits,
+              'tail_execution_steps': sum(bool(r['source'] and r['source']['beyond_sync_q_prefix']) for r in rows),
+              'post_bootstrap_control_hz': (len(rows) - 1) / (rows[-1]['action_end_monotonic'] - rows[0]['action_end_monotonic']) if len(rows) > 1 else None,
+              'control_deadline_overruns': sum(r['deadline_overrun_seconds'] > 0 for r in rows),
+              'power': base._power_result(monitor, start, stop),
+              'field_checks': {'full_predictions': all(len(r.get('actions', [])) == config['H'] for r in requests),
+                               'pre_post_state': all('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows),
+                               'scene_contacts': all('contacts' in r['after'] for r in rows),
+                               'frames': len(frames) == len(rows) + 1}}
+    print(json.dumps({k: result[k] for k in ('q', 'status', 'steps', 'real_seconds', 'post_bootstrap_control_hz', 'tail_execution_steps', 'field_checks')}, ensure_ascii=False), flush=True)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--prefix-lock', action='store_true')
+    parser.add_argument('--adaptive-prefix', action='store_true')
+    parser.add_argument('--interface-only', action='store_true')
+    args = parser.parse_args()
+    if args.adaptive_prefix:
+        args.prefix_lock = True
+    if args.interface_only and not args.prefix_lock:
+        parser.error('--interface-only requires --prefix-lock')
+    os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
+    config = load_config(repo_root=ROOT)
+    config.update(candidate_q=[8, 12], execution_mode='prefix_lock_diagnostic' if args.prefix_lock else 'actual_delay_diagnostic')
+    if args.prefix_lock:
+        config['prefix_lock'] = {'length': 8, 'full_rtc': False,
+                                 'early_result': 'wait until committed prefix ends',
+                                 'late_result': 'discard and record; never silently claim prefix agreement'}
+    if args.adaptive_prefix:
+        config['adaptive_prefix'] = {'lengths': [5, 6, 7, 8], 'margin_s': 0.005,
+                                     'latency_estimator': 'recent16 nearest-rank p80',
+                                     'tick_estimator': 'recent16 nearest-rank p20; at least nominal50ms',
+                                     'no_feasible_choice': 'stop episode explicitly; no silent clamp'}
+        config['execution_mode'] = 'adaptive_prefix_diagnostic'
+    config['screen'] = {**config['screen'], 'task_ids': [0], 'trials_per_task': 1}
+    purpose = 'adaptive-prefix-pilot' if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot'
+    run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
+    print('run_dir=' + str(run_dir), flush=True)
+    for name in ('scripts/probe_delay_buffer.py', 'scripts/eval_q.py', 'perceptbudget/model.py',
+                 'perceptbudget/libero_input.py', 'perceptbudget/power.py', 'perceptbudget/prefix_model.py') + (
+                     ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()):
+        source = ROOT / name
+        target = run_dir / 'source' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    summary = {'status': 'running', 'purpose': 'two actual-delay episodes; feasibility diagnostic only',
+               'task_ids': [0], 'q_values': [8, 12], 'episodes': [],
+               'limitations': ['no RTC or fusion; expired-prefix crop/overwrite explicitly logged',
+                              'queued buffer is not verified safe buffer',
+                              'same q means requested trigger interval; skipped busy triggers reported',
+                              'actual control speed measured; not assumed real 20Hz',
+                              'no additional injected latency; instrumentation overhead included'],
+               'state_protocol': base.STATE_PROTOCOL_NOTE,
+               'norm_stats_sha256': hashlib.sha256(Path(config['norm_stats_path']).read_bytes()).hexdigest(),
+               'device_before': device_state()}
+    env = None
+    prefix_adapter = None
+    try:
+        base._save_run_status(run_dir, 'running')
+        summary['egl_cleanup'] = base._patch_egl_cleanup()
+        torch, cuda = base._check_cuda_and_native(config)
+        summary['cuda'] = cuda
+        import numpy as np
+        stats = load_libero_norm_stats(config['norm_stats_path'])
+        task = base._load_tasks([0], config['screen']['suites'])[0]
+        summary['task'] = {key: task[key] for key in
+                           ('task_id', 'suite', 'suite_task_id', 'task_name',
+                            'instruction', 'bddl_path', 'max_steps')}
+        summary['seed'] = 7
+        summary['init_state_index'] = 0
+        _, env_class = base._libero_api()
+        model = base._load_and_check_model(config, torch)
+        if args.prefix_lock:
+            from perceptbudget.prefix_model import PrefixModel
+            prefix_adapter = PrefixModel(model, prefix_len=8)
+            summary['limitations'][0] = 'prefix locking, not full RTC; no VJP guidance or blending'
+        env = base._make_env(env_class, task)
+        obs, _ = base._prepare_env_episode(env, task, np)
+        warm_snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
+        if prefix_adapter is None:
+            base._infer_actions(model, warm_snapshot, task['instruction'], config['H'], {})
+        else:
+            gate_timing = {}
+            _, raw = prefix_adapter.predict(warm_snapshot, task['instruction'], {})
+            if args.adaptive_prefix:
+                prefix_adapter.prepare_variants(config['adaptive_prefix']['lengths'])
+                gates = []
+                for length in config['adaptive_prefix']['lengths']:
+                    timing = {}
+                    output, raw_output = prefix_adapter.predict(warm_snapshot, task['instruction'], timing,
+                                                                raw[8:8 + length], prefix_len=length)
+                    gates.append({'prefix_len': length, 'prefix_exact': timing['prefix_exact'],
+                                  'finite_raw': bool(np.isfinite(raw_output).all()),
+                                  'inference_seconds': timing['inference_ended_monotonic'] - timing['inference_started_monotonic']})
+                summary['variant_gates'] = gates
+                from statistics import median
+                config['adaptive_prefix']['initial_latency_s'] = median(g['inference_seconds'] for g in gates)
+                summary['adaptive_prefix'] = dict(config['adaptive_prefix'])
+            gate_actions, gate_raw = prefix_adapter.predict(warm_snapshot, task['instruction'],
+                                                           gate_timing, raw[8:16])
+            summary['interface_gate'] = {'prefix_exact': gate_timing['prefix_exact'],
+                                         'finite_raw': bool(np.isfinite(gate_raw).all()),
+                                         'finite_actions': bool(np.isfinite(gate_actions).all()),
+                                         'shape': list(gate_raw.shape),
+                                         'inference_seconds': gate_timing['inference_ended_monotonic'] - gate_timing['inference_started_monotonic']}
+            base._write_json_atomic(run_dir / 'summary.json', summary)
+            print('prefix_interface_gate=' + json.dumps(summary['interface_gate']), flush=True)
+        if args.interface_only:
+            summary['status'] = 'interface_only_completed'
+            base._save_run_status(run_dir, 'interface_only_completed', completed_episodes=0)
+            return
+        with (run_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
+            for q in (8, 12):
+                summary['episodes'].append(run_episode(env, task, q, model, stats, config,
+                                                       np, torch, run_dir, stream, prefix_adapter))
+                base._write_json_atomic(run_dir / 'summary.json', summary)
+        summary['status'] = 'completed'
+        summary['device_after'] = device_state()
+        base._save_run_status(run_dir, 'completed', completed_episodes=2)
+    except BaseException as exc:
+        summary.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
+        base._save_run_status(run_dir, 'invalid', error=summary['error'])
+        raise
+    finally:
+        base._write_json_atomic(run_dir / 'summary.json', summary)
+        if env is not None:
+            env.close()
+
+
+if __name__ == '__main__':
+    main()
