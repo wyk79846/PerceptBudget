@@ -200,9 +200,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 execution_mode=config.get('execution_mode', 'actual_delay_diagnostic'))
 
     def submit(obs, step):
+        observation_started = time.monotonic()
         snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         request = {'prediction_id': len(requests), 'observation_step': step,
-                   'observation_monotonic': time.monotonic(),
+                   'observation_monotonic': observation_started,
+                   'input_ready_monotonic': time.monotonic(),
                    'model_state': snapshot.get('state'),
                    'queue_before_submit_actions': buffer_count(queue, step)}
         raw_prefix = None
@@ -235,8 +237,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 actions, raw = prefix_adapter.predict(snapshot, task['instruction'], request, raw_prefix,
                                                      prefix_len=prefix_len)
                 request['actions_raw'] = raw.tolist()
-            request['ready_monotonic'] = time.monotonic()
             request['actions'] = actions.tolist()
+            request['ready_monotonic'] = time.monotonic()
             return actions
 
         return executor.submit(predict), request
@@ -292,6 +294,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                   'control_steps_until_commit': step - origin,
                   'prefix_exact': current_request.get('prefix_exact'),
                   'expired_new_actions': expired, 'overwritten_old_actions': overwritten,
+                  'new_prediction_remaining_actions': len(actions) - expired,
+                  'new_prediction_remaining_nominal_seconds': (len(actions) - expired) * period,
+                  'new_prediction_remaining_interval_steps': [max(origin, step), max(step, origin + len(actions))],
                   'new_queue_actions': buffer_count(queue, step)}
         if blend is not None:
             result['blend'] = blend
@@ -419,6 +424,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'tail_execution_steps': sum(bool(r['source'] and r['source']['beyond_sync_q_prefix']) for r in rows),
               'post_bootstrap_control_hz': (len(rows) - 1) / (rows[-1]['action_end_monotonic'] - rows[0]['action_end_monotonic']) if len(rows) > 1 else None,
               'control_deadline_overruns': sum(r['deadline_overrun_seconds'] > 0 for r in rows),
+              'initial_sim_state_sha256': hashlib.sha256(np.asarray(rows[0]['before']['sim_state'], dtype=np.float64).tobytes()).hexdigest() if rows else None,
+              'initial_frames_sha256': hashlib.sha256(np.asarray(frames[0]).tobytes()).hexdigest() if frames else None,
+              'initial_raw_state': rows[0]['before']['raw_state'] if rows else None,
+              'underflow_nominal_seconds': len(underflows) * period,
+              'underflow_env_step_real_seconds': sum(r['action_end_monotonic'] - r['action_start_monotonic'] for r in rows if r['source'] is None),
               'power': base._power_result(monitor, start, stop),
               'field_checks': {'full_predictions': all(len(r.get('actions', [])) == config['H'] for r in requests),
                                'pre_post_state': all('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows),
