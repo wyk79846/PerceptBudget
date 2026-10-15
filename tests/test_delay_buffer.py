@@ -64,21 +64,7 @@ class DelayBufferTest(unittest.TestCase):
         self.assertEqual(info['weights_old'], [0.0])
         self.assertEqual(queue[1][0], [0.9] * 7)
 
-    def test_six_dimensional_blend_uses_new_gripper(self):
-        queue = {}
-        old = [[float(i)] * 7 for i in range(20)]
-        new = [[float(100 + i)] * 7 for i in range(20)]
-        commit(queue, old, 0, 0, 0)
-        for step in range(8):
-            queue.pop(step)
-        _, _, info = commit_blended(queue, new, 8, 8, 1, blend_dims=6)
-        merged = queue[9][0]
-        self.assertNotEqual(merged[:6], old[9][:6])
-        self.assertEqual(merged[6], new[1][6])
-        self.assertEqual(info['blended_dimensions'], 6)
-        self.assertEqual(info['gripper_policy'], 'new_prediction')
-
-    def test_rtc_fusion_uses_temporal_weights_and_latest_gripper(self):
+    def test_rtc_fusion_uses_temporal_weights_on_arm_and_latest_gripper(self):
         import math
         queue, chunks = {}, []
         old = [[float(i)] * 7 for i in range(20)]
@@ -95,6 +81,13 @@ class DelayBufferTest(unittest.TestCase):
         self.assertEqual(queue[8][4]['source_prediction_ids'], [1, 0])
         self.assertEqual(info['arm_dimensions'], 6)
         self.assertEqual(info['gripper_policy'], 'latest_prediction')
+
+    def test_rtc_fusion_accepts_numpy_action_batch(self):
+        import numpy as np
+        queue, chunks = {}, []
+        actions = np.ones((2, 7), dtype=np.float32)
+        commit_rtc_fused(queue, chunks, actions, 0, 0, 0)
+        self.assertEqual(queue[0][0][6], 1.0)
 
     def test_rtc_fusion_does_not_reblend_single_source_steps(self):
         queue, chunks = {}, []

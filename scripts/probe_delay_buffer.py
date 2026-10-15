@@ -45,14 +45,9 @@ def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     return expired, overwritten
 
 
-def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2,
-                   blend_dims=7):
+def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
     """Same absolute-step alignment as baseline; change only overlap update."""
     from perceptbudget.action_blend import blend_actions
-    if blend_dims not in (6, 7):
-        raise ValueError('blend_dims must be 6 or 7 for LIBERO actions')
-    if blend_dims == 6 and any(len(action) != 7 for action in actions):
-        raise ValueError('six-dimensional arm blend requires 7D LIBERO actions')
     begin = max(step, origin)
     count = min(buffer_count(queue, begin), max(0, origin + len(actions) - begin))
     old = [[float(v) for v in queue[begin + i][0]] for i in range(count)]
@@ -61,9 +56,6 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2,
                 'offset': queue[begin + i][3], 'already_blended': len(queue[begin + i]) > 4}
                for i in range(count)]
     merged, weights = blend_actions(old, new, beta=beta)
-    if blend_dims == 6:
-        for index, action in enumerate(merged):
-            action[6] = new[index][6]
     expired, overwritten = commit(queue, actions, origin, step, prediction_id)
     for i in range(count):
         target = begin + i
@@ -76,22 +68,24 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2,
         'new_offset_interval': [begin - origin, begin - origin + count],
         'beta': beta, 'weights_old': weights, 'old_actions': old,
         'new_actions': new, 'merged_actions': merged, 'old_sources': sources,
-        'blended_dimensions': blend_dims,
-        'gripper_policy': 'new_prediction' if blend_dims == 6 else 'same_blend_as_arm',
+        'blended_dimensions': len(actions[0]) if actions else 0,
+        'gripper_policy': 'same_blend_as_arm',
         'single_overlap_policy': 'new action directly; paper only defines N>=2',
     }
 
 
 def commit_rtc_fused(queue, raw_chunks, actions, origin, step, prediction_id,
                      decay=0.1, max_chunks=3):
-    """Apply FlashRT's host-side temporal-fusion equations to arm dims only."""
+    """Fuse the six arm dimensions with FlashRT's host-side RTC equations."""
     import math
     if not math.isfinite(decay) or decay < 0:
         raise ValueError('RTC decay must be finite and non-negative')
     if type(max_chunks) is not int or max_chunks < 1:
         raise ValueError('RTC max_chunks must be a positive integer')
+    if len(actions) == 0 or len(actions[0]) == 0:
+        raise ValueError('RTC fusion requires non-empty action vectors')
     if any(len(action) != 7 for action in actions):
-        raise ValueError('RTC six-dimensional fusion requires 7D LIBERO actions')
+        raise ValueError('LIBERO RTC fusion requires 7D actions')
 
     latest = {'prediction_id': prediction_id, 'origin_step': origin,
               'actions': [[float(v) for v in action] for action in actions]}
@@ -110,7 +104,7 @@ def commit_rtc_fused(queue, raw_chunks, actions, origin, step, prediction_id,
         candidates = candidates[:max_chunks]
         latest_index = target - origin
         total_weight = 0.0
-        arm = [0.0] * 6
+        fused_arm = [0.0] * 6
         weights = []
         for chunk in candidates:
             source_index = target - chunk['origin_step']
@@ -118,7 +112,7 @@ def commit_rtc_fused(queue, raw_chunks, actions, origin, step, prediction_id,
             weights.append(weight)
             total_weight += weight
             for dim in range(6):
-                arm[dim] += weight * chunk['actions'][source_index][dim]
+                fused_arm[dim] += weight * chunk['actions'][source_index][dim]
         if not candidates or total_weight <= 0:
             raise RuntimeError('RTC fusion found no valid action source')
         if len(candidates) > 1:
@@ -126,18 +120,20 @@ def commit_rtc_fused(queue, raw_chunks, actions, origin, step, prediction_id,
         overlap_counts[len(candidates)] = overlap_counts.get(len(candidates), 0) + 1
         action = list(latest['actions'][latest_index])
         for dim in range(6):
-            action[dim] = arm[dim] / total_weight
-        # Gripper dim 6 stays exactly equal to the latest model prediction.
+            action[dim] = fused_arm[dim] / total_weight
+        # The gripper uses the newest model prediction without temporal fusion.
         item = queue[target]
         metadata = {'prediction_id': prediction_id, 'source_prediction_ids':
                     [chunk['prediction_id'] for chunk in candidates],
                     'source_count': len(candidates), 'source_weights': weights,
-                    'arm_dimensions': 6, 'gripper_policy': 'latest_prediction'}
+                    'arm_dimensions': 6,
+                    'gripper_policy': 'latest_prediction'}
         queue[target] = (action, item[1], item[2], item[3], metadata)
     raw_chunks[:] = chunks[-max_chunks:]
     return expired, overwritten, {
         'fused_steps': fused_steps, 'source_count_histogram': overlap_counts,
-        'decay': decay, 'max_chunks': max_chunks, 'arm_dimensions': 6,
+        'decay': decay, 'max_chunks': max_chunks,
+        'arm_dimensions': 6,
         'gripper_policy': 'latest_prediction',
     }
 
@@ -275,8 +271,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
-                beta=config['action_blend']['beta'],
-                blend_dims=config['action_blend']['blend_dims'])
+                beta=config['action_blend']['beta'])
         elif rtc_fusion_enabled:
             expired, overwritten, rtc_fusion = commit_rtc_fused(
                 queue, raw_chunks, actions, origin, step,
@@ -439,9 +434,7 @@ def main():
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
     parser.add_argument('--rtc-action-fusion', action='store_true',
-                        help='use controller-side RTC temporal fusion on arm dims only')
-    parser.add_argument('--blend-dims', type=int, choices=(6, 7), default=7,
-                        help='blend 6 arm dimensions and use new gripper (6), or blend all 7')
+                        help='use RTC temporal fusion on arm dims; take gripper from newest prediction')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
                         help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
@@ -456,8 +449,6 @@ def main():
         parser.error('action blending is tested separately from prefix locking')
     if args.rtc_action_fusion and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8):
         parser.error('RTC action fusion is a separate controller-side condition')
-    if args.blend_dims != 7 and not args.action_blend:
-        parser.error('--blend-dims requires --action-blend')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
         parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
     if args.compare_action_blend_q8 and args.q is not None:
@@ -489,9 +480,8 @@ def main():
     if args.action_blend or args.compare_action_blend_q8:
         config['action_blend'] = {
             'beta': 1.2, 'source': 'https://arxiv.org/html/2609.22587v1#S4.SS3',
-            'equations': [8, 9], 'blend_dims': args.blend_dims,
-            'blended_dimensions': args.blend_dims,
-            'gripper_policy': 'new_prediction' if args.blend_dims == 6 else 'same_blend_as_arm',
+            'equations': [8, 9], 'action_dimensions': list(range(7)),
+            'gripper_policy': 'same_blend_as_arm',
             'alignment': 'absolute observation-step grid, expired new prefix discarded',
             'event_estimator': False, 'prefix_lock': False,
             'N1_policy': 'direct new action (paper formula requires N>=2)',
@@ -503,7 +493,7 @@ def main():
             'weight': 'exp(-decay * abs(old_index - latest_index))',
             'combine': 'normalized weighted mean over raw overlapping chunks',
             'decay': 0.1, 'max_chunks': 3,
-            'arm_dimensions': [0, 1, 2, 3, 4, 5],
+            'arm_dimensions': list(range(6)),
             'gripper_policy': 'latest_prediction',
             'model_vjp': False,
         }
@@ -520,7 +510,6 @@ def main():
                         'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
-               'action-blend-6d-pilot' if args.action_blend and args.blend_dims == 6 else
                'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
@@ -541,11 +530,9 @@ def main():
         rtc_target.write_bytes(rtc_source.read_bytes())
     summary = {'status': 'running',
                'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
-                           else 'single-task six-dimensional arm blend; diagnostic only'
-                           if args.action_blend and args.blend_dims == 6
                            else 'single-task action-blend pilot; diagnostic only'
                            if args.action_blend
-                           else 'single-task six-dimensional RTC temporal fusion; diagnostic only'
+                           else 'single-task six-dimensional arm RTC temporal fusion; diagnostic only'
                            if args.rtc_action_fusion
                            else 'actual-delay episode; feasibility diagnostic only'),
                'task_ids': [0], 'q_values': q_values, 'episodes': [],
@@ -565,7 +552,7 @@ def main():
                                      'paper overlap blending only; no prefix locking, RTC or event estimator')
     if args.rtc_action_fusion:
         summary['rtc_action_fusion'] = dict(config['rtc_action_fusion'])
-        summary['limitations'][0] = ('host-side RTC temporal fusion on arm dimensions only; '
+        summary['limitations'][0] = ('host-side RTC temporal fusion on arm dimensions; gripper uses latest prediction; '
                                      'no denoiser VJP or model changes')
     if args.compare_action_blend_q8:
         summary['comparison'] = dict(config['comparison'])
