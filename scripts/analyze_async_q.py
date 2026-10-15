@@ -109,11 +109,19 @@ def prediction_events(rows, requests, commits):
             continue
         origin, start = request['observation_step'], commit['commit_step']
         end = origin+len(request['actions'])  # exclusive absolute-action boundary
+        alignment = commit.get('action_alignment')
+        if alignment:
+            low, high = alignment['retained_prediction_offset_interval']
+            end = start + alignment['remaining_actions']
+            forecast_rows = [{'step': start+i-low, 'action': request['actions'][i]}
+                             for i in range(max(0, low-1), high)]
+        else:
+            forecast_rows = [{'step': origin+i, 'action': a}
+                             for i, a in enumerate(request['actions'])]
         # Both forecast and actual events must have their complete matching window
         # observed inside this forecast's actionable interval. Tail is censored.
         hi = min(end, observed_end)-1
-        forecast = command_events([{'step': origin+i, 'action': a}
-                                   for i, a in enumerate(request['actions'])])
+        forecast = command_events(forecast_rows)
         pred = [e for e in forecast if start <= e['step'] <= hi]
         obs = [e for e in actual if start <= e['step'] <= hi]
         pairs = sorted((abs(p['step']-a['step']), i, j)
@@ -134,6 +142,7 @@ def prediction_events(rows, requests, commits):
                        'unmatched_actual_commands': unmatched_a,
                        'boundary_censored_predictions': [e for i, e in enumerate(pred) if i not in used_p and e not in unmatched_p],
                        'boundary_censored_actual': [e for j, e in enumerate(obs) if j not in used_a and e not in unmatched_a],
+                       'action_alignment': alignment,
                        'right_censored_forecast_events': [e for e in forecast if e['step'] >= observed_end and e['step'] >= start]})
     return output
 
@@ -143,17 +152,19 @@ def buffer_statistics(commits):
     for c in commits:
         expired = c.get('expired_new_actions')
         new = c.get('new_prediction_remaining_actions', c.get('new_queue_actions'))
+        elapsed = c.get('control_steps_until_commit', expired)
         records.append({'prediction_id': c.get('prediction_id'),
                         'observation_step': c.get('observation_step'),
                         'commit_step': c.get('commit_step'),
                         'elapsed_control_steps': c.get('control_steps_until_commit'),
                         'expired_new_actions': expired, 'new_valid_actions': new,
+                        'action_alignment': c.get('action_alignment'),
                         'new_queue_actions': c.get('new_queue_actions'),
                         'new_prediction_remaining_interval_steps': c.get('new_prediction_remaining_interval_steps'),
                         'new_valid_seconds': None if new is None else new*DT,
                         'old_queue_actions': c.get('old_queue_remaining_actions'),
                         'old_queue_seconds': None if c.get('old_queue_remaining_actions') is None else c['old_queue_remaining_actions']*DT,
-                        'h20_consistent': None if expired is None or new is None else new == max(0, H-expired)})
+                        'h20_consistent': None if elapsed is None or new is None else new == max(0, H-elapsed)})
     steady = [r for r in records if (isinstance(r['prediction_id'], (int, float)) and r['prediction_id'] > 0)
               or (r['observation_step'] is not None and r['observation_step'] > 0)]
     startup = [r for r in records if r not in steady]

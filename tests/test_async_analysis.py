@@ -103,6 +103,28 @@ class AsyncAnalysisTest(unittest.TestCase):
         self.assertEqual(len(result['matches']), 1)
         self.assertEqual(result['matches'][0]['error_steps_actual_minus_predicted'], 0)
 
+    def test_retimed_chunk_events_follow_actual_scheduled_offsets(self):
+        actions = [[.2, 0, 0, 0, 0, 0, -1] for _ in range(20)]
+        for i in range(5, 20):
+            actions[i][6] = 1
+        # observation5, arrival12, retained model offsets3..15: offset5 at14.
+        actual = [row(i, [.2, 0, 0, 0, 0, 0, 1 if i >= 14 else -1])
+                  for i in range(25)]
+        commit = {'prediction_id': 1, 'commit_step': 12,
+                  'action_alignment': {'retained_prediction_offset_interval': [3, 16],
+                                       'remaining_actions': 13}}
+        result = prediction_events(actual,
+            [{'prediction_id': 1, 'observation_step': 5, 'actions': actions}], [commit])[0]
+        match = next(m for m in result['matches'] if m['type'] == 'gripper_switch')
+        self.assertEqual(match['predicted_step'], 14)
+        self.assertEqual(match['error_steps_actual_minus_predicted'], 0)
+
+    def test_retiming_does_not_turn_discarded_prefix_count_into_extra_buffer(self):
+        result = buffer_statistics([{'prediction_id': 1, 'control_steps_until_commit': 7,
+            'expired_new_actions': 3, 'new_prediction_remaining_actions': 13,
+            'action_alignment': {'discarded_prefix_actions': 3, 'discarded_tail_actions': 4}}])
+        self.assertTrue(result['records'][0]['h20_consistent'])
+
     def test_compare_common_prefix_and_eef_only_xyz(self):
         base = [row(i) for i in range(4)]
         candidate = [row(i, position=[i*.01, .1, 0]) for i in range(2)]

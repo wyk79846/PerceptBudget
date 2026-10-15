@@ -21,6 +21,31 @@ from scripts import probe_delay_buffer as probe
 from perceptbudget.experiment import create_run, load_config
 
 
+HANDOFF_PROFILES = ('crop_overwrite', 'latency_limited_progress')
+
+
+def configure_handoff(config, requested=None, *, resume=False):
+    profile = config.get('action_handoff', 'crop_overwrite') if resume else (requested or 'crop_overwrite')
+    if profile not in HANDOFF_PROFILES or (resume and requested is not None and requested != profile):
+        raise ValueError('Resume cannot change handoff profile')
+    if not resume:
+        config['action_handoff'] = profile
+        if profile == 'latency_limited_progress':
+            config.update(alignment_policy='progress', refresh_policy='latest_due',
+                          pending_arm_gain=0.5)
+    return profile
+
+
+def handoff_options(config):
+    profile = config.get('action_handoff', 'crop_overwrite')
+    options = {'condition': profile}
+    if profile == 'latency_limited_progress':
+        options.update(alignment_policy=config['alignment_policy'],
+                       refresh_policy=config['refresh_policy'],
+                       pending_arm_gain=config['pending_arm_gain'])
+    return options
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -34,8 +59,9 @@ def validate_episode(episode, horizon):
     checks = episode.get('field_checks', {})
     if not checks or not all(checks.values()):
         raise RuntimeError('Incomplete episode fields: ' + repr(checks))
-    if episode.get('condition') != 'crop_overwrite':
-        raise RuntimeError('This scan requires ordinary async crop/overwrite')
+    profile = episode.get('condition')
+    if profile not in HANDOFF_PROFILES:
+        raise RuntimeError('Unknown handoff profile')
     if not episode.get('initial_sim_state_sha256') or not episode.get('initial_frames_sha256'):
         raise RuntimeError('Missing paired initial-state/frame fingerprints')
     for item in episode['commits']:
@@ -43,8 +69,30 @@ def validate_episode(episode, horizon):
         remaining = max(0, horizon - elapsed)
         if item['new_prediction_remaining_actions'] != remaining:
             raise RuntimeError('Incorrect remaining prediction interval')
-        if item['expired_new_actions'] != min(horizon, elapsed):
-            raise RuntimeError('Incorrect expired prediction prefix')
+        if profile == 'crop_overwrite':
+            if item['expired_new_actions'] != min(horizon, elapsed):
+                raise RuntimeError('Incorrect expired prediction prefix')
+        else:
+            alignment = item.get('action_alignment', {})
+            dropped = min(horizon, elapsed)
+            offset = alignment.get('selected_prediction_offset')
+            if (not isinstance(offset, int) or not 0 <= offset <= dropped or
+                    alignment.get('policy') != 'progress' or
+                    alignment.get('elapsed_control_steps') != elapsed or
+                    item['expired_new_actions'] != offset or
+                    alignment.get('discarded_prefix_actions') != offset or
+                    alignment.get('discarded_tail_actions') != dropped-offset or
+                    alignment.get('remaining_actions') != remaining):
+                raise RuntimeError('Incorrect aligned prediction discard counts')
+            if (alignment.get('retained_prediction_offset_interval') != [offset, offset+remaining] or
+                    not 0 <= offset <= offset+remaining <= horizon):
+                raise RuntimeError('Incorrect retained model offset interval')
+            scheduled = [item['commit_step'], item['commit_step']+remaining]
+            if (alignment.get('scheduled_interval_steps') != scheduled or
+                    alignment.get('original_horizon_end_step') != item['observation_step']+horizon or
+                    (remaining and scheduled[1] > item['observation_step']+horizon) or
+                    item.get('new_prediction_remaining_interval_steps') != scheduled):
+                raise RuntimeError('Incorrect scheduled prediction interval')
     if not episode['commits'] or episode['commits'][0]['expired_new_actions'] != 0:
         raise RuntimeError('Bootstrap must not advance the simulator while waiting')
 
@@ -141,7 +189,8 @@ def worker(run_dir, task_id):
             print(f'task={task_id} q={q} start artifact={episode_dir.name}', flush=True)
             with (episode_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
                 episode = probe.run_episode(env, task, q, model, stats, config,
-                                            np, torch, episode_dir, stream)
+                                            np, torch, episode_dir, stream,
+                                            **handoff_options(config))
                 episode.update(suite=task['suite'], suite_task_id=task['suite_task_id'],
                                artifact_dir=str(episode_dir.relative_to(run_dir)),
                                execution_mode=config['execution_mode'])
@@ -170,6 +219,8 @@ def main():
     parser.add_argument('--q', nargs='+', type=int, choices=(5, 8, 10, 12, 15))
     parser.add_argument('--purpose', default='async-q-paired')
     parser.add_argument('--resume', type=Path)
+    parser.add_argument('--handoff-profile', choices=HANDOFF_PROFILES,
+                        default=argparse.SUPPRESS, help='handoff profile (default: crop_overwrite)')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
@@ -185,6 +236,10 @@ def main():
         config = json.loads((run_dir / 'run.json').read_text())['config_snapshot']
         if config.get('execution_mode') != 'asynchronous_q5_paired':
             parser.error('Resume requires this runner\'s asynchronous paired run')
+        try:
+            configure_handoff(config, getattr(args, 'handoff_profile', None), resume=True)
+        except ValueError as exc:
+            parser.error(str(exc))
     else:
         q_values = args.q or config['candidate_q']
         task_ids = args.task_ids or config['screen']['task_ids']
@@ -193,8 +248,9 @@ def main():
         if len(set(task_ids)) != len(task_ids) or any(not 0 <= t < 30 for t in task_ids):
             parser.error('task IDs must be unique integers in [0,29]')
         config.update(execution_mode='asynchronous_q5_paired', baseline_q=5,
-                      candidate_q=q_values, action_handoff='crop_overwrite',
+                      candidate_q=q_values,
                       control_period_s=0.05, worker_scope='one task, all q; fresh process per task')
+        configure_handoff(config, getattr(args, 'handoff_profile', None))
         config['screen'] = {**config['screen'], 'task_ids': task_ids,
                             'trials_per_task': 1}
         run_dir = create_run(config, 'M1', args.purpose, repo_root=ROOT)
