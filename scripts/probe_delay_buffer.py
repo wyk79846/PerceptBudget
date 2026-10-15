@@ -45,9 +45,14 @@ def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     return expired, overwritten
 
 
-def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
+def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2,
+                   blend_dims=7):
     """Same absolute-step alignment as baseline; change only overlap update."""
     from perceptbudget.action_blend import blend_actions
+    if blend_dims not in (6, 7):
+        raise ValueError('blend_dims must be 6 or 7 for LIBERO actions')
+    if blend_dims == 6 and any(len(action) != 7 for action in actions):
+        raise ValueError('six-dimensional arm blend requires 7D LIBERO actions')
     begin = max(step, origin)
     count = min(buffer_count(queue, begin), max(0, origin + len(actions) - begin))
     old = [[float(v) for v in queue[begin + i][0]] for i in range(count)]
@@ -56,6 +61,9 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
                 'offset': queue[begin + i][3], 'already_blended': len(queue[begin + i]) > 4}
                for i in range(count)]
     merged, weights = blend_actions(old, new, beta=beta)
+    if blend_dims == 6:
+        for index, action in enumerate(merged):
+            action[6] = new[index][6]
     expired, overwritten = commit(queue, actions, origin, step, prediction_id)
     for i in range(count):
         target = begin + i
@@ -68,6 +76,8 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
         'new_offset_interval': [begin - origin, begin - origin + count],
         'beta': beta, 'weights_old': weights, 'old_actions': old,
         'new_actions': new, 'merged_actions': merged, 'old_sources': sources,
+        'blended_dimensions': blend_dims,
+        'gripper_policy': 'new_prediction' if blend_dims == 6 else 'same_blend_as_arm',
         'single_overlap_policy': 'new action directly; paper only defines N>=2',
     }
 
@@ -203,7 +213,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
-                beta=config['action_blend']['beta'])
+                beta=config['action_blend']['beta'],
+                blend_dims=config['action_blend']['blend_dims'])
         else:
             expired, overwritten = commit(queue, actions, origin, step,
                                           current_request['prediction_id'], current_request.get('actions_raw'))
@@ -353,6 +364,8 @@ def main():
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
+    parser.add_argument('--blend-dims', type=int, choices=(6, 7), default=7,
+                        help='blend 6 arm dimensions and use new gripper (6), or blend all 7')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
                         help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
@@ -365,6 +378,8 @@ def main():
         args.prefix_lock = True
     if args.action_blend and args.prefix_lock:
         parser.error('action blending is tested separately from prefix locking')
+    if args.blend_dims != 7 and not args.action_blend:
+        parser.error('--blend-dims requires --action-blend')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
         parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
     if args.compare_action_blend_q8 and args.q is not None:
@@ -396,7 +411,9 @@ def main():
     if args.action_blend or args.compare_action_blend_q8:
         config['action_blend'] = {
             'beta': 1.2, 'source': 'https://arxiv.org/html/2609.22587v1#S4.SS3',
-            'equations': [8, 9], 'all_action_dimensions': True,
+            'equations': [8, 9], 'blend_dims': args.blend_dims,
+            'blended_dimensions': args.blend_dims,
+            'gripper_policy': 'new_prediction' if args.blend_dims == 6 else 'same_blend_as_arm',
             'alignment': 'absolute observation-step grid, expired new prefix discarded',
             'event_estimator': False, 'prefix_lock': False,
             'N1_policy': 'direct new action (paper formula requires N>=2)',
@@ -413,6 +430,7 @@ def main():
     config['screen'] = {**config['screen'], 'task_ids': [0],
                         'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
+               'action-blend-6d-pilot' if args.action_blend and args.blend_dims == 6 else
                'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
@@ -428,7 +446,11 @@ def main():
         target.write_bytes(source.read_bytes())
     summary = {'status': 'running',
                'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
-                           else 'two actual-delay episodes; feasibility diagnostic only'),
+                           else 'single-task six-dimensional arm blend; diagnostic only'
+                           if args.action_blend and args.blend_dims == 6
+                           else 'single-task action-blend pilot; diagnostic only'
+                           if args.action_blend
+                           else 'actual-delay episode; feasibility diagnostic only'),
                'task_ids': [0], 'q_values': q_values, 'episodes': [],
                'limitations': ['no RTC or fusion; expired-prefix crop/overwrite explicitly logged',
                               'queued buffer is not verified safe buffer',
