@@ -54,19 +54,24 @@ def main():
                                  'crop_due', 'head_due', 'progress_due',
                                  'prefix_noisy', 'prefix_noisy_due'))
     parser.add_argument('--prefix-len', type=int, default=8, choices=(6, 7, 8))
+    parser.add_argument('--pending-arm-gain', type=float, default=1.0)
     parser.add_argument('--trials', type=int, default=1)
     args = parser.parse_args()
     if not 1 <= args.trials <= 3:
         parser.error('diagnostic trials must be 1..3')
     if len(set(args.modes)) != len(args.modes):
         parser.error('modes must be unique')
+    if not 0 < args.pending_arm_gain <= 1 or (args.pending_arm_gain != 1 and
+                                             any(m.startswith('prefix') for m in args.modes)):
+        parser.error('gain must be in (0,1]; prefix conditions require gain=1')
     def interrupted(_signum, _frame):
         raise KeyboardInterrupt('handoff diagnostic interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
     config.update(execution_mode='async_handoff_repair_diagnostic', candidate_q=[args.q],
-                  repair_modes=args.modes, prefix_lock={'length': args.prefix_len, 'full_rtc': False})
+                  repair_modes=args.modes, pending_arm_gain=args.pending_arm_gain,
+                  prefix_lock={'length': args.prefix_len, 'full_rtc': False})
     config['screen'] = {**config['screen'], 'task_ids': [args.task_id], 'trials_per_task': args.trials}
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -129,7 +134,8 @@ def main():
                             case_dir, stream, adapter if mode.startswith('prefix') else None,
                             condition=mode, trial_index=trial,
                             alignment_policy=mode.split('_')[0] if mode.split('_')[0] in ('progress', 'head') else None,
-                            refresh_policy='latest_due' if mode.endswith('_due') else 'boundary')
+                            refresh_policy='latest_due' if mode.endswith('_due') else 'boundary',
+                            pending_arm_gain=args.pending_arm_gain)
                     episode.update(artifact_dir=str(case_dir.relative_to(run_dir)),
                                    suite=task['suite'], clean_prefix_t0=mode == 'prefix_t0')
                     episode['restored_style_sha256'] = style_fingerprints(model, np)

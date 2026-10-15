@@ -246,9 +246,12 @@ def device_state():
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False,
-                artifact_tag='', alignment_policy=None, refresh_policy='boundary'):
+                artifact_tag='', alignment_policy=None, refresh_policy='boundary',
+                pending_arm_gain=1.0):
     if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
         raise ValueError('phase alignment is a separate diagnostic condition')
+    if not 0 < pending_arm_gain <= 1 or (prefix_adapter is not None and pending_arm_gain != 1):
+        raise ValueError('invalid pending gain; committed prefixes must remain exact')
     observation, hz = base._prepare_env_episode(env, task, np)
     assert hz == 20
     base._seed_process(7, np, torch)
@@ -438,6 +441,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 elif alignment_policy and len(item) > 4:
                     source['action_alignment'] = item[4]
             action_start = time.monotonic()
+            planned_action = action.copy()
+            arm_gain = pending_arm_gain if future is not None else 1.0
+            action = action.copy()
+            action[:6] *= arm_gain
             observation, reward, done, info = env.step(action)
             action_end = time.monotonic()
             after = snapshot_scene(env, observation)
@@ -451,6 +458,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'tick_monotonic': tick,
                    'action_start_monotonic': action_start, 'action_end_monotonic': action_end,
                    'before': before, 'after': after, 'action': action.tolist(),
+                   'planned_action': planned_action.tolist(), 'applied_arm_gain': arm_gain,
                    'source': source, 'queue_before_pop_actions': queued,
                    'queue_after_step_actions': buffer_count(queue, step + 1),
                    'inference_active': future is not None,
@@ -505,6 +513,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'rtc_action_fusion': rtc_fusion_enabled,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
+              'pending_arm_gain': pending_arm_gain,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
