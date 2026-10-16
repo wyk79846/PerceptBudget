@@ -151,7 +151,7 @@ def analyze(root):
                     B_safe=None, tested_q_order=list(qs)))
     missing = [p for p in plan if key(p) not in episodes]
     limitations = ['仅2个任务各条件1次；区间不证明非劣或普适可靠性，M1未据此全部完成。',
-        '外扰仅正式step30、世界x+2cm；不代表广泛鲁棒性。人工核帧待主agent审查。',
+        '外扰仅正式step30、世界x+2cm；不代表广泛鲁棒性。阶段核帧情况见review_notes.md（若存在），未核对部分仍为候选标签。',
         '阶段为保守proxy；unknown保持未知，证据及segments见stage_proxy.json。',
         '同控制步共同前缀轨迹只作描述；coverage之外及失败段尾不计安全。初态未由本分析独立核验。',
         'largest_tested_successful_q只沿本模式连续已测较短q成功延伸，乘0.05仅局部探索值，B_safe=null。',
