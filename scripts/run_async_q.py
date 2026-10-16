@@ -87,6 +87,22 @@ def handoff_options(config):
     return options
 
 
+def configure_pending_gain(config, requested=None, *, resume=False):
+    """Explicit small ablation; keep the historical 0.5 default unchanged."""
+    current = config.get('pending_arm_gain', 1.0)
+    if requested is None:
+        return current
+    if isinstance(requested, bool) or requested not in (0.5, 1.0):
+        raise ValueError('Pending arm gain must be 0.5 or 1.0')
+    if config.get('action_handoff') != 'latency_limited_progress':
+        raise ValueError('Pending gain override requires progress handoff')
+    if resume and requested != current:
+        raise ValueError('Resume cannot change pending arm gain')
+    if not resume:
+        config['pending_arm_gain'] = requested
+    return requested
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -339,6 +355,8 @@ def main():
                         default=argparse.SUPPRESS, help='session loads once; task retains isolated fallback')
     parser.add_argument('--refresh-anchor', choices=('request', 'commit'),
                         default=argparse.SUPPRESS, help='count q from last request or latest committed prediction')
+    parser.add_argument('--pending-arm-gain', type=float, choices=(0.5, 1.0),
+                        help='explicit progress-handoff ablation; 1 disables waiting-period motion reduction')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--initialization-amendment', help='audit deterministic fixture-reset and validation repairs on resume')
     parser.add_argument('--worker-task', type=int)
@@ -359,6 +377,7 @@ def main():
             configure_handoff(config, getattr(args, 'handoff_profile', None), resume=True)
             configure_model_lifetime(config, getattr(args, 'model_lifetime', None), resume=True)
             configure_refresh_anchor(config, getattr(args, 'refresh_anchor', None), resume=True)
+            configure_pending_gain(config, args.pending_arm_gain, resume=True)
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -374,6 +393,7 @@ def main():
         configure_handoff(config, getattr(args, 'handoff_profile', None))
         configure_model_lifetime(config, getattr(args, 'model_lifetime', None))
         configure_refresh_anchor(config, getattr(args, 'refresh_anchor', None))
+        configure_pending_gain(config, args.pending_arm_gain)
         config['screen'] = {**config['screen'], 'task_ids': task_ids,
                             'trials_per_task': 1}
         run_dir = create_run(config, 'M1', args.purpose, repo_root=ROOT)
