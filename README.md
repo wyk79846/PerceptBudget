@@ -1,6 +1,8 @@
 # PerceptBudget
 
-当前在途：按用户批准补齐q10/12/15，每组30任务，共90次，沿用request计数和既定衔接，session模式只加载一次模型。[本轮进度](../任务产出/perceptbudget/M1/20261016T065722.043402Z-async-remaining-b80f7a6e/progress.md)。独立服务`perceptbudget-remaining-20261016`运行`scripts/run_async_remaining.py`，不重跑q5/q8；完成后自动核对三个run的配置与初态，并另建五组总表。旧task重载与新session复用的差异会在跨run汇总中醒目标注，不把耗时差异全部归因于q。
+当前状态（2026-10-16）：剩余90次已完成、服务正常退出；[最终异步150次汇总](../任务产出/perceptbudget/M1/20261016T082622.503351Z-async-final-edc1a3bc/analysis.md)成功数为20/25/27/28/24。用户已指定**同步q5（30/30）作为主要质量对照**，旧异步q5对照仅保留为历史。现做离线配对分析，不重跑GPU、不修改FlashRT。同步旧日志缺首帧/完整预测/接触记录，全场景初态、物理阶段与安全缓冲仍有证据缺口，不称M1全部完成。
+
+离线入口：`scripts/compare_sync_baseline.py`比较同步q5与全部异步档；`scripts/summarize_async_evidence.py`补充事件位置、名义剩余区间及粗接触标签。两者只写新分析结果，不覆盖原始数据。真实耗时还受同步/异步执行方式与模型生命周期影响，不把全部差异归因于q。
 
 当前异步基准（2026-10-16用户确认）：`refresh_anchor=request`，从上次推理启动计q；保持既定进度对齐衔接。提交后计5步的9任务测试只留作对照，不作为基线。原q5/q8的30任务结果分别20/30、25/30，均无断供。后续默认使用模型单加载模式，记录执行器版本变化；这不是切回完全原版FlashRT。
 
