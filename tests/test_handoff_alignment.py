@@ -14,6 +14,13 @@ class HandoffAlignmentTests(unittest.TestCase):
     def actions(self):
         return [[1., 0., 0., 0., 0., 0., -1.] for _ in range(20)]
 
+    def test_post_commit_waits_five_executed_steps_after_arrival(self):
+        # Request at5, commit at12: new prediction waits until17, not12.
+        self.assertTrue(refresh_due(12, 5, 5, 'latest_due'))
+        self.assertFalse(refresh_due(12, 12, 5, 'post_commit'))
+        self.assertFalse(refresh_due(16, 12, 5, 'post_commit'))
+        self.assertTrue(refresh_due(17, 12, 5, 'post_commit'))
+
     def test_measured_progress_is_not_elapsed_control_steps(self):
         queue = {}
         expired, overwritten, info = commit_aligned(

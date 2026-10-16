@@ -3,11 +3,91 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from scripts import run_async_q
 from scripts.run_async_q import (configure_handoff, configure_model_lifetime, handoff_options,
                                  validate_episode, validate_pairing)
 
 
 class AsyncRunnerTests(unittest.TestCase):
+    def test_refresh_anchor_new_run_defaults_to_request(self):
+        config = {'H': 20, 'N': 10, 'dtype': 'bfloat16'}
+        before = copy.deepcopy(config)
+        self.assertEqual(run_async_q.configure_refresh_anchor(config), 'request')
+        self.assertEqual(config, dict(before, refresh_anchor='request'))
+
+    def test_refresh_anchor_new_run_honors_config_and_explicit_request(self):
+        for anchor in ('request', 'commit'):
+            with self.subTest(anchor=anchor):
+                config = {'refresh_anchor': anchor, 'H': 20}
+                self.assertEqual(run_async_q.configure_refresh_anchor(config), anchor)
+                self.assertEqual(config, {'refresh_anchor': anchor, 'H': 20})
+                other = 'commit' if anchor == 'request' else 'request'
+                self.assertEqual(run_async_q.configure_refresh_anchor(
+                    config, requested=other), other)
+                self.assertEqual(config, {'refresh_anchor': other, 'H': 20})
+
+    def test_refresh_anchor_explicit_commit_is_recorded(self):
+        config = {'H': 20}
+        self.assertEqual(run_async_q.configure_refresh_anchor(
+            config, requested='commit'), 'commit')
+        self.assertEqual(config, {'H': 20, 'refresh_anchor': 'commit'})
+
+    def test_refresh_anchor_rejects_invalid_values(self):
+        for invalid in ('', 'COMMIT', 'post_commit', 'latest_due', 'unknown', 5):
+            for resume in (False, True):
+                with self.subTest(invalid=invalid, resume=resume):
+                    with self.assertRaises(ValueError):
+                        run_async_q.configure_refresh_anchor(
+                            {}, requested=invalid, resume=resume)
+                    with self.assertRaises(ValueError):
+                        run_async_q.configure_refresh_anchor(
+                            {'refresh_anchor': invalid}, resume=resume)
+
+    def test_refresh_anchor_legacy_resume_uses_request_without_mutation(self):
+        config = {'H': 20, 'refresh_policy': 'latest_due'}
+        before = copy.deepcopy(config)
+        self.assertEqual(run_async_q.configure_refresh_anchor(config, resume=True),
+                         'request')
+        self.assertEqual(config, before)
+        self.assertEqual(run_async_q.configure_refresh_anchor(
+            config, requested='request', resume=True), 'request')
+        self.assertEqual(config, before)
+        with self.assertRaises(ValueError):
+            run_async_q.configure_refresh_anchor(config, requested='commit', resume=True)
+        self.assertEqual(config, before)
+
+    def test_refresh_anchor_resume_preserves_anchor_and_rejects_switch(self):
+        for anchor, other in (('request', 'commit'), ('commit', 'request')):
+            with self.subTest(anchor=anchor):
+                config = {'refresh_anchor': anchor, 'H': 20}
+                before = copy.deepcopy(config)
+                self.assertEqual(run_async_q.configure_refresh_anchor(
+                    config, resume=True), anchor)
+                self.assertEqual(config, before)
+                self.assertEqual(run_async_q.configure_refresh_anchor(
+                    config, requested=anchor, resume=True), anchor)
+                self.assertEqual(config, before)
+                with self.assertRaises(ValueError):
+                    run_async_q.configure_refresh_anchor(
+                        config, requested=other, resume=True)
+                self.assertEqual(config, before)
+
+    def test_progress_handoff_refresh_anchor_only_changes_refresh_policy(self):
+        # Commit anchoring is opt-in for the q5 nine-task experiment.
+        for anchor, policy in ((None, 'latest_due'), ('request', 'latest_due'),
+                               ('commit', 'post_commit')):
+            with self.subTest(anchor=anchor):
+                config = {}
+                configure_handoff(config, 'latency_limited_progress')
+                if anchor is not None:
+                    config['refresh_anchor'] = anchor
+                before = copy.deepcopy(config)
+                self.assertEqual(handoff_options(config), {
+                    'condition': 'latency_limited_progress',
+                    'alignment_policy': 'progress', 'refresh_policy': policy,
+                    'pending_arm_gain': 0.5})
+                self.assertEqual(config, before)
+
     def test_model_lifetime_new_run_defaults_to_session(self):
         config = {'H': 20, 'N': 10, 'dtype': 'bfloat16'}
         self.assertEqual(configure_model_lifetime(config), 'session')

@@ -26,6 +26,15 @@ from perceptbudget.experiment import create_run, load_config
 HANDOFF_PROFILES = ('crop_overwrite', 'latency_limited_progress')
 
 
+def configure_refresh_anchor(config, requested=None, *, resume=False):
+    anchor = config.get('refresh_anchor', 'request') if resume or requested is None else requested
+    if anchor not in ('request', 'commit') or (resume and requested is not None and requested != anchor):
+        raise ValueError('Resume cannot change refresh anchor')
+    if not resume:
+        config['refresh_anchor'] = anchor
+    return anchor
+
+
 def configure_model_lifetime(config, requested=None, *, resume=False):
     lifetime = config.get('model_lifetime', 'task') if resume else (
         config.get('model_lifetime', 'session') if requested is None else requested)
@@ -72,6 +81,8 @@ def handoff_options(config):
         options.update(alignment_policy=config['alignment_policy'],
                        refresh_policy=config['refresh_policy'],
                        pending_arm_gain=config['pending_arm_gain'])
+    if config.get('refresh_anchor', 'request') == 'commit':
+        options['refresh_policy'] = 'post_commit'
     return options
 
 
@@ -163,6 +174,7 @@ def write_progress(run_dir, summary):
     lines = ['# 固定 q 异步测试', '',
              '异步 q=5 为基线；同任务和初态比较本轮所选q。', '',
              f"衔接配置：{summary['config'].get('action_handoff', 'crop_overwrite')}；请求q不代表实际刷新间隔，实际间隔见requests记录。", '',
+             f"q计数起点：{summary['config'].get('refresh_anchor', 'request')}（commit为新动作提交后，request为上次推理启动后）。", '',
              f"状态：{summary['status']}；完成 {len(summary['episodes'])}/{summary['expected_episodes']} 次。", '',
              '| task | q | 结果 | 步数 | 真实秒 | 实际Hz | 断供步 |',
              '|---:|---:|---|---:|---:|---:|---:|']
@@ -276,6 +288,8 @@ def main():
                         default=argparse.SUPPRESS, help='handoff profile (default: config action_handoff)')
     parser.add_argument('--model-lifetime', choices=('session', 'task'),
                         default=argparse.SUPPRESS, help='session loads once; task retains isolated fallback')
+    parser.add_argument('--refresh-anchor', choices=('request', 'commit'),
+                        default=argparse.SUPPRESS, help='count q from last request or latest committed prediction')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
@@ -294,6 +308,7 @@ def main():
         try:
             configure_handoff(config, getattr(args, 'handoff_profile', None), resume=True)
             configure_model_lifetime(config, getattr(args, 'model_lifetime', None), resume=True)
+            configure_refresh_anchor(config, getattr(args, 'refresh_anchor', None), resume=True)
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -308,6 +323,7 @@ def main():
                       control_period_s=0.05, worker_scope='one task, all q; fresh process per task')
         configure_handoff(config, getattr(args, 'handoff_profile', None))
         configure_model_lifetime(config, getattr(args, 'model_lifetime', None))
+        configure_refresh_anchor(config, getattr(args, 'refresh_anchor', None))
         config['screen'] = {**config['screen'], 'task_ids': task_ids,
                             'trials_per_task': 1}
         run_dir = create_run(config, 'M1', args.purpose, repo_root=ROOT)

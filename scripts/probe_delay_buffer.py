@@ -33,7 +33,7 @@ def reference_prefix_count(queue, step, q):
 
 
 def refresh_due(step, previous_request_step, q, policy):
-    if policy == 'latest_due':
+    if policy in ('latest_due', 'post_commit'):
         return step > 0 and step-previous_request_step >= q
     if policy == 'boundary':
         return step > 0 and step % q == 0
@@ -259,6 +259,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     queue, requests, commits, rows, frames, raw_chunks = {}, [], [], [], [], []
     future = None
     previous_request_step = 0
+    previous_commit_step = 0
     current_request = None
     missed_triggers, underflows = [], []
     selector = None
@@ -276,9 +277,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 execution_mode=config.get('execution_mode', 'actual_delay_diagnostic'))
 
     def submit(obs, step):
+        if refresh_policy == 'post_commit' and step and step != previous_commit_step + q:
+            raise RuntimeError('Post-commit refresh must follow exactly q executed control steps')
         observation_started = time.monotonic()
         snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         request = {'prediction_id': len(requests), 'observation_step': step,
+                   'refresh_anchor': 'commit' if refresh_policy == 'post_commit' else 'request',
+                   'refresh_anchor_step': previous_commit_step if refresh_policy == 'post_commit' else previous_request_step,
                    'observation_monotonic': observation_started,
                    'input_ready_monotonic': time.monotonic(),
                    'model_state': snapshot.get('state'),
@@ -321,7 +326,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         return executor.submit(predict), request
 
     def harvest(step, completed_row=None):
-        nonlocal future, current_request
+        nonlocal future, current_request, previous_commit_step
         if future is None or not future.done():
             return
         ready_actions = future.result()
@@ -391,6 +396,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             result['rtc_action_fusion'] = rtc_fusion
             result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
+        previous_commit_step = step
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition,
                     request=current_request, **result)
@@ -411,7 +417,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             frames.append(np.concatenate((observation['agentview_image'],
                                          observation['robot0_eye_in_hand_image']), axis=1))
             harvest(step)
-            if refresh_due(step, previous_request_step, q, refresh_policy):
+            anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
+            due = refresh_due(step, anchor_step, q, refresh_policy)
+            if refresh_policy == 'post_commit' and future is not None:
+                due = False  # Next q-step window starts only after this result commits.
+            if due:
                 if future is None:
                     future, current_request = submit(observation, step)
                     previous_request_step = step
