@@ -57,10 +57,17 @@ def main():
     config.update(execution_mode='asynchronous_model_reuse_diagnostic', candidate_q=[args.q])
     runner.configure_handoff(config)
     with (Path(config['output_root']) / '.async_gpu.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError('Another GPU evaluation is active; do not run concurrently')
+        lock_deadline = time.monotonic() + 300
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                # The formal runner writes completed before its CPU analysis
+                # finishes and releases this lock. Never overlap either phase.
+                if args.after_run is None or time.monotonic() >= lock_deadline:
+                    raise RuntimeError('Another GPU evaluation is active; do not run concurrently')
+                time.sleep(1)
         run = create_run(config, 'M1', 'model-reuse-diagnostic', repo_root=ROOT)
         print('run_dir=' + str(run), flush=True)
         summary = {'status': 'preparing', 'config': config, 'episodes': [], 'memory': [],
