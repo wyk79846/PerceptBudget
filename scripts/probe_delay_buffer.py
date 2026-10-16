@@ -152,7 +152,7 @@ def commit_aligned(queue, actions, origin, step, prediction_id,
     }
 
 
-def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
+def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2, arm_only=False):
     """Same absolute-step alignment as baseline; change only overlap update."""
     from perceptbudget.action_blend import blend_actions
     begin = max(step, origin)
@@ -163,6 +163,9 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
                 'offset': queue[begin + i][3], 'already_blended': len(queue[begin + i]) > 4}
                for i in range(count)]
     merged, weights = blend_actions(old, new, beta=beta)
+    if arm_only:
+        for row, latest in zip(merged, new):
+            row[6:] = latest[6:]
     expired, overwritten = commit(queue, actions, origin, step, prediction_id)
     for i in range(count):
         target = begin + i
@@ -175,8 +178,8 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
         'new_offset_interval': [begin - origin, begin - origin + count],
         'beta': beta, 'weights_old': weights, 'old_actions': old,
         'new_actions': new, 'merged_actions': merged, 'old_sources': sources,
-        'blended_dimensions': len(actions[0]) if len(actions) else 0,
-        'gripper_policy': 'same_blend_as_arm',
+        'blended_dimensions': 6 if arm_only else len(actions[0]) if len(actions) else 0,
+        'gripper_policy': 'latest_prediction' if arm_only else 'same_blend_as_arm',
         'single_overlap_policy': 'new action directly; paper only defines N>=2',
     }
 
@@ -437,7 +440,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         elif action_blend_enabled:
             expired, overwritten, blend = commit_blended(
                 queue, actions, origin, step, current_request['prediction_id'],
-                beta=config['action_blend']['beta'])
+                beta=config['action_blend']['beta'],
+                arm_only=config['action_blend'].get('gripper_policy') == 'latest_prediction')
         elif rtc_fusion_enabled:
             expired, overwritten, rtc_fusion = commit_rtc_fused(
                 queue, raw_chunks, actions, origin, step,
@@ -679,6 +683,8 @@ def main():
                         help='six-arm-dimension two-source RTC-style merge after prefix handoff')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
+    parser.add_argument('--blend-arm-only', action='store_true',
+                        help='paper overlap weights on arm dims 0:6; gripper from new prediction')
     parser.add_argument('--rtc-action-fusion', action='store_true',
                         help='use RTC temporal fusion on arm dims; take gripper from newest prediction')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
@@ -689,6 +695,8 @@ def main():
                         help='number of q=8 baseline/blending pairs; default: 3')
     parser.add_argument('--interface-only', action='store_true')
     args = parser.parse_args()
+    if args.blend_arm_only and not args.action_blend:
+        parser.error('--blend-arm-only requires --action-blend')
     if args.adaptive_prefix:
         args.prefix_lock = True
     if (args.late_policy != 'discard' or args.prefix_len != 8) and not args.prefix_lock:
@@ -741,8 +749,8 @@ def main():
     if args.action_blend or args.compare_action_blend_q8:
         config['action_blend'] = {
             'beta': 1.2, 'source': 'https://arxiv.org/html/2609.22587v1#S4.SS3',
-            'equations': [8, 9], 'action_dimensions': list(range(7)),
-            'gripper_policy': 'same_blend_as_arm',
+            'equations': [8, 9], 'action_dimensions': list(range(6 if args.blend_arm_only else 7)),
+            'gripper_policy': 'latest_prediction' if args.blend_arm_only else 'same_blend_as_arm',
             'alignment': 'absolute observation-step grid, expired new prefix discarded',
             'event_estimator': False, 'prefix_lock': False,
             'N1_policy': 'direct new action (paper formula requires N>=2)',
@@ -771,7 +779,7 @@ def main():
                         'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
-               'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
+               'action-blend-arm6' if args.blend_arm_only else 'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'advance-handoff-rtc-merge' if args.prefix_rtc_merge else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
     print('run_dir=' + str(run_dir), flush=True)
