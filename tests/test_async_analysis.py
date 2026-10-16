@@ -181,6 +181,48 @@ class AsyncAnalysisTest(unittest.TestCase):
             self.assertIn('q=5', render(result))
             json.dumps(result, allow_nan=False)
 
+    def test_q8_only_counts_successes_without_imputing_q5_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = [(0, 'spatial', 'success'), (1, 'spatial', 'timeout'),
+                     (10, 'object', 'success'), (20, 'goal', 'failed')]
+            episodes = [{'task_id': task, 'suite': suite, 'q': 8, 'status': status,
+                         'steps': 3, 'real_seconds': 1, 'commits': [],
+                         'artifact_dir': f'tasks/task{task:02d}'}
+                        for task, suite, status in cases]
+            self.make_run(root, episodes)
+            self.assertFalse(list(root.rglob('q5_requests.json')))
+
+            result = analyze(root)
+
+            q8 = result['q']['8']
+            self.assertEqual(q8['n'], 4)
+            self.assertEqual(q8['successes'], 2)
+            self.assertEqual(q8['success_rate'], .5)
+            self.assertEqual(q8['by_suite'], {
+                'spatial': {'n': 2, 'successes': 1},
+                'object': {'n': 1, 'successes': 1},
+                'goal': {'n': 1, 'successes': 0}})
+            self.assertEqual(len(result['episodes']), 4)
+            self.assertTrue(all(ep['q'] == 8 for ep in result['episodes']))
+            self.assertEqual(result['exclusions'], [])
+            self.assertEqual(result['q']['5']['n'], 0)
+            self.assertEqual(result['q']['5']['successes'], 0)
+            self.assertIsNone(result['q']['5']['success_rate'])
+            self.assertIsNone(result['q']['5']['success_rate_ci95'])
+
+            pair = result['paired_vs_q5']['8']
+            self.assertEqual(pair['success_difference'],
+                             {'n': 0, 'difference': None, 'ci95': None})
+            self.assertEqual(pair['tasks'], [])
+            self.assertEqual(pair['missing_pairs'], [
+                {'suite': suite, 'task_id': task, 'missing_q': 5}
+                for task, suite, _ in sorted(cases, key=lambda case: (case[1], case[0]))])
+            for name, metric in pair['continuous_metrics'].items():
+                with self.subTest(metric=name):
+                    self.assertEqual(metric, {'n': 0, 'mean': None, 'ci95': None})
+            json.dumps(result, allow_nan=False)
+
     def test_sync_baseline_excluded(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
