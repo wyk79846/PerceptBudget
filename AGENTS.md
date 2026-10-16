@@ -5,6 +5,7 @@
 - 仅task0/q5一次，显式`--prefix-lock --prefix-len 7 --late-policy hold`；默认discard/8及正式基线不变，不修改FlashRT、不扩测，不称完整RTC。
 - 提前ready等待锁定prefix结束；迟到每tick七维零命令，Panda夹爪0保持驱动目标（用户已独立核实）。ready后从锁定prefix之后接续，裁掉等待对应尾部，原origin+H20截止不变；raw32随接续队列保存以支持下次prefix。
 - prefix不足或全部过期明确报错，保留请求、暂停次数/步数/墙钟；220步上限、BF16/N10/state/seed7/init0保持。测试commit后独立systemd用户服务、guarded_run及共享单GPU锁；启动前告知，无需再次审批。
+- 已完成唯一回合：实现e3a89b6，run=M1/20261016T114424.164483Z-prefix-lock-pilot-0210f6a1，服务perceptbudget-prefix-hold-q5-20261016退出0。220步超时、15.356秒，暂停1次/1步/0.051579秒，普通断供0；153从索引7接续至原165截止，155的下一次raw32前缀通过。逐步离线审计通过。探针沿用boundary请求（实际5后21次10步），不冒充严格q5/latest_due。报告`../任务指导与相关参考/PerceptBudget_q5前缀锁定late-hold_单任务测试_20261016.md`；无遗留GPU作业，不自动扩测。
 
 ## q5不减幅衔接小测（2026-10-16，最高优先）
 

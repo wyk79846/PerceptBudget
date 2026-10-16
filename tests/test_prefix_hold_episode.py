@@ -88,3 +88,11 @@ class PrefixHoldEpisodeTest(unittest.TestCase):
         self.assertEqual(result['late_discarded_predictions'], 1)
         self.assertEqual(result['late_hold_count'], 0)
         np.testing.assert_array_equal(actions[12], np.full(7, 12))
+
+    def test_short_next_prefix_ends_explicitly(self):
+        with self.assertRaisesRegex(RuntimeError, 'insufficient queued actions.*no horizon extension'):
+            self.run_fake(16, max_steps=26)
+
+    def test_fully_expired_result_ends_explicitly(self):
+        with self.assertRaisesRegex(RuntimeError, 'fully expired'):
+            self.run_fake(20, max_steps=26)
