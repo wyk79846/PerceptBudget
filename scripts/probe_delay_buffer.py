@@ -175,7 +175,7 @@ def commit_blended(queue, actions, origin, step, prediction_id, beta=1.2):
         'new_offset_interval': [begin - origin, begin - origin + count],
         'beta': beta, 'weights_old': weights, 'old_actions': old,
         'new_actions': new, 'merged_actions': merged, 'old_sources': sources,
-        'blended_dimensions': len(actions[0]) if actions else 0,
+        'blended_dimensions': len(actions[0]) if len(actions) else 0,
         'gripper_policy': 'same_blend_as_arm',
         'single_overlap_policy': 'new action directly; paper only defines N>=2',
     }

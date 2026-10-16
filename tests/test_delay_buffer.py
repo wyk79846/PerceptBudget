@@ -8,6 +8,17 @@ from scripts.probe_delay_buffer import (
 
 
 class DelayBufferTest(unittest.TestCase):
+    def test_blend_accepts_real_numpy_model_outputs(self):
+        import numpy as np
+        queue = {}
+        actions = np.zeros((20, 7), dtype=np.float32)
+        _, _, info = commit_blended(queue, actions, 0, 0, 0)
+        self.assertEqual(info['blended_dimensions'], 7)
+        _, _, info = commit_blended(queue, actions, 8, 14, 1)
+        self.assertEqual(info['global_interval_steps'], [14, 20])
+        self.assertEqual(info['weights_old'][0], 1.)
+        self.assertEqual(info['weights_old'][-1], 0.)
+
     def test_hold_starts_only_at_locked_boundary(self):
         request = {'scheduled_commit_step': 12}
         self.assertFalse(prefix_hold_due(request, 11, 'hold'))
