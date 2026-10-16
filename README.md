@@ -1,5 +1,7 @@
 # PerceptBudget
 
+当前在途：按用户批准补齐q10/12/15，每组30任务，共90次，沿用request计数和既定衔接，session模式只加载一次模型。[本轮进度](../任务产出/perceptbudget/M1/20261016T065722.043402Z-async-remaining-b80f7a6e/progress.md)。独立服务`perceptbudget-remaining-20261016`运行`scripts/run_async_remaining.py`，不重跑q5/q8；完成后自动核对三个run的配置与初态，并另建五组总表。旧task重载与新session复用的差异会在跨run汇总中醒目标注，不把耗时差异全部归因于q。
+
 当前异步基准（2026-10-16用户确认）：`refresh_anchor=request`，从上次推理启动计q；保持既定进度对齐衔接。提交后计5步的9任务测试只留作对照，不作为基线。原q5/q8的30任务结果分别20/30、25/30，均无断供。后续默认使用模型单加载模式，记录执行器版本变化；这不是切回完全原版FlashRT。
 
 ## 测试启动加速（2026-10-16）

@@ -2,6 +2,8 @@
 
 ## 当前授权：完成剩余异步测试并汇总（2026-10-16，最高优先）
 
+- 当前剩余run=M1/20261016T065722.043402Z-async-remaining-b80f7a6e，评测提交e7a7808；独立服务已启动并进入task0，q10/q12已各完成一回合。仅运行q10/12/15共90次，源码快照冻结；离线汇总脚本可并行完善但不得改动在途评测依赖。完成后自动调用compare_async_runs.py --require-complete并打印最终独立汇总目录。
+- 离线汇总已完成验证：全163项CPU测试通过，真实历史q5/q8共30组初态/首帧配对通过（2组使用既有1级像素容差）；保留原分析limitations、源summary SHA与配置/生命周期差异，不改原始数据。仅离线新文件在GPU运行后提交，实际评测依赖未修改。
 - 用户已批准将剩余q10/12/15各30任务全部测完，共90次；不重跑已完成q5/q8，不扩展提交后计步废弃实验。采用request计q、冻结的进度衔接gain0.5、BF16/N10/H20、双视角+state、seed7/init0及220/280/300步上限。模型session复用，原生环境清理，记录内存；不新增FlashRT改动。
 - scripts/run_async_remaining.py串联唯一GPU评测和完成后的离线汇总；允许显式--resume同run，不重跑完成的任务。独立用户服务perceptbudget-remaining-20261016，日志/tmp/perceptbudget-remaining-20261016.log；外层guarded_run保护内存，不与别的GPU评测并发，在途不改评测源码。
 - 离线compare_async_runs.py保留三个来源与SHA，核对固定配置/初态/帧并以q5配对，独立创建汇总run，不复制或改写原始trace。必须醒目标注旧q5/q8为task重载、新90次为session复用，真实耗时差异不直接全归因q；不能冒充同一轮执行器完全一致的150次。
