@@ -13,7 +13,7 @@ from scripts import probe_delay_buffer as probe
 
 
 class PrefixHoldEpisodeTest(unittest.TestCase):
-    def run_fake(self, delay, policy='hold', max_steps=15, q=5, advance=False):
+    def run_fake(self, delay, policy='hold', max_steps=15, q=5, advance=False, rtc_merge=False):
         clock = SimpleNamespace(now=0.)
         obs = {key: np.zeros((2, 2, 3), dtype=np.uint8) for key in
                ('agentview_image', 'robot0_eye_in_hand_image')}
@@ -43,12 +43,17 @@ class PrefixHoldEpisodeTest(unittest.TestCase):
             def shutdown(self, **kw): pass
         class Adapter:
             prefix_len = 7
+            model = SimpleNamespace(_pipe=SimpleNamespace(norm_stats={
+                'actions': {'q01': [-1.] * 7, 'q99': [1.] * 7}}))
             def predict(self, snapshot, prompt, timing, raw_prefix=None, prefix_len=None):
                 timing.update(inference_started_monotonic=clock.now,
                               inference_ended_monotonic=clock.now, prefix_exact=True)
                 raw = np.repeat(np.arange(20, dtype=np.float32)[:, None], 32, axis=1)
                 if raw_prefix is not None:
                     raw[:prefix_len] = raw_prefix
+                if rtc_merge:
+                    from flash_rt.core.utils.actions import unnormalize_actions
+                    return unnormalize_actions(raw, self.model._pipe.norm_stats)[:, :7], raw
                 return raw[:, :7].copy(), raw
         def scene(*args):
             return {'raw_state': [0.]*8, 'sim_state': [len(env.actions)*.05],
@@ -68,10 +73,26 @@ class PrefixHoldEpisodeTest(unittest.TestCase):
             result = probe.run_episode(env, {'task_id': 0, 'task_name': 'fake',
                 'instruction': 'fake', 'max_steps': max_steps}, q, None, {},
                 {'state_enabled': True, 'H': 20, 'prefix_lock': {
-                    'late_policy': policy, 'advance_handoff': advance}},
+                    'late_policy': policy, 'advance_handoff': advance, 'rtc_merge': rtc_merge}},
                 np, None, Path(directory), stream, Adapter())
             requests = json.loads((Path(directory)/f'q{q}_requests.json').read_text())
         return result, env.actions, requests
+
+    def test_rtc_merge_preserves_executed_prefix_and_raw_lineage(self):
+        from flash_rt.core.utils.actions import unnormalize_actions
+        result, actions, requests = self.run_fake(7, max_steps=25, q=8, advance=True, rtc_merge=True)
+        self.assertTrue(result['prefix_rtc_merge'])
+        self.assertEqual([c['commit_step'] for c in result['commits']], [0, 8, 16, 24])
+        self.assertGreater(result['commits'][1]['rtc_action_fusion']['fused_steps'], 0)
+        records = {r['target_step']: r for r in result['commits'][1]['rtc_action_fusion']['records']}
+        for step in range(8, 16):
+            np.testing.assert_array_equal(actions[step], records[step]['action'])
+            np.testing.assert_array_equal(actions[step], unnormalize_actions(
+                np.asarray(records[step]['raw'], dtype=np.float32),
+                {'actions': {'q01': [-1.] * 7, 'q99': [1.] * 7}})[:7])
+        for i in range(7):
+            np.testing.assert_array_equal(requests[2]['committed_prefix_raw'][i], records[9 + i]['raw'])
+            np.testing.assert_array_equal(requests[2]['committed_prefix_actions'][i], actions[9 + i])
 
     def test_late_ticks_zero_then_resumes_at_seven(self):
         result, actions, requests = self.run_fake(9)

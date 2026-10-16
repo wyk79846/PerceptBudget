@@ -30,7 +30,21 @@ def verify(run):
         elif row['source'] is not None:
             source = row['source']
             request = by_id[source['prediction_id']]
-            np.testing.assert_array_equal(row['action'], request['actions'][source['offset']])
+            merged = source.get('prefix_rtc_merge')
+            expected = merged['action'] if merged else request['actions'][source['offset']]
+            np.testing.assert_array_equal(row['action'], expected)
+            if merged:
+                from perceptbudget.prefix_fusion import round_to_bf16
+                assert merged['target_step'] == row['step']
+                np.testing.assert_array_equal(merged['raw'][6:],
+                    request['actions_raw'][source['offset']][6:])
+                np.testing.assert_array_equal(merged['new_raw'], request['actions_raw'][source['offset']])
+                if merged['source_count'] == 2:
+                    weight = np.exp(-.1 * abs(merged['old_offset'] - merged['new_offset']))
+                    np.testing.assert_allclose(merged['weight_old'], weight, rtol=1e-14)
+                    expected = (np.array(merged['old_raw'])[:6] * (weight / (1 + weight))
+                                + np.array(merged['new_raw'])[:6] * (1 / (1 + weight)))
+                    np.testing.assert_array_equal(merged['raw'][:6], round_to_bf16(expected))
             assert row['step'] < request['observation_step'] + horizon
     for request in requests:
         assert np.asarray(request['actions_raw']).shape == (horizon, 32)
@@ -44,8 +58,9 @@ def verify(run):
                 row = by_step[origin + i]
                 np.testing.assert_array_equal(row['action'], expected)
                 source = row['source']
+                merged = source.get('prefix_rtc_merge')
                 np.testing.assert_array_equal(request['committed_prefix_raw'][i],
-                    by_id[source['prediction_id']]['actions_raw'][source['offset']])
+                    merged['raw'] if merged else by_id[source['prediction_id']]['actions_raw'][source['offset']])
     for commit in commits:
         request = by_id[commit['prediction_id']]
         origin, step = request['observation_step'], commit['commit_step']

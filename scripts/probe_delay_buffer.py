@@ -306,6 +306,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     prefix_rejection = None
     late_policy = config.get('prefix_lock', {}).get('late_policy', 'discard')
     advance_handoff = config.get('prefix_lock', {}).get('advance_handoff', False)
+    prefix_fusion = config.get('prefix_lock', {}).get('rtc_merge', False)
+    if prefix_fusion and (not advance_handoff or late_policy != 'hold'):
+        raise ValueError('prefix RTC merge requires advance handoff and late hold')
     if advance_handoff and (prefix_adapter is None or q <= prefix_adapter.prefix_len):
         raise ValueError('advance handoff requires prefix locking and q > prefix_len')
     if late_policy not in ('discard', 'hold') or (late_policy == 'hold' and prefix_adapter is None):
@@ -403,9 +406,28 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         alignment = None
         merge_start = time.monotonic()
         if late_policy == 'hold' and scheduled:
+            old_queue = dict(queue) if prefix_fusion else None
             expired, overwritten, alignment = commit_prefix_hold(
                 queue, actions, origin, step, current_request['prediction_id'],
                 current_request['actions_raw'], current_request['prefix_len'])
+            if prefix_fusion:
+                from perceptbudget.prefix_fusion import fuse_prefix_tail
+                from flash_rt.core.utils.actions import unnormalize_actions
+                fused = fuse_prefix_tail(old_queue, queue, decay=0.1)
+                records = []
+                for target, data in fused.items():
+                    raw = np.asarray(data['raw'], dtype=np.float32)
+                    actual = unnormalize_actions(raw, prefix_adapter.model._pipe.norm_stats)[:7]
+                    item = queue[target]
+                    record = {**data['metadata'], 'target_step': target,
+                              'raw': raw.tolist(), 'action': actual.tolist()}
+                    queue[target] = (actual, item[1], item[2], item[3], raw, record)
+                    records.append(record)
+                rtc_fusion = {'variant': 'two_source_prefix_tail_raw_bf16',
+                              'fused_steps': sum(r['source_count'] == 2 for r in records),
+                              'recorded_tail_steps': len(records), 'records': records,
+                              'decay': 0.1, 'arm_dimensions': 6,
+                              'gripper_policy': 'latest_prediction'}
         elif alignment_policy is not None:
             expired, overwritten, alignment = commit_aligned(
                 queue, actions, origin, step, current_request['prediction_id'],
@@ -526,7 +548,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 action = np.asarray(item[0], dtype=np.float32)
                 source = {'prediction_id': item[1], 'origin_step': item[2],
                           'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
-                if action_blend_enabled and len(item) > 4:
+                if prefix_fusion and len(item) > 5:
+                    source['prefix_rtc_merge'] = item[5]
+                elif action_blend_enabled and len(item) > 4:
                     source['blend'] = item[4]
                 elif rtc_fusion_enabled and len(item) > 4:
                     source['rtc_action_fusion'] = item[4]
@@ -617,6 +641,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
               'advance_handoff': advance_handoff,
+              'prefix_rtc_merge': prefix_fusion,
               'pending_arm_gain': pending_arm_gain,
               'synchronous_recording': synchronous,
               'prefix_plan_rejection': prefix_rejection,
@@ -650,6 +675,8 @@ def main():
     parser.add_argument('--late-policy', choices=('discard', 'hold'), default='discard')
     parser.add_argument('--advance-handoff', action='store_true',
                         help='q is handoff interval; request q-prefix_len steps after previous commit')
+    parser.add_argument('--prefix-rtc-merge', action='store_true',
+                        help='six-arm-dimension two-source RTC-style merge after prefix handoff')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
     parser.add_argument('--rtc-action-fusion', action='store_true',
@@ -687,6 +714,8 @@ def main():
     if args.advance_handoff and (not args.prefix_lock or args.adaptive_prefix or
                                 args.late_policy != 'hold' or min(q_values) <= args.prefix_len):
         parser.error('--advance-handoff requires fixed prefix, late hold and q > prefix-len')
+    if args.prefix_rtc_merge and not args.advance_handoff:
+        parser.error('--prefix-rtc-merge requires --advance-handoff')
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
     config.update(candidate_q=q_values,
@@ -696,6 +725,7 @@ def main():
     if args.prefix_lock:
         config['prefix_lock'] = {'length': args.prefix_len, 'full_rtc': False,
                                  'advance_handoff': args.advance_handoff,
+                                 'rtc_merge': args.prefix_rtc_merge,
                                  'q_semantics': 'target_commit_interval' if args.advance_handoff else 'request_boundary',
                                  'late_policy': args.late_policy,
                                  'early_result': 'wait until committed prefix ends',
@@ -741,11 +771,12 @@ def main():
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
                'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
-               if args.adaptive_prefix else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
+               if args.adaptive_prefix else 'advance-handoff-rtc-merge' if args.prefix_rtc_merge else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
     print('run_dir=' + str(run_dir), flush=True)
     for name in ('scripts/probe_delay_buffer.py', 'scripts/eval_q.py', 'perceptbudget/model.py',
                  'perceptbudget/libero_input.py', 'perceptbudget/power.py', 'perceptbudget/prefix_model.py') + (
+                     ('perceptbudget/prefix_fusion.py',) if args.prefix_rtc_merge else ()) + (
                      ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()) + (
                      ('perceptbudget/action_blend.py',)
                      if args.action_blend or args.compare_action_blend_q8 else ()):
@@ -862,7 +893,8 @@ def main():
                     summary['episodes'].append(episode)
                     base._write_json_atomic(run_dir / 'summary.json', summary)
             else:
-                condition = ('advance_prefix_handoff' if args.advance_handoff else
+                condition = ('advance_prefix_handoff_rtc_merge' if args.prefix_rtc_merge else
+                             'advance_prefix_handoff' if args.advance_handoff else
                              'rtc_temporal_fusion_6d' if args.rtc_action_fusion else
                              'paper_action_blend' if args.action_blend else 'crop_overwrite')
                 for trial_index, q in enumerate(q_values, 1):
