@@ -1,5 +1,12 @@
 # 协作规则
 
+## 评测加速接入（2026-10-16，最新）
+
+- 集成小测已完成：6任务全部有效结束（5成功、1超时），字段检查/自动分析通过、断供0，只加载一次19.78秒；相同6任务旧run累计加载105.71秒。清理后CUDA分配均6515.2MiB，后3任务RSS2601/2616/2569MiB，可用内存最低清理后约2718MiB。短测支持启用session默认，不证明30任务稳定；后续保留逐任务内存检查和显式task回退。没有新增FlashRT改动，历史q5/q8数据不覆盖。
+- 用户明确要求减少每任务重载的等待；82e9a8b已将同进程模型复用接入scripts/run_async_q.py，config.model_lifetime=session。保留--model-lifetime task隔离回退；旧run未记录字段时仍恢复task，禁止resume切换生命周期。
+- session模式保持同一衔接、模型精度/去噪/输入、逐任务预热、原始记录和GPU互斥锁。只改变模型/环境生命周期：保留原生渲染释放，按任务记录RSS/MemAvailable/CUDA内存，创建环境前至少1GiB可用；清理异常或内存不足明确终止，不静默改策略。同步入口不变，无新增FlashRT修改。
+- 全149项CPU测试通过。正式入口集成验证为独立run=M1/20261016T062558.970535Z-session-reuse-smoke-e1ac05de，q8、task0/1/10/11/20/21共6次；服务perceptbudget-session-smoke-20261016，日志/tmp/perceptbudget-session-smoke-20261016.log。在途不改评测源码，不混入既有q8成功率统计。完成后核查一次加载、清理后内存、字段与自动分析，才能报告加速实测。
+
 ## 原版后端验证（2026-10-16，最新）
 
 - 用户希望不修改FlashRT以降低维护负担，已授权隔离原版加载/短推理验证。原版e4fe123干净worktree=/tmp/perceptbudget-stock-fts501/FlashRT，复用相同CUDA源码编译扩展。当前正式config及补丁版未切换，无新增上游源码改动。
