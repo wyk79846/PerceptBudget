@@ -16,9 +16,10 @@ from scripts.analyze_async_q import (DT, H, QS, buffer_statistics, command_event
 KINDS = ('gripper_switch', 'deceleration', 'turn')
 
 
-def forecast_positions(requests):
+def forecast_positions(requests, commits=None):
     """Offsets are zero-based positions in a full raw forecast, not actual contact."""
     positions, incomplete = [], 0
+    committed = None if commits is None else {c['prediction_id'] for c in commits}
     for request in requests:
         actions = request.get('actions', [])
         if len(actions) != H:
@@ -29,18 +30,43 @@ def forecast_positions(requests):
             positions.append({
                 'prediction_id': request['prediction_id'], 'type': event['type'],
                 'observation_step': request['observation_step'],
+                'is_bootstrap': request['observation_step'] == 0,
+                'is_committed': None if committed is None else request['prediction_id'] in committed,
                 'forecast_offset': event['step'],
                 'lead_nominal_seconds': event['step'] * DT,
                 'absolute_forecast_step': request['observation_step'] + event['step']})
     return positions, incomplete
 
 
+def validate_commit_coordinates(commit):
+    """Progress indices differ from elapsed time, but both must fit the same H."""
+    origin, start = commit['observation_step'], commit['commit_step']
+    elapsed = commit['control_steps_until_commit']
+    remaining = commit['new_prediction_remaining_actions']
+    alignment = commit['action_alignment']
+    low, high = alignment['retained_prediction_offset_interval']
+    if (elapsed != start - origin or elapsed < 0 or
+            remaining != max(0, H - elapsed) or
+            commit['new_prediction_remaining_interval_steps'] != [start, start + remaining] or
+            alignment['scheduled_interval_steps'] != [start, start + remaining] or
+            (remaining > 0 and start + remaining != origin + H) or
+            not 0 <= low <= high <= H or high - low != remaining or
+            low != alignment['selected_prediction_offset'] or
+            alignment['discarded_prefix_actions'] != low or
+            alignment['discarded_tail_actions'] != H - high or
+            alignment['discarded_prefix_actions'] + remaining + alignment['discarded_tail_actions'] != H):
+        raise ValueError('Inconsistent commit interval or retained prediction coordinates')
+
+
 def group_evidence(episodes):
     commits = [c for ep in episodes for c in ep['steady_commits']]
-    stages = sorted({c['first_execution_stage_proxy'] for c in commits})
+    stages = sorted({c['commit_step_post_action_stage_proxy'] for c in commits})
     events = [e for ep in episodes for e in ep['forecast_event_positions']]
     return {
         'episodes': len(episodes),
+        'steady_commits': len(commits),
+        'bootstrap_remaining_nominal_seconds': describe([
+            c['new_valid_seconds'] for ep in episodes for c in ep.get('bootstrap_commits', [])]),
         'stage_proxy_control_steps': {
             stage: sum(ep['stage_proxy_control_steps'].get(stage, 0) for ep in episodes)
             for stage in sorted({s for ep in episodes for s in ep['stage_proxy_control_steps']})},
@@ -49,15 +75,15 @@ def group_evidence(episodes):
             for stage in sorted({s for ep in episodes for s in ep.get('underflow_steps_by_stage_proxy', {})})},
         'new_remaining_nominal_seconds': describe([c['new_valid_seconds'] for c in commits]),
         'old_queue_remaining_nominal_seconds': describe([c['old_queue_seconds'] for c in commits]),
-        'by_first_execution_stage_proxy': {
+        'by_commit_step_post_action_stage_proxy': {
             stage: {
-                'commits': sum(c['first_execution_stage_proxy'] == stage for c in commits),
+                'commits': sum(c['commit_step_post_action_stage_proxy'] == stage for c in commits),
                 'tasks': len({ep['task_id'] for ep in episodes
-                              if any(c['first_execution_stage_proxy'] == stage for c in ep['steady_commits'])}),
+                              if any(c['commit_step_post_action_stage_proxy'] == stage for c in ep['steady_commits'])}),
                 'new_remaining_nominal_seconds': describe([
-                    c['new_valid_seconds'] for c in commits if c['first_execution_stage_proxy'] == stage]),
+                    c['new_valid_seconds'] for c in commits if c['commit_step_post_action_stage_proxy'] == stage]),
                 'old_queue_remaining_nominal_seconds': describe([
-                    c['old_queue_seconds'] for c in commits if c['first_execution_stage_proxy'] == stage])}
+                    c['old_queue_seconds'] for c in commits if c['commit_step_post_action_stage_proxy'] == stage])}
             for stage in stages},
         'raw_forecast_event_offsets': {
             kind: describe([e['forecast_offset'] for e in events if e['type'] == kind])
@@ -91,7 +117,9 @@ def analyze(run_dir):
         if sorted(rows) != list(range(ep['steps'])):
             raise ValueError('Missing control steps')
         requests = json.loads((artifact / f"q{ep['q']}_requests.json").read_text())
-        positions, incomplete = forecast_positions(requests)
+        positions, incomplete = forecast_positions(requests, ep['commits'])
+        for commit in ep['commits']:
+            validate_commit_coordinates(commit)
         buffer = buffer_statistics(ep['commits'])
         if any(c['h20_consistent'] is not True for c in buffer['records']):
             raise ValueError('Remaining actions inconsistent with H - elapsed steps')
@@ -101,7 +129,9 @@ def analyze(run_dir):
                 continue
             c = dict(c)
             row = rows.get(c['commit_step'])
-            c['first_execution_stage_proxy'] = stage_proxy(row) if row else 'unexecuted_at_terminal'
+            if row is None and c['commit_step'] != ep['steps']:
+                raise ValueError('Commit outside observed execution interval')
+            c['commit_step_post_action_stage_proxy'] = stage_proxy(row) if row else 'terminal_boundary_no_action'
             steady.append(c)
         counts, underflow = {}, {}
         for row in rows.values():
@@ -113,6 +143,7 @@ def analyze(run_dir):
             'task_id': ep['task_id'], 'suite': ep['suite'], 'q': ep['q'],
             'status': ep['status'], 'artifact_dir': str(artifact),
             'stage_proxy_control_steps': counts, 'steady_commits': steady,
+            'bootstrap_commits': [c for c in buffer['records'] if c['observation_step'] == 0],
             'underflow_steps_by_stage_proxy': underflow,
             'forecast_event_positions': positions, 'incomplete_forecasts': incomplete,
             'B_safe_seconds': None})
@@ -135,8 +166,9 @@ def analyze(run_dir):
             'No new GPU episodes. Raw forecast errors reference later commands, not synchronous trajectory truth.',
             'Applied-command deceleration/turn events can be created by pending arm gain changes, not model prediction alone.',
             'Forecast offset zero is the first action; no event before the forecast is available to detect a boundary switch.',
-            'Steady-state distributions pool commits; per-task records remain available; bootstrap excluded.',
-            'Stage proxy uses contacts/motion AFTER the first executed action at commit; not exact pre-commit stage.',
+            'Buffer distributions pool steady commits; per-task records remain available; bootstrap excluded from buffers only and summarized separately.',
+            'Raw event positions include bootstrap and uncommitted forecasts, individually flagged; raw absolute step is not the progress-aligned scheduled step.',
+            'Stage proxy uses contacts/motion AFTER the action at commit_step; not exact pre-commit stage or proof that this prediction executed.',
             'Finger contact may be with fixture/support, not a confirmed grasp or transport.',
             'Stable transport and fine placement are unvalidated; external disturbance was not tested.',
             'Remaining nominal time uses control steps times 0.05 s, not measured wall-clock coverage.',
@@ -147,14 +179,14 @@ def render(result):
     lines = ['# 关键事件与剩余区间：证据补充', '',
              '只复用已完成的异步150次。同步q5作为质量基线；本表事件误差仍指预测与随后实际执行命令的差异，不是同步轨迹真值误差。', '',
              '## 推理后剩余区间', '',
-             '稳态提交统计，排除首次阻塞推理；每格为最小 / 中位 / 最大，单位秒。均按控制步×0.05换算，不是墙钟覆盖，也不是质量验证后的安全缓冲。', '',
-             '|q|新预测剩余区间|旧队列余量|', '|---|---|---|']
+             '按稳态提交池化，排除首次阻塞推理；长回合权重更大，无任务级置信区间。每格为最小 / 中位 / 最大，单位秒。均按控制步×0.05换算，不是墙钟覆盖，也不是质量验证后的安全缓冲。首轮分列JSON。', '',
+             '|q|任务数/提交数|新预测剩余区间|旧队列余量|', '|---|---|---|---|']
     def span(stat):
         return '—' if not stat['n'] else ' / '.join(f"{stat[k]:.3f}" for k in ('min', 'median', 'max'))
     for q, data in result['q'].items():
-        lines.append(f"|{q}|{span(data['new_remaining_nominal_seconds'])}|{span(data['old_queue_remaining_nominal_seconds'])}|")
-    lines += ['', '## 未来动作中的事件位置', '',
-              '原始完整预测内的0起始偏移：0表示第一个动作。记录全部事件，不只首次事件；跨预测窗口可能重复覆盖同一实际事件。', '',
+        lines.append(f"|{q}|{data['episodes']}/{data['steady_commits']}|{span(data['new_remaining_nominal_seconds'])}|{span(data['old_queue_remaining_nominal_seconds'])}|")
+    lines += ['', '## 原始预测内命令事件位置', '',
+              '原始完整预测内的0起始偏移：0表示第一个动作；包含首轮及未提交预测（JSON单列标记）。记录全部事件，不只首次事件；跨预测窗口可能重复覆盖同一实际事件。这不是progress衔接后实际调度位置。', '',
               '|q|夹爪切换偏移|减速偏移|转向偏移|', '|---|---|---|---|']
     for q, data in result['q'].items():
         def offsets(kind):
@@ -172,7 +204,7 @@ def render(result):
                 return '—' if value is None else f'{value:.3f}'
             lines.append(f"|{q}|{kind}|{metric['matched']}|{mean('error_steps')}|{mean('absolute_error_steps')}|{metric['unmatched_predicted']}/{metric['unmatched_actual']}|")
     lines += ['', '## 阶段证据与缺口', '',
-              'JSON按任务集合、夹爪接触/非接触运动等proxy分项列出缓冲；这些标签不是已经确认的搬运或精细放置阶段。', '',
+              'JSON按任务集合、夹爪接触/非接触运动等proxy分项列出缓冲；标签取commit_step动作执行后的状态，既非提交前精确阶段，也不证明该次预测已执行。这些标签不是已经确认的搬运或精细放置阶段。', '',
               '- 接触：有geom接触证据，但可能接触柜体或支撑物，不能等同于抓稳。',
               '- 平稳搬运、精细放置：尚未可靠标注，不能以低速或成功前最后几步冒充。',
               '- 外部扰动：未测。',
