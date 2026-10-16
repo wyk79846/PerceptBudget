@@ -2,7 +2,9 @@
 """Run paired fixed-q async LIBERO episodes, using async q=5 as reference."""
 
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
 import fcntl
+import gc
 import hashlib
 import json
 import os
@@ -22,6 +24,32 @@ from perceptbudget.experiment import create_run, load_config
 
 
 HANDOFF_PROFILES = ('crop_overwrite', 'latency_limited_progress')
+
+
+def configure_model_lifetime(config, requested=None, *, resume=False):
+    lifetime = config.get('model_lifetime', 'task') if resume else (
+        config.get('model_lifetime', 'session') if requested is None else requested)
+    if lifetime not in ('session', 'task') or (resume and requested is not None and requested != lifetime):
+        raise ValueError('Resume cannot change model lifetime')
+    if not resume:
+        config.update(model_lifetime=lifetime, worker_scope=(
+            'one model per session; native environment cleanup per task' if lifetime == 'session'
+            else 'one task, all q; fresh process per task'))
+    return lifetime
+
+
+def memory_snapshot(torch):
+    fields = {}
+    for line in Path('/proc/meminfo').read_text().splitlines():
+        key, value = line.split(':', 1)
+        if key in ('MemAvailable', 'SwapFree'):
+            fields[key + '_kib'] = int(value.split()[0])
+    for line in Path('/proc/self/status').read_text().splitlines():
+        if line.startswith('VmRSS:'):
+            fields['rss_kib'] = int(line.split()[1])
+    fields.update(cuda_allocated_bytes=torch.cuda.memory_allocated(),
+                  cuda_reserved_bytes=torch.cuda.memory_reserved())
+    return fields
 
 
 def configure_handoff(config, requested=None, *, resume=False):
@@ -148,8 +176,8 @@ def write_progress(run_dir, summary):
                          expected_episodes=summary['expected_episodes'])
 
 
-def worker(run_dir, task_id):
-    """A fresh process per task releases model/EGL memory between five-q groups."""
+def worker(run_dir, task_id, session=None):
+    """Run a task with either an isolated process or a shared model session."""
     config = json.loads((run_dir / 'run.json').read_text())['config_snapshot']
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     task_dir = run_dir / 'tasks' / f'task{task_id:02d}'
@@ -161,18 +189,30 @@ def worker(run_dir, task_id):
     summary.pop('traceback', None)
     env = None
     try:
-        summary['egl_cleanup'] = base._patch_egl_cleanup()
-        torch, cuda = base._check_cuda_and_native(config)
+        summary['egl_cleanup'] = (base._patch_egl_cleanup() if session is None else
+                                  {'mode': 'native', 'patched_methods': []})
+        reused = bool(session)
         import numpy as np
         from perceptbudget.libero_input import load_libero_norm_stats
+        if reused:
+            torch, cuda, stats, model = (session[k] for k in ('torch', 'cuda', 'stats', 'model'))
+            summary['model_load_seconds'] = 0.0
+        else:
+            torch, cuda = base._check_cuda_and_native(config)
+            stats = load_libero_norm_stats(config['norm_stats_path'])
+            loaded = time.monotonic()
+            model = base._load_and_check_model(config, torch)
+            summary['model_load_seconds'] = time.monotonic() - loaded
+            if session is not None:
+                session.update(torch=torch, cuda=cuda, stats=stats, model=model)
+        summary['model_reused'] = reused
+        summary['memory_before_task'] = memory_snapshot(torch)
+        if summary['memory_before_task']['MemAvailable_kib'] < 1024 * 1024:
+            raise MemoryError('Less than 1 GiB available before task environment allocation')
         task = base._load_tasks([task_id], config['screen']['suites'])[0]
         summary['task'] = {key: str(value) if isinstance(value, Path) else value
                            for key, value in task.items() if key != 'init_state'}
-        stats = load_libero_norm_stats(config['norm_stats_path'])
         summary['cuda'] = cuda
-        loaded = time.monotonic()
-        model = base._load_and_check_model(config, torch)
-        summary['model_load_seconds'] = time.monotonic() - loaded
         _, env_class = base._libero_api()
         env = base._make_env(env_class, task)
         problem = env.env.parsed_problem
@@ -182,6 +222,7 @@ def worker(run_dir, task_id):
         obs, _ = base._prepare_env_episode(env, task, np)
         base._infer_actions(model, base._make_snapshot(obs, stats, config['state_enabled']),
                             task['instruction'], config['H'], {})
+        del obs
         completed = {ep['q'] for ep in summary['episodes']}
         for q in config['candidate_q']:
             if q in completed:
@@ -209,7 +250,17 @@ def worker(run_dir, task_id):
     finally:
         base._write_json_atomic(progress, summary)
         if env is not None:
-            env.close()
+            try:
+                env.close()
+                env = None
+                gc.collect()
+                torch.cuda.synchronize()
+                summary['memory_after_cleanup'] = memory_snapshot(torch)
+                base._write_json_atomic(progress, summary)
+            except BaseException as exc:
+                summary.update(status='invalid', error=f'environment cleanup: {type(exc).__name__}: {exc}')
+                base._write_json_atomic(progress, summary)
+                raise
 
 
 def main():
@@ -223,6 +274,8 @@ def main():
     parser.add_argument('--resume', type=Path)
     parser.add_argument('--handoff-profile', choices=HANDOFF_PROFILES,
                         default=argparse.SUPPRESS, help='handoff profile (default: config action_handoff)')
+    parser.add_argument('--model-lifetime', choices=('session', 'task'),
+                        default=argparse.SUPPRESS, help='session loads once; task retains isolated fallback')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
@@ -240,6 +293,7 @@ def main():
             parser.error('Resume requires this runner\'s asynchronous paired run')
         try:
             configure_handoff(config, getattr(args, 'handoff_profile', None), resume=True)
+            configure_model_lifetime(config, getattr(args, 'model_lifetime', None), resume=True)
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -253,6 +307,7 @@ def main():
                       candidate_q=q_values,
                       control_period_s=0.05, worker_scope='one task, all q; fresh process per task')
         configure_handoff(config, getattr(args, 'handoff_profile', None))
+        configure_model_lifetime(config, getattr(args, 'model_lifetime', None))
         config['screen'] = {**config['screen'], 'task_ids': task_ids,
                             'trials_per_task': 1}
         run_dir = create_run(config, 'M1', args.purpose, repo_root=ROOT)
@@ -310,6 +365,7 @@ def main():
         summary['status'] = 'running'
         summary.pop('error', None)
         write_progress(run_dir, summary)
+        session = {} if config.get('model_lifetime', 'task') == 'session' else None
         try:
             for task_id in config['screen']['task_ids']:
                 task_dir = run_dir / 'tasks' / f'task{task_id:02d}'
@@ -318,23 +374,32 @@ def main():
                 previous = json.loads(task_summary.read_text()) if task_summary.exists() else {}
                 if previous.get('status') != 'completed':
                     with (task_dir / 'worker.log').open('a', encoding='utf-8') as log:
-                        process = subprocess.Popen([sys.executable, '-u', str(Path(__file__).resolve()),
+                        if session is not None:
+                            needs_load = not session
+                            summary.update(active_task_id=task_id, active_worker_pid=os.getpid())
+                            write_progress(run_dir, summary)
+                            with redirect_stdout(log), redirect_stderr(log):
+                                worker(run_dir, task_id, session)
+                            summary['session_model_load_count'] = summary.get('session_model_load_count', 0) + int(needs_load)
+                            code = 0
+                        else:
+                            process = subprocess.Popen([sys.executable, '-u', str(Path(__file__).resolve()),
                                                     '--worker-task', str(task_id), '--run-dir', str(run_dir)],
                                                    cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                                    pass_fds=(lock.fileno(),))
-                        try:
-                            summary.update(active_task_id=task_id, active_worker_pid=process.pid)
-                            write_progress(run_dir, summary)
-                            code = process.wait()
-                        except BaseException:
-                            if process.poll() is None:
-                                process.terminate()
-                                try:
-                                    process.wait(timeout=30)
-                                except subprocess.TimeoutExpired:
-                                    process.kill()
-                                    process.wait()
-                            raise
+                            try:
+                                summary.update(active_task_id=task_id, active_worker_pid=process.pid)
+                                write_progress(run_dir, summary)
+                                code = process.wait()
+                            except BaseException:
+                                if process.poll() is None:
+                                    process.terminate()
+                                    try:
+                                        process.wait(timeout=30)
+                                    except subprocess.TimeoutExpired:
+                                        process.kill()
+                                        process.wait()
+                                raise
                     if code:
                         raise RuntimeError(f'task {task_id} worker exited {code}; inspect {task_dir / "worker.log"}')
                 data = json.loads(task_summary.read_text())
@@ -352,6 +417,11 @@ def main():
         finally:
             write_progress(run_dir, summary)
         if summary['status'] == 'completed':
+            if session:
+                torch = session['torch']
+                session.clear()
+                gc.collect()
+                torch.cuda.empty_cache()
             with (run_dir / 'analysis.log').open('a', encoding='utf-8') as log:
                 code = subprocess.call([sys.executable, str(ROOT / 'scripts/analyze_async_q.py'),
                                         str(run_dir)], cwd=ROOT, stdout=log,

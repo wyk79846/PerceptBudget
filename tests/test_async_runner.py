@@ -3,11 +3,76 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.run_async_q import (configure_handoff, handoff_options,
+from scripts.run_async_q import (configure_handoff, configure_model_lifetime, handoff_options,
                                  validate_episode, validate_pairing)
 
 
 class AsyncRunnerTests(unittest.TestCase):
+    def test_model_lifetime_new_run_defaults_to_session(self):
+        config = {'H': 20, 'N': 10, 'dtype': 'bfloat16'}
+        self.assertEqual(configure_model_lifetime(config), 'session')
+        self.assertEqual(config['model_lifetime'], 'session')
+        self.assertIsInstance(config['worker_scope'], str)
+        self.assertRegex(config['worker_scope'].lower(), r'session|all tasks|across tasks')
+        self.assertNotEqual(config['worker_scope'],
+                            'one task, all q; fresh process per task')
+        self.assertEqual((config['H'], config['N'], config['dtype']),
+                         (20, 10, 'bfloat16'))
+
+    def test_model_lifetime_new_run_honors_configured_task(self):
+        config = {'model_lifetime': 'task'}
+        self.assertEqual(configure_model_lifetime(config), 'task')
+        self.assertEqual(config['model_lifetime'], 'task')
+        self.assertEqual(config['worker_scope'],
+                         'one task, all q; fresh process per task')
+
+    def test_model_lifetime_explicit_request_overrides_new_run_config(self):
+        for configured, requested in (('task', 'session'), ('session', 'task')):
+            with self.subTest(configured=configured, requested=requested):
+                config = {'model_lifetime': configured}
+                self.assertEqual(configure_model_lifetime(config, requested=requested),
+                                 requested)
+                self.assertEqual(config['model_lifetime'], requested)
+
+    def test_model_lifetime_rejects_invalid_values(self):
+        for invalid in ('', 'worker', 'SESSION', 'sessions'):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    configure_model_lifetime({}, requested=invalid)
+                with self.assertRaises(ValueError):
+                    configure_model_lifetime({'model_lifetime': invalid})
+                with self.assertRaises(ValueError):
+                    configure_model_lifetime({'model_lifetime': invalid}, resume=True)
+                with self.assertRaises(ValueError):
+                    configure_model_lifetime({}, requested=invalid, resume=True)
+
+    def test_model_lifetime_legacy_resume_defaults_to_task_without_mutation(self):
+        config = {'H': 20, 'worker_scope': 'historical worker description'}
+        before = copy.deepcopy(config)
+        self.assertEqual(configure_model_lifetime(config, resume=True), 'task')
+        self.assertEqual(config, before)
+        self.assertEqual(configure_model_lifetime(config, requested='task', resume=True),
+                         'task')
+        self.assertEqual(config, before)
+        with self.assertRaises(ValueError):
+            configure_model_lifetime(config, requested='session', resume=True)
+        self.assertEqual(config, before)
+
+    def test_model_lifetime_resume_preserves_mode_and_rejects_switch(self):
+        for lifetime, other in (('session', 'task'), ('task', 'session')):
+            with self.subTest(lifetime=lifetime):
+                config = {'model_lifetime': lifetime,
+                          'worker_scope': 'saved worker description', 'H': 20}
+                before = copy.deepcopy(config)
+                self.assertEqual(configure_model_lifetime(config, resume=True), lifetime)
+                self.assertEqual(config, before)
+                self.assertEqual(configure_model_lifetime(
+                    config, requested=lifetime, resume=True), lifetime)
+                self.assertEqual(config, before)
+                with self.assertRaises(ValueError):
+                    configure_model_lifetime(config, requested=other, resume=True)
+                self.assertEqual(config, before)
+
     def progress_episode(self, elapsed=7, offset=2):
         episode = self.episode()
         episode['condition'] = 'latency_limited_progress'

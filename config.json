@@ -16,6 +16,7 @@
   "candidate_q": [5, 8, 10, 12, 15],
   "execution_mode": "synchronous_quality",
   "action_handoff": "latency_limited_progress",
+  "model_lifetime": "session",
   "state_enabled": true,
   "H": 20,
   "N": 10,
