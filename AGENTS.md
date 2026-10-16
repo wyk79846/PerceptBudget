@@ -1,5 +1,12 @@
 # 协作规则
 
+## 当前授权：完成剩余异步测试并汇总（2026-10-16，最高优先）
+
+- 用户已批准将剩余q10/12/15各30任务全部测完，共90次；不重跑已完成q5/q8，不扩展提交后计步废弃实验。采用request计q、冻结的进度衔接gain0.5、BF16/N10/H20、双视角+state、seed7/init0及220/280/300步上限。模型session复用，原生环境清理，记录内存；不新增FlashRT改动。
+- scripts/run_async_remaining.py串联唯一GPU评测和完成后的离线汇总；允许显式--resume同run，不重跑完成的任务。独立用户服务perceptbudget-remaining-20261016，日志/tmp/perceptbudget-remaining-20261016.log；外层guarded_run保护内存，不与别的GPU评测并发，在途不改评测源码。
+- 离线compare_async_runs.py保留三个来源与SHA，核对固定配置/初态/帧并以q5配对，独立创建汇总run，不复制或改写原始trace。必须醒目标注旧q5/q8为task重载、新90次为session复用，真实耗时差异不直接全归因q；不能冒充同一轮执行器完全一致的150次。
+- 初始原始来源：q5=M1/20261016T053343.959035Z-async-q5-baseline-a1f27927，q8=M1/20261016T035800.217970Z-async-q8-screen-3650b7d9。最终报告包括分suite/总体成功率、共同成功耗时、断供、真实刷新间隔及已记录轨迹/事件/缓冲分析；不将未过期区间自动称B_safe或声称M1节能验收完成。
+
 ## 用户恢复原异步基准（2026-10-16，最高优先）
 
 - 用户决定仍以之前的异步规则为标准。config.refresh_anchor=request显式固定：按上次启动推理计q，模型空闲且间隔到期继续请求；保持已确认的latency_limited_progress衔接（等待期gain0.5、进度对齐、不延长预测期限）。这里“原版异步”不指撤销FlashRT现有两个补丁，也不指回到纯crop覆盖。

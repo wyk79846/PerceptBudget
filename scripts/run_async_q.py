@@ -314,8 +314,8 @@ def main():
     else:
         q_values = args.q or config['candidate_q']
         task_ids = args.task_ids or config['screen']['task_ids']
-        if len(set(q_values)) != len(q_values) or (len(q_values) > 1 and q_values[0] != 5):
-            parser.error('q values must be unique; multi-q comparisons require q=5 first')
+        if len(set(q_values)) != len(q_values) or (5 in q_values and q_values[0] != 5):
+            parser.error('q values must be unique; if q=5 is included it must be first')
         if len(set(task_ids)) != len(task_ids) or any(not 0 <= t < 30 for t in task_ids):
             parser.error('task IDs must be unique integers in [0,29]')
         config.update(execution_mode='asynchronous_q5_paired', baseline_q=5,
