@@ -43,11 +43,24 @@ def verify(run):
                     request['actions_raw'][source['offset']][6:])
                 np.testing.assert_array_equal(merged['new_raw'], request['actions_raw'][source['offset']])
                 if merged['source_count'] == 2:
-                    weight = np.exp(-.1 * abs(merged['old_offset'] - merged['new_offset']))
-                    np.testing.assert_allclose(merged['weight_old'], weight, rtol=1e-14)
-                    expected = (np.array(merged['old_raw'])[:6] * (weight / (1 + weight))
-                                + np.array(merged['new_raw'])[:6] * (1 / (1 + weight)))
-                    np.testing.assert_array_equal(merged['raw'][:6], round_to_bf16(expected))
+                    if merged.get('method') == 'paper_eq8_9_arm6':
+                        count, index, beta = merged['overlap_length'], merged['overlap_index'], merged['beta']
+                        weight = ((np.exp(-beta * index / (count - 1)) - np.exp(-beta))
+                                  / (1 - np.exp(-beta))) if count >= 2 else 0.
+                        np.testing.assert_allclose(merged['weight_old'], weight, atol=1e-15)
+                        np.testing.assert_allclose(merged['weight_new'], 1-weight, atol=1e-15)
+                        if count >= 2:
+                            expected = (np.clip(merged['old_raw'][:6], -1, 1) * weight
+                                        + np.clip(merged['new_raw'][:6], -1, 1) * (1-weight))
+                            np.testing.assert_array_equal(merged['raw'][:6], round_to_bf16(expected))
+                        else:
+                            np.testing.assert_array_equal(merged['raw'], merged['new_raw'])
+                    else:  # Retain read-only audit support for the superseded run.
+                        weight = np.exp(-.1 * abs(merged['old_offset'] - merged['new_offset']))
+                        np.testing.assert_allclose(merged['weight_old'], weight, rtol=1e-14)
+                        expected = (np.array(merged['old_raw'])[:6] * (weight / (1 + weight))
+                                    + np.array(merged['new_raw'])[:6] * (1 / (1 + weight)))
+                        np.testing.assert_array_equal(merged['raw'][:6], round_to_bf16(expected))
             assert row['step'] < request['observation_step'] + horizon
     for request in requests:
         assert np.asarray(request['actions_raw']).shape == (horizon, 32)

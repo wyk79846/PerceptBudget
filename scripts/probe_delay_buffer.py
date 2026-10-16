@@ -413,7 +413,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             if prefix_fusion:
                 from perceptbudget.prefix_fusion import fuse_prefix_tail
                 from flash_rt.core.utils.actions import unnormalize_actions
-                fused = fuse_prefix_tail(old_queue, queue, decay=0.1)
+                fused = fuse_prefix_tail(old_queue, queue, beta=1.2)
                 records = []
                 for target, data in fused.items():
                     raw = np.asarray(data['raw'], dtype=np.float32)
@@ -423,10 +423,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                               'raw': raw.tolist(), 'action': actual.tolist()}
                     queue[target] = (actual, item[1], item[2], item[3], raw, record)
                     records.append(record)
-                rtc_fusion = {'variant': 'two_source_prefix_tail_raw_bf16',
+                rtc_fusion = {'variant': 'paper_eq8_9_arm6_clipped_bf16',
                               'fused_steps': sum(r['source_count'] == 2 for r in records),
                               'recorded_tail_steps': len(records), 'records': records,
-                              'decay': 0.1, 'arm_dimensions': 6,
+                              'beta': 1.2, 'arm_dimensions': 6,
                               'gripper_policy': 'latest_prediction'}
         elif alignment_policy is not None:
             expired, overwritten, alignment = commit_aligned(
@@ -726,6 +726,7 @@ def main():
         config['prefix_lock'] = {'length': args.prefix_len, 'full_rtc': False,
                                  'advance_handoff': args.advance_handoff,
                                  'rtc_merge': args.prefix_rtc_merge,
+                                 'fusion_method': 'paper_eq8_9_arm6_clipped_bf16' if args.prefix_rtc_merge else None,
                                  'q_semantics': 'target_commit_interval' if args.advance_handoff else 'request_boundary',
                                  'late_policy': args.late_policy,
                                  'early_result': 'wait until committed prefix ends',
@@ -779,7 +780,7 @@ def main():
                      ('perceptbudget/prefix_fusion.py',) if args.prefix_rtc_merge else ()) + (
                      ('perceptbudget/prefix_timing.py',) if args.adaptive_prefix else ()) + (
                      ('perceptbudget/action_blend.py',)
-                     if args.action_blend or args.compare_action_blend_q8 else ()):
+                     if args.action_blend or args.compare_action_blend_q8 or args.prefix_rtc_merge else ()):
         source = ROOT / name
         target = run_dir / 'source' / name
         target.parent.mkdir(parents=True, exist_ok=True)
