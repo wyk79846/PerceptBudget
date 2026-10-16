@@ -31,6 +31,8 @@ class AsyncRunnerTests(unittest.TestCase):
     def test_profile_defaults_and_worker_options(self):
         config = {'H': 20, 'N': 10, 'dtype': 'bfloat16'}
         configure_handoff(config)
+        self.assertEqual(config['action_handoff'], 'latency_limited_progress')
+        configure_handoff(config, 'crop_overwrite')
         self.assertEqual(handoff_options(config), {'condition': 'crop_overwrite'})
         configure_handoff(config, 'latency_limited_progress')
         self.assertEqual(handoff_options(config), {
@@ -50,6 +52,13 @@ class AsyncRunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 configure_handoff(config, other, resume=True)
         self.assertEqual(configure_handoff({}, resume=True), 'crop_overwrite')
+
+    def test_new_run_uses_configured_profile_unless_explicitly_overridden(self):
+        config = {'action_handoff': 'crop_overwrite'}
+        self.assertEqual(configure_handoff(config), 'crop_overwrite')
+        self.assertEqual(configure_handoff(config, 'latency_limited_progress'),
+                         'latency_limited_progress')
+        self.assertEqual(config['pending_arm_gain'], 0.5)
 
     def test_retime_keeps_thirteen_steps(self):
         import numpy as np

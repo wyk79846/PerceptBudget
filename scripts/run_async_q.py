@@ -25,7 +25,8 @@ HANDOFF_PROFILES = ('crop_overwrite', 'latency_limited_progress')
 
 
 def configure_handoff(config, requested=None, *, resume=False):
-    profile = config.get('action_handoff', 'crop_overwrite') if resume else (requested or 'crop_overwrite')
+    profile = config.get('action_handoff', 'crop_overwrite') if resume else (
+        requested or config.get('action_handoff', 'latency_limited_progress'))
     if profile not in HANDOFF_PROFILES or (resume and requested is not None and requested != profile):
         raise ValueError('Resume cannot change handoff profile')
     if not resume:
@@ -221,7 +222,7 @@ def main():
     parser.add_argument('--purpose', default='async-q-paired')
     parser.add_argument('--resume', type=Path)
     parser.add_argument('--handoff-profile', choices=HANDOFF_PROFILES,
-                        default=argparse.SUPPRESS, help='handoff profile (default: crop_overwrite)')
+                        default=argparse.SUPPRESS, help='handoff profile (default: config action_handoff)')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
