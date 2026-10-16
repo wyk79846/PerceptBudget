@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only, stdlib-only audit of ordinary async q8 seven-dimensional Eq8/9.
+"""Read-only, stdlib-only audit of ordinary async q8 six/seven-dimensional Eq8/9.
 
 Usage: python3 scripts/verify_action_blend.py RUN_DIR
 JSON goes to stdout; exits 0=verified, 1=violation, 2=incomplete evidence.
@@ -60,7 +60,13 @@ def audit(root):
         return {'status': 'incomplete', 'missing': missing}, 2
     config = run['config_snapshot']
     blend_config = config['action_blend']
-    equal(blend_config['action_dimensions'], list(range(7)), 'config.dimensions')
+    dimensions = blend_config['action_dimensions']
+    check(dimensions in (list(range(6)), list(range(7))), 'config.dimensions: requires 0:6 or 0:7')
+    arm_only = dimensions == list(range(6))
+    gripper_policy = 'latest_prediction' if arm_only else 'same_blend_as_arm'
+    # Historical seven-dimensional runs predate the explicit policy field.
+    equal(blend_config.get('gripper_policy', None if arm_only else gripper_policy),
+          gripper_policy, 'config.gripper_policy')
     equal(blend_config['beta'], 1.2, 'config.beta')
     equal(blend_config['event_estimator'], False, 'config.event_estimator')
     equal(blend_config['prefix_lock'], False, 'config.prefix_lock')
@@ -178,13 +184,21 @@ def audit(root):
                        (1 - math.exp(-beta)) if n > 1 else 0.0 for i in range(n)]
             merged = [[w * a + (1 - w) * b for a, b in zip(x, y)]
                       for w, x, y in zip(weights, old, new)]
+            if arm_only:
+                for row, latest in zip(merged, new):
+                    row[6] = latest[6]
             expected = {'overlap_actions': n, 'global_interval_steps': [begin, begin + n],
                         'new_offset_interval': [begin - origin, begin - origin + n],
                         'beta': beta, 'weights_old': weights, 'old_actions': old,
                         'new_actions': new, 'merged_actions': merged,
                         'old_sources': [source(item) for item in old_items],
-                        'blended_dimensions': 7, 'gripper_policy': 'same_blend_as_arm'}
+                        'blended_dimensions': 6 if arm_only else 7,
+                        'gripper_policy': gripper_policy}
             equal(event.get('blend'), expected, f'commit {pid}.blend', 1e-10)
+            if arm_only:
+                for i, latest in enumerate(new):
+                    equal(event['blend']['merged_actions'][i][6], latest[6],
+                          f'commit {pid}.gripper[{i}]', 0.0)
             equal(event['old_queue_remaining_actions'], count(step), f'commit {pid}.old queue')
             overwritten = sum(origin + i in queue for i in range(len(actions)) if origin + i >= step)
             expired = min(len(actions), max(0, step - origin))
@@ -229,6 +243,10 @@ def audit(root):
                 action = [f32(v) for v in item['action']]
             equal(event['planned_action'], action, f'step {step}.planned', 1e-7)
             equal(event['action'], action, f'step {step}.executed', 1e-7)
+            if arm_only and item is not None:
+                latest = by_id[item['id']]['actions'][item['offset']][6]
+                equal(event['planned_action'][6], f32(latest), f'step {step}.planned gripper', 0.0)
+                equal(event['action'][6], f32(latest), f'step {step}.executed gripper', 0.0)
     intervals = [b['observation_step'] - a['observation_step'] for a, b in zip(requests, requests[1:])]
     equal(episode['actual_refresh_intervals_steps'], intervals, 'summary.intervals')
     equal(episode['busy_trigger_steps'], busy, 'summary.busy')
@@ -262,7 +280,8 @@ def audit(root):
     if not complete:
         missing.append('completed run/summary status')
     result = {'status': 'failed' if errors else 'incomplete' if missing else 'verified',
-              'scope': 'ordinary_async_paper_eq8_9_7d; no event model; not original RTC',
+              'scope': ('ordinary_async_paper_eq8_9_6d; gripper latest_prediction' if arm_only else
+                        'ordinary_async_paper_eq8_9_7d') + '; no event model; not original RTC',
               'steps': len(controls), 'commits': len(commits), 'executed_blend_steps': executed_blends,
               'overlap_lengths': dict(sorted(overlap_counts.items())),
               'requests': len(requests), 'actual_request_intervals_steps': dict(sorted(Counter(intervals).items())),
