@@ -247,7 +247,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False,
                 artifact_tag='', alignment_policy=None, refresh_policy='boundary',
-                pending_arm_gain=1.0):
+                pending_arm_gain=1.0, synchronous=False, step_hook=None):
+    if synchronous and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled or
+                        alignment_policy is not None or pending_arm_gain != 1.0):
+        raise ValueError('Synchronous recording must execute an unchanged fresh prefix')
     if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
         raise ValueError('phase alignment is a separate diagnostic condition')
     if not 0 < pending_arm_gain <= 1 or (prefix_adapter is not None and pending_arm_gain != 1):
@@ -410,6 +413,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         harvest(0)
         deadline = time.monotonic()
         for step in range(task['max_steps']):
+            if step_hook is not None:
+                observation, hook_event = step_hook(env, observation, step)
+                if hook_event is not None:
+                    base._trace(stream, 'external_disturbance', task_id=task['task_id'],
+                                q=q, step=step, details=hook_event)
             tick = time.monotonic()
             if selector is not None and rows:
                 selector.observe_tick(tick - rows[-1]['tick_monotonic'])
@@ -430,6 +438,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                         frames.pop()  # No action was executed for this tick.
                         status = 'infeasible_prefix_plan'
                         break
+                    if synchronous:
+                        future.result()  # Explicit sync diagnostic: no env steps while waiting.
+                        harvest(step)
                 else:
                     missed_triggers.append(step)
                     base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q,
@@ -528,6 +539,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
               'pending_arm_gain': pending_arm_gain,
+              'synchronous_recording': synchronous,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
               'underflow_steps': underflows, 'commits': commits,
