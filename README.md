@@ -1,5 +1,7 @@
 # PerceptBudget
 
+M1.1小测：用户已批准task0/task3，正常/固定2cm扰动，共20回合；[本轮进度](../任务产出/perceptbudget/M1/20261016T094730.333910Z-m11-stage-disturbance-1de2112f/progress.md)。入口`probe_m11.py`，完整同步记录与现有异步衔接对照，不替换旧基准；[阶段画面核对](../任务产出/perceptbudget/M1/20261016T094730.333910Z-m11-stage-disturbance-1de2112f/review_notes.md)。这是小规模探索，不代表全部M1验收。
+
 当前状态（2026-10-16）：剩余90次已完成、服务正常退出；[最终异步150次汇总](../任务产出/perceptbudget/M1/20261016T082622.503351Z-async-final-edc1a3bc/analysis.md)成功数为20/25/27/28/24。用户已指定**同步q5（30/30）作为主要质量对照**，旧异步q5对照仅保留为历史。现做离线配对分析，不重跑GPU、不修改FlashRT。同步旧日志缺首帧/完整预测/接触记录，全场景初态、物理阶段与安全缓冲仍有证据缺口，不称M1全部完成。
 
 离线入口：`scripts/compare_sync_baseline.py`比较同步q5与全部异步档；`scripts/summarize_async_evidence.py`补充事件位置、名义剩余区间及粗接触标签。两者只写新分析结果，不覆盖原始数据。真实耗时还受同步/异步执行方式与模型生命周期影响，不把全部差异归因于q。
