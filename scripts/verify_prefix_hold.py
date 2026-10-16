@@ -13,13 +13,15 @@ def verify(run):
     events = [json.loads(line) for line in (run / 'trace.jsonl').read_text().splitlines()]
     rows = [r for r in events if r['event'] == 'control_step']
     commits = [r for r in events if r['event'] == 'prediction_committed']
-    requests = json.loads((run / 'q5_requests.json').read_text())
-    pauses = json.loads((run / 'q5_late_hold.json').read_text())
+    assert len(summary['q_values']) == 1
+    q = summary['q_values'][0]
+    requests = json.loads((run / f'q{q}_requests.json').read_text())
+    pauses = json.loads((run / f'q{q}_late_hold.json').read_text())
     by_id = {r['prediction_id']: r for r in requests}
     by_step = {r['step']: r for r in rows}
     horizon = config['H']
     assert config['prefix_lock']['late_policy'] == 'hold'
-    assert summary['task_ids'] == [0] and summary['q_values'] == [5]
+    assert summary['task_ids'] == [0]
     assert len(by_step) == len(rows)
     for row in rows:
         assert np.isclose(row['after']['sim_time'] - row['before']['sim_time'], .05)
@@ -59,7 +61,18 @@ def verify(run):
                 assert by_step[step]['source']['offset'] == length
     assert pauses['steps'] == sum(r['late_hold'] for r in rows)
     assert pauses['count'] == len(pauses['pauses'])
+    if config['prefix_lock'].get('advance_handoff'):
+        last_commit = 0
+        commit_by_id = {c['prediction_id']: c for c in commits}
+        for request in requests[1:]:
+            assert request['refresh_anchor'] == 'advance_handoff'
+            assert request['observation_step'] == last_commit + q - request['prefix_len']
+            assert request['target_handoff_step'] == last_commit + q
+            assert request['scheduled_commit_step'] == request['target_handoff_step']
+            if request['prediction_id'] in commit_by_id:
+                last_commit = commit_by_id[request['prediction_id']]['commit_step']
     return {'verified': True, 'status': summary['status'], 'control_steps': len(rows),
+            'q': q,
             'commits': len(commits), 'raw32_requests': len(requests),
             'late_hold_count': pauses['count'], 'late_hold_steps': pauses['steps'],
             'late_hold_wall_seconds': pauses['wall_seconds'],

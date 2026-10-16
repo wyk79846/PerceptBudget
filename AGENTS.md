@@ -4,6 +4,7 @@
 
 - 仅task0一次，q8表示目标交接间隔而非交接后再执行8步才请求；固定prefix7，在上次commit+1请求、+8交接。迟到零动作保持，下一周期以实际commit为基准，不并发推理、不延长origin+H。
 - 显式--advance-handoff --prefix-lock --prefix-len 7 --late-policy hold --q 8，默认路径及FlashRT不改。BF16/N10/H20/state/seed7/init0、220步上限保持。独立run、guarded_run和共享GPU锁，测试commit后启动。报告实际交接间隔、暂停/断供、结果和时长，不称完整RTC。
+- 已完成唯一回合：24027e2，M1/20261016T120654.285958Z-advance-handoff-pilot-3ffa5e8a，201步成功、14.181秒；交接间隔8×22/9×2，暂停2次各1步共0.11336秒，普通断供0。250项测试（1跳过），逐步实际审计通过，服务退出0。报告`../任务指导与相关参考/PerceptBudget_q8提前计算定期交接_单任务测试_20261016.md`。q语义较前q5改变，不能作纯q单因素结论；不自动扩测、不替换默认。
 
 ## 当前授权：q5 task0 prefix late-hold 小测（2026-10-16）
 
