@@ -7,9 +7,15 @@ import argparse
 import json
 import math
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import numpy as np
 from scipy.stats import beta
+from perceptbudget.pairing import initial_state_mismatches
 
 QS = (5, 8, 10, 12, 15)
 SEED = 7
@@ -371,8 +377,7 @@ def analyze(run_dir):
                 missing.append({'suite': suite, 'task_id': task_id,
                                 'missing_q': 5 if base is None else q})
                 continue
-            mismatch = [name for name in ('initial_sim_state_sha256', 'initial_raw_state')
-                        if name in base and name in cand and base[name] != cand[name]]
+            mismatch = initial_state_mismatches(base, cand)
             if base.get('initial_frames_sha256') != cand.get('initial_frames_sha256'):
                 comparison = cand.get('initial_frame_comparison', {})
                 if not (comparison.get('accepted') and

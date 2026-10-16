@@ -266,6 +266,61 @@ class AsyncAnalysisTest(unittest.TestCase):
             self.assertEqual(result['paired_vs_q5']['8']['success_difference']['n'], 0)
             self.assertEqual(result['q']['8']['n'], 1)
 
+    def test_audited_initial_roundoff_keeps_pair_and_original_hash(self):
+        from perceptbudget.pairing import validate_initial_state_pair
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            episodes = [{'task_id': 0, 'suite': 'spatial', 'q': q, 'status': 'success',
+                         'steps': 3, 'real_seconds': 1, 'commits': [],
+                         'artifact_dir': 'tasks/task00',
+                         'initial_sim_state_sha256': str(q) * 64,
+                         'initial_sim_state': [0.0, .25 + (7e-9 if q == 8 else 0)],
+                         'initial_raw_state': [7e-9 if q == 8 else 0.0] + [0.0] * 7,
+                         'initial_frames_sha256': {'agentview': 'same'}} for q in (5, 8)]
+            validate_initial_state_pair(*episodes)
+            self.make_run(root, episodes)
+            original = (root / 'summary.json').read_bytes()
+            result = analyze(root)
+            pair = result['paired_vs_q5']['8']
+            self.assertEqual(pair['success_difference']['n'], 1)
+            self.assertEqual(pair['missing_pairs'], [])
+            self.assertEqual(result['q']['8']['n'], 1)
+            candidate = next(ep for ep in result['episodes'] if ep['q'] == 8)
+            self.assertEqual(candidate['initial_sim_state_sha256'], '8' * 64)
+            self.assertEqual((root / 'summary.json').read_bytes(), original)
+            json.dumps(result, allow_nan=False)
+
+    def test_stale_or_forged_initial_state_audit_excludes_only_pair(self):
+        from perceptbudget.pairing import validate_initial_state_pair
+
+        for tampering in ('baseline_hash', 'baseline_raw', 'wide_tolerance', 'nonfinite'):
+            with self.subTest(tampering=tampering), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                episodes = [{'task_id': 0, 'suite': 'spatial', 'q': q, 'status': 'success',
+                             'steps': 3, 'real_seconds': 1, 'commits': [],
+                             'artifact_dir': 'tasks/task00',
+                             'initial_sim_state_sha256': str(q) * 64,
+                             'initial_sim_state': [0.0, .25 + (7e-9 if q == 8 else 0)],
+                             'initial_raw_state': [0.0] * 8} for q in (5, 8)]
+                validate_initial_state_pair(*episodes)
+                base, cand = episodes
+                if tampering == 'baseline_hash':
+                    base['initial_sim_state_sha256'] = 'new-baseline'
+                elif tampering == 'baseline_raw':
+                    base['initial_raw_state'] = [1e-4] + [0.0] * 7
+                elif tampering == 'wide_tolerance':
+                    cand['initial_state_comparison'].update(atol=1.0, max_abs_difference=1e-4)
+                else:
+                    cand['initial_state_comparison']['max_abs_difference'] = float('nan')
+                self.make_run(root, episodes)
+                result = analyze(root)
+                pair = result['paired_vs_q5']['8']
+                self.assertEqual(pair['success_difference']['n'], 0)
+                self.assertIn('initial_sim_state_sha256', pair['missing_pairs'][0]['fields'])
+                self.assertEqual(result['q']['5']['n'], 1)
+                self.assertEqual(result['q']['8']['n'], 1)
+
     def test_completion_times_exclude_timeouts_and_require_mutual_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

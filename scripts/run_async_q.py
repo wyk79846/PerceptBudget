@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from scripts import eval_q as base
 from scripts import probe_delay_buffer as probe
 from perceptbudget.experiment import create_run, load_config
+from perceptbudget.pairing import validate_initial_state_pair
 
 
 HANDOFF_PROFILES = ('crop_overwrite', 'latency_limited_progress')
@@ -140,10 +141,9 @@ def validate_episode(episode, horizon):
 def validate_pairing(episodes, run_dir=None):
     if not episodes:
         return
-    if len({ep['initial_sim_state_sha256'] for ep in episodes}) != 1:
-        raise RuntimeError('Initial conditions differ across q: initial_sim_state_sha256')
     baseline = episodes[0]
     for ep in episodes[1:]:
+        validate_initial_state_pair(baseline, ep, run_dir)
         if ep['initial_frames_sha256'] == baseline['initial_frames_sha256']:
             continue
         if run_dir is None:
@@ -188,7 +188,7 @@ def write_progress(run_dir, summary):
                          expected_episodes=summary['expected_episodes'])
 
 
-def worker(run_dir, task_id, session=None):
+def worker(run_dir, task_id, session=None, on_episode=None):
     """Run a task with either an isolated process or a shared model session."""
     config = json.loads((run_dir / 'run.json').read_text())['config_snapshot']
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
@@ -199,6 +199,9 @@ def worker(run_dir, task_id, session=None):
     summary.update(status='running', task_id=task_id)
     summary.pop('error', None)
     summary.pop('traceback', None)
+    if on_episode:
+        for episode in summary['episodes']:
+            on_episode(episode)
     env = None
     try:
         summary['egl_cleanup'] = (base._patch_egl_cleanup() if session is None else
@@ -235,9 +238,48 @@ def worker(run_dir, task_id, session=None):
         base._infer_actions(model, base._make_snapshot(obs, stats, config['state_enabled']),
                             task['instruction'], config['H'], {})
         del obs
+        if getattr(env.env, 'fixtures_dict', {}):
+            layout_path = task_dir / 'initial_fixture_layout.json'
+            env._pb_lock_fixtures = True
+            if layout_path.exists():
+                env._pb_fixture_layout = json.loads(layout_path.read_text())['layout']
+            initial, _ = base._prepare_env_episode(env, task, np)
+            preflight_dir = task_dir / 'initial_preflight'
+            preflight_dir.mkdir(exist_ok=True)
+            frames = np.concatenate((initial['agentview_image'], initial['robot0_eye_in_hand_image']), axis=1)
+            candidate = {
+                'q': 0, 'artifact_dir': str(preflight_dir.relative_to(run_dir)),
+                'initial_sim_state': env.env.sim.get_state().flatten().tolist(),
+                'initial_raw_state': probe.raw_libero_state(initial).tolist(),
+                'initial_frames_sha256': hashlib.sha256(frames.tobytes()).hexdigest()}
+            candidate['initial_sim_state_sha256'] = hashlib.sha256(np.asarray(
+                candidate['initial_sim_state'], dtype=np.float64).tobytes()).hexdigest()
+            np.savez_compressed(preflight_dir / 'q0_frames.npz', frames=frames[None])
+            if summary['episodes']:
+                validate_pairing([summary['episodes'][0], candidate], run_dir)
+            base._write_json_atomic(layout_path, {'task_id': task_id, 'seed': 7,
+                'init_state_index': 0, 'layout': env._pb_fixture_layout,
+                'reconstructed_against_existing_episode': bool(summary['episodes'])})
+            summary['fixture_layout_reference'] = str(layout_path.relative_to(run_dir))
+            summary['fixture_layout_sha256'] = hashlib.sha256(json.dumps(
+                env._pb_fixture_layout, sort_keys=True).encode()).hexdigest()
+            del initial, frames
         completed = {ep['q'] for ep in summary['episodes']}
         for q in config['candidate_q']:
             if q in completed:
+                continue
+            pending = sorted(task_dir.glob(f'q{q}-*/pending_episode.json'), key=lambda p: p.stat().st_mtime)
+            if pending:
+                episode_dir = pending[0].parent
+                episode = json.loads(pending[0].read_text())
+                validate_episode(episode, config['H'])
+                validate_pairing(summary['episodes'] + [episode], run_dir)
+                base._write_json_atomic(episode_dir / 'episode.json', episode)
+                summary['episodes'].append(episode)
+                summary.setdefault('recovered_pending_artifacts', []).append(episode['artifact_dir'])
+                base._write_json_atomic(progress, summary)
+                if on_episode:
+                    on_episode(episode)
                 continue
             # A failed attempt keeps its own files; resuming never mixes traces.
             episode_dir = Path(tempfile.mkdtemp(prefix=f'q{q}-', dir=task_dir))
@@ -249,11 +291,18 @@ def worker(run_dir, task_id, session=None):
                 episode.update(suite=task['suite'], suite_task_id=task['suite_task_id'],
                                artifact_dir=str(episode_dir.relative_to(run_dir)),
                                execution_mode=config['execution_mode'])
+                if 'fixture_layout_sha256' in summary:
+                    episode['initial_fixture_layout_sha256'] = summary['fixture_layout_sha256']
+                # Persist measurements BEFORE validation, so harmless checker
+                # failures never force a completed episode to be simulated again.
+                base._write_json_atomic(episode_dir / 'pending_episode.json', episode)
                 validate_episode(episode, config['H'])
                 validate_pairing(summary['episodes'] + [episode], run_dir)
                 base._write_json_atomic(episode_dir / 'episode.json', episode)
                 summary['episodes'].append(episode)
                 base._write_json_atomic(progress, summary)
+                if on_episode:
+                    on_episode(episode)
         summary['status'] = 'completed'
     except BaseException as exc:
         summary.update(status='invalid', error=f'{type(exc).__name__}: {exc}',
@@ -291,6 +340,7 @@ def main():
     parser.add_argument('--refresh-anchor', choices=('request', 'commit'),
                         default=argparse.SUPPRESS, help='count q from last request or latest committed prediction')
     parser.add_argument('--validation-amendment', help='record a validation-only source revision on resume')
+    parser.add_argument('--initialization-amendment', help='audit deterministic fixture-reset and validation repairs on resume')
     parser.add_argument('--worker-task', type=int)
     parser.add_argument('--run-dir', type=Path)
     args = parser.parse_args()
@@ -340,9 +390,18 @@ def main():
             for name, expected in summary['source_sha256'].items():
                 if file_sha256(ROOT / name) != expected:
                     changed[name] = {'old_sha256': expected, 'new_sha256': file_sha256(ROOT / name)}
+            pairing_source = 'perceptbudget/pairing.py'
+            if pairing_source not in summary['source_sha256']:
+                changed[pairing_source] = {'old_sha256': None, 'new_sha256': file_sha256(ROOT / pairing_source)}
+            fixtures_source = 'perceptbudget/fixtures.py'
+            if fixtures_source not in summary['source_sha256']:
+                changed[fixtures_source] = {'old_sha256': None, 'new_sha256': file_sha256(ROOT / fixtures_source)}
             if changed:
-                permitted = {'scripts/run_async_q.py', 'scripts/analyze_async_q.py'}
-                if not args.validation_amendment or set(changed) - permitted:
+                permitted = {'scripts/run_async_q.py', 'scripts/analyze_async_q.py', pairing_source}
+                if args.initialization_amendment:
+                    permitted.update(('scripts/eval_q.py', fixtures_source))
+                reason = args.initialization_amendment or args.validation_amendment
+                if not reason or set(changed) - permitted:
                     raise RuntimeError('Evaluation source changed since this run: ' + repr(changed))
                 revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
                 for name, hashes in changed.items():
@@ -351,14 +410,16 @@ def main():
                     target.write_bytes((ROOT / name).read_bytes())
                     summary['source_sha256'][name] = hashes['new_sha256']
                 summary.setdefault('validation_amendments', []).append({
-                    'reason': args.validation_amendment, 'revision': revision,
+                    'reason': reason, 'kind': 'fixture_reset_and_validation' if args.initialization_amendment else 'validation',
+                    'revision': revision,
                     'files': changed, 'prior_completed_episodes': len(summary['episodes'])})
         else:
             names = ['scripts/run_async_q.py', 'scripts/probe_delay_buffer.py',
                      'scripts/eval_q.py', 'scripts/run_flashrt.py',
                      'scripts/analyze_async_q.py', 'scripts/analyze_sync_quality.py',
                      'perceptbudget/model.py', 'perceptbudget/libero_input.py',
-                     'perceptbudget/power.py', 'perceptbudget/experiment.py']
+                     'perceptbudget/power.py', 'perceptbudget/experiment.py', 'perceptbudget/pairing.py',
+                     'perceptbudget/fixtures.py']
             sources = {}
             for name in names:
                 target = run_dir / 'source' / name
@@ -382,6 +443,10 @@ def main():
         summary.pop('error', None)
         write_progress(run_dir, summary)
         session = {} if config.get('model_lifetime', 'task') == 'session' else None
+        def record_episode(episode):
+            summary['episodes'] = [ep for ep in summary['episodes'] if
+                (ep['task_id'], ep['q']) != (episode['task_id'], episode['q'])] + [episode]
+            write_progress(run_dir, summary)
         try:
             for task_id in config['screen']['task_ids']:
                 task_dir = run_dir / 'tasks' / f'task{task_id:02d}'
@@ -395,7 +460,7 @@ def main():
                             summary.update(active_task_id=task_id, active_worker_pid=os.getpid())
                             write_progress(run_dir, summary)
                             with redirect_stdout(log), redirect_stderr(log):
-                                worker(run_dir, task_id, session)
+                                worker(run_dir, task_id, session, on_episode=record_episode)
                             summary['session_model_load_count'] = summary.get('session_model_load_count', 0) + int(needs_load)
                             code = 0
                         else:

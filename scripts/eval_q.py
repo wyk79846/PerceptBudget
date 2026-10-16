@@ -276,6 +276,8 @@ def _seed_process(seed, np, torch):
 def _prepare_env_episode(env, task, np):
     env.seed(SEED)
     env.reset()
+    from perceptbudget.fixtures import enforce_fixture_layout
+    enforce_fixture_layout(env)
     observation = env.set_init_state(task["init_state"])
     stable_action = np.zeros(7, dtype=np.float32)
     stable_action[6] = -1.0

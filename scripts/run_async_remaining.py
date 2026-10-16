@@ -15,10 +15,16 @@ BASELINES = [RESULTS / '20261016T053343.959035Z-async-q5-baseline-a1f27927',
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resume', type=Path, help='Continue the same remaining-q run without repeating completed tasks')
+    parser.add_argument('--validation-amendment', help='Audit an explicitly approved validation-only source repair on resume')
+    parser.add_argument('--initialization-amendment', help='Audit deterministic fixture-reset repairs on resume')
     args = parser.parse_args()
     command = [sys.executable, '-u', str(ROOT / 'scripts/run_async_q.py')]
     if args.resume:
         command += ['--resume', str(args.resume.resolve())]
+        if args.validation_amendment:
+            command += ['--validation-amendment', args.validation_amendment]
+        if args.initialization_amendment:
+            command += ['--initialization-amendment', args.initialization_amendment]
     else:
         command += ['--q', '10', '12', '15', '--model-lifetime', 'session',
                     '--refresh-anchor', 'request', '--purpose', 'async-remaining']
