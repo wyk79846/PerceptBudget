@@ -1,5 +1,10 @@
 # 协作规则
 
+## 当前授权：q8提前计算、定期交接小测（2026-10-16）
+
+- 仅task0一次，q8表示目标交接间隔而非交接后再执行8步才请求；固定prefix7，在上次commit+1请求、+8交接。迟到零动作保持，下一周期以实际commit为基准，不并发推理、不延长origin+H。
+- 显式--advance-handoff --prefix-lock --prefix-len 7 --late-policy hold --q 8，默认路径及FlashRT不改。BF16/N10/H20/state/seed7/init0、220步上限保持。独立run、guarded_run和共享GPU锁，测试commit后启动。报告实际交接间隔、暂停/断供、结果和时长，不称完整RTC。
+
 ## 当前授权：q5 task0 prefix late-hold 小测（2026-10-16）
 
 - 仅task0/q5一次，显式`--prefix-lock --prefix-len 7 --late-policy hold`；默认discard/8及正式基线不变，不修改FlashRT、不扩测，不称完整RTC。

@@ -40,6 +40,13 @@ def refresh_due(step, previous_request_step, q, policy):
     raise ValueError('unknown refresh policy')
 
 
+def advance_prefix_due(step, previous_commit_step, q, prefix_len):
+    """Request early enough to target the next q-step handoff (no concurrency)."""
+    if q <= prefix_len:
+        raise ValueError('handoff interval must exceed locked prefix length')
+    return step >= previous_commit_step + q - prefix_len
+
+
 def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     expired = overwritten = 0
     for offset, action in enumerate(actions):
@@ -298,6 +305,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     selector = None
     prefix_rejection = None
     late_policy = config.get('prefix_lock', {}).get('late_policy', 'discard')
+    advance_handoff = config.get('prefix_lock', {}).get('advance_handoff', False)
+    if advance_handoff and (prefix_adapter is None or q <= prefix_adapter.prefix_len):
+        raise ValueError('advance handoff requires prefix locking and q > prefix_len')
     if late_policy not in ('discard', 'hold') or (late_policy == 'hold' and prefix_adapter is None):
         raise ValueError('late hold requires prefix locking')
     pauses, active_pause = [], None
@@ -319,8 +329,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         observation_started = time.monotonic()
         snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         request = {'prediction_id': len(requests), 'observation_step': step,
-                   'refresh_anchor': 'commit' if refresh_policy == 'post_commit' else 'request',
-                   'refresh_anchor_step': previous_commit_step if refresh_policy == 'post_commit' else previous_request_step,
+                   'refresh_anchor': 'advance_handoff' if advance_handoff else 'commit' if refresh_policy == 'post_commit' else 'request',
+                   'refresh_anchor_step': previous_commit_step if advance_handoff or refresh_policy == 'post_commit' else previous_request_step,
+                   'target_handoff_step': previous_commit_step + q if advance_handoff and step else None,
                    'observation_monotonic': observation_started,
                    'input_ready_monotonic': time.monotonic(),
                    'model_state': snapshot.get('state'),
@@ -472,6 +483,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             harvest(step)
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
+            if advance_handoff:
+                due = (future is None and advance_prefix_due(
+                    step, previous_commit_step, q, prefix_adapter.prefix_len))
             if refresh_policy == 'post_commit' and future is not None:
                 due = False  # Next q-step window starts only after this result commits.
             if due:
@@ -602,6 +616,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'rtc_action_fusion': rtc_fusion_enabled,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
+              'advance_handoff': advance_handoff,
               'pending_arm_gain': pending_arm_gain,
               'synchronous_recording': synchronous,
               'prefix_plan_rejection': prefix_rejection,
@@ -633,6 +648,8 @@ def main():
     parser.add_argument('--prefix-lock', action='store_true')
     parser.add_argument('--prefix-len', type=int, choices=(7, 8), default=8)
     parser.add_argument('--late-policy', choices=('discard', 'hold'), default='discard')
+    parser.add_argument('--advance-handoff', action='store_true',
+                        help='q is handoff interval; request q-prefix_len steps after previous commit')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
     parser.add_argument('--rtc-action-fusion', action='store_true',
@@ -667,6 +684,9 @@ def main():
         parser.error('--interface-only requires --prefix-lock')
     pair_count = args.pairs if args.pairs is not None else 3
     q_values = [8] if args.compare_action_blend_q8 else args.q or [8, 12]
+    if args.advance_handoff and (not args.prefix_lock or args.adaptive_prefix or
+                                args.late_policy != 'hold' or min(q_values) <= args.prefix_len):
+        parser.error('--advance-handoff requires fixed prefix, late hold and q > prefix-len')
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
     config.update(candidate_q=q_values,
@@ -675,6 +695,8 @@ def main():
                                   else 'actual_delay_diagnostic'))
     if args.prefix_lock:
         config['prefix_lock'] = {'length': args.prefix_len, 'full_rtc': False,
+                                 'advance_handoff': args.advance_handoff,
+                                 'q_semantics': 'target_commit_interval' if args.advance_handoff else 'request_boundary',
                                  'late_policy': args.late_policy,
                                  'early_result': 'wait until committed prefix ends',
                                  'late_result': ('zero arm and gripper command; tick until ready; resume after prefix; crop tail at origin+H'
@@ -719,7 +741,7 @@ def main():
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
                'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
-               if args.adaptive_prefix else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
+               if args.adaptive_prefix else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
     run_dir = create_run(config, 'M1', purpose, repo_root=ROOT)
     print('run_dir=' + str(run_dir), flush=True)
     for name in ('scripts/probe_delay_buffer.py', 'scripts/eval_q.py', 'perceptbudget/model.py',
@@ -840,7 +862,8 @@ def main():
                     summary['episodes'].append(episode)
                     base._write_json_atomic(run_dir / 'summary.json', summary)
             else:
-                condition = ('rtc_temporal_fusion_6d' if args.rtc_action_fusion else
+                condition = ('advance_prefix_handoff' if args.advance_handoff else
+                             'rtc_temporal_fusion_6d' if args.rtc_action_fusion else
                              'paper_action_blend' if args.action_blend else 'crop_overwrite')
                 for trial_index, q in enumerate(q_values, 1):
                     summary['episodes'].append(run_episode(

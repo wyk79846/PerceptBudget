@@ -13,7 +13,7 @@ from scripts import probe_delay_buffer as probe
 
 
 class PrefixHoldEpisodeTest(unittest.TestCase):
-    def run_fake(self, delay, policy='hold', max_steps=15):
+    def run_fake(self, delay, policy='hold', max_steps=15, q=5, advance=False):
         clock = SimpleNamespace(now=0.)
         obs = {key: np.zeros((2, 2, 3), dtype=np.uint8) for key in
                ('agentview_image', 'robot0_eye_in_hand_image')}
@@ -33,8 +33,13 @@ class PrefixHoldEpisodeTest(unittest.TestCase):
                     self.value, self.ready = self.fn(), True
                 return self.value
         class Executor:
-            def __init__(self, **kw): pass
-            def submit(self, fn): return Future(fn)
+            def __init__(self, **kw):
+                self.pending = None
+            def submit(self, fn):
+                if self.pending is not None:
+                    assert self.pending.ready, 'concurrent inference submitted'
+                self.pending = Future(fn)
+                return self.pending
             def shutdown(self, **kw): pass
         class Adapter:
             prefix_len = 7
@@ -61,10 +66,11 @@ class PrefixHoldEpisodeTest(unittest.TestCase):
              patch.object(probe.time, 'monotonic', side_effect=lambda: clock.now), \
              patch.object(probe.time, 'sleep', side_effect=lambda n: setattr(clock, 'now', clock.now+n)):
             result = probe.run_episode(env, {'task_id': 0, 'task_name': 'fake',
-                'instruction': 'fake', 'max_steps': max_steps}, 5, None, {},
-                {'state_enabled': True, 'H': 20, 'prefix_lock': {'late_policy': policy}},
+                'instruction': 'fake', 'max_steps': max_steps}, q, None, {},
+                {'state_enabled': True, 'H': 20, 'prefix_lock': {
+                    'late_policy': policy, 'advance_handoff': advance}},
                 np, None, Path(directory), stream, Adapter())
-            requests = json.loads((Path(directory)/'q5_requests.json').read_text())
+            requests = json.loads((Path(directory)/f'q{q}_requests.json').read_text())
         return result, env.actions, requests
 
     def test_late_ticks_zero_then_resumes_at_seven(self):
