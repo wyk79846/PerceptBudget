@@ -3,10 +3,50 @@ import unittest
 from scripts.probe_delay_buffer import (
     buffer_count, commit, commit_blended, commit_rtc_fused,
     reference_prefix_count,
+    commit_prefix_hold, prefix_hold_due,
 )
 
 
 class DelayBufferTest(unittest.TestCase):
+    def test_hold_starts_only_at_locked_boundary(self):
+        request = {'scheduled_commit_step': 12}
+        self.assertFalse(prefix_hold_due(request, 11, 'hold'))
+        self.assertTrue(prefix_hold_due(request, 12, 'hold'))
+        self.assertTrue(prefix_hold_due(request, 13, 'hold'))
+        self.assertFalse(prefix_hold_due(request, 13, 'discard'))
+        self.assertFalse(prefix_hold_due(None, 13, 'hold'))
+
+    def test_late_hold_resumes_prefix_and_crops_tail_with_raw32(self):
+        actions = [[float(i)] * 7 for i in range(20)]
+        raw = [[float(i)] * 32 for i in range(20)]
+        queue = {i: ('old',) for i in range(14, 40)}
+        expired, overwritten, info = commit_prefix_hold(queue, actions, 5, 14, 1, raw, 7)
+        self.assertEqual(expired, 7)
+        self.assertEqual(overwritten, 11)
+        self.assertEqual(info['discarded_tail_actions'], 2)
+        self.assertEqual(info['original_deadline_step'], 25)
+        self.assertEqual(sorted(queue), list(range(14, 25)))
+        self.assertEqual(queue[14], (actions[7], 1, 5, 7, raw[7]))
+        self.assertEqual(queue[24][3], 17)
+        # The next request can lock seven raw32 rows without inverse normalization.
+        self.assertEqual([queue[14+i][4] for i in range(7)], raw[7:14])
+        self.assertEqual(buffer_count(queue, 19), 6)  # insufficient: never extend H
+
+    def test_on_time_hold_has_no_tail_crop(self):
+        queue = {}
+        _, _, info = commit_prefix_hold(queue, list(range(20)), 5, 12, 1,
+                                         [[i]*32 for i in range(20)], 7)
+        self.assertEqual(queue[12][0], 7)
+        self.assertEqual(info['discarded_tail_actions'], 0)
+        self.assertEqual(buffer_count(queue, 12), 13)
+
+    def test_fully_expired_hold_errors_without_mutating_queue(self):
+        for step in (25, 26):
+            queue = {25: ('old',)}
+            with self.assertRaisesRegex(RuntimeError, 'fully expired'):
+                commit_prefix_hold(queue, list(range(20)), 5, step, 1, [], 7)
+            self.assertEqual(queue, {25: ('old',)})
+
     def test_h20_q8_old_queue_is12(self):
         queue = {}
         self.assertEqual(commit(queue, list(range(20)), 0, 0, 0), (0, 0))

@@ -1,5 +1,11 @@
 # 协作规则
 
+## 当前授权：q5 task0 prefix late-hold 小测（2026-10-16）
+
+- 仅task0/q5一次，显式`--prefix-lock --prefix-len 7 --late-policy hold`；默认discard/8及正式基线不变，不修改FlashRT、不扩测，不称完整RTC。
+- 提前ready等待锁定prefix结束；迟到每tick七维零命令，Panda夹爪0保持驱动目标（用户已独立核实）。ready后从锁定prefix之后接续，裁掉等待对应尾部，原origin+H20截止不变；raw32随接续队列保存以支持下次prefix。
+- prefix不足或全部过期明确报错，保留请求、暂停次数/步数/墙钟；220步上限、BF16/N10/state/seed7/init0保持。测试commit后独立systemd用户服务、guarded_run及共享单GPU锁；启动前告知，无需再次审批。
+
 ## q5不减幅衔接小测（2026-10-16，最高优先）
 
 - 用户明确要求测试第一种替代：等待期正常执行旧动作、按实际进度接续，q=5。先task0正常场景一次，不扩扫描、不改默认基线。

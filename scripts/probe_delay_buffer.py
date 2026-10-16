@@ -53,6 +53,36 @@ def commit(queue, actions, origin, step, prediction_id, raw_actions=None):
     return expired, overwritten
 
 
+def prefix_hold_due(request, step, policy):
+    return (policy == 'hold' and request is not None
+            and 'scheduled_commit_step' in request
+            and step >= request['scheduled_commit_step'])
+
+
+def commit_prefix_hold(queue, actions, origin, step, prediction_id, raw_actions, length):
+    """Resume after the executed prefix; consume delay from the tail, not H."""
+    remaining = origin + len(actions) - step
+    if remaining <= 0:
+        raise RuntimeError('late prefix result fully expired: original origin+H deadline reached')
+    if step < origin + length:
+        raise ValueError('cannot commit before locked prefix ends')
+    tail = len(actions) - length - remaining
+    overwritten = sum(target in queue for target in range(step, origin + len(actions)))
+    # No old tail may survive the handoff, including beyond the original deadline.
+    for target in list(queue):
+        if target >= step:
+            del queue[target]
+    for index in range(remaining):
+        offset = length + index
+        queue[step + index] = (actions[offset], prediction_id, origin, offset,
+                               raw_actions[offset])
+    return length, overwritten, {'discarded_prefix_actions': length,
+                                'discarded_tail_actions': tail,
+                                'remaining_actions': remaining,
+                                'original_deadline_step': origin + len(actions),
+                                'source_offset': length}
+
+
 def commit_aligned(queue, actions, origin, step, prediction_id,
                    origin_xyz, current_xyz, history, policy):
     """Experimental phase alignment, with the original horizon end unchanged.
@@ -267,6 +297,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     missed_triggers, underflows = [], []
     selector = None
     prefix_rejection = None
+    late_policy = config.get('prefix_lock', {}).get('late_policy', 'discard')
+    if late_policy not in ('discard', 'hold') or (late_policy == 'hold' and prefix_adapter is None):
+        raise ValueError('late hold requires prefix locking')
+    pauses, active_pause = [], None
     if config.get('adaptive_prefix'):
         from perceptbudget.prefix_timing import PrefixTiming
         selector = PrefixTiming(latency_seconds=config['adaptive_prefix']['initial_latency_s'])
@@ -305,7 +339,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                                 q=q, step=step, decision=decision)
                     return None, request
             if buffer_count(queue, step) < prefix_len:
-                raise RuntimeError('insufficient queued actions for committed prefix')
+                raise RuntimeError(f'insufficient queued actions for committed prefix: step={step}, '
+                                   f'available={buffer_count(queue, step)}, required={prefix_len}; no horizon extension')
             raw_prefix = np.asarray([queue[step + i][4] for i in range(prefix_len)])
             request.update(committed_prefix_raw=raw_prefix.tolist(),
                            committed_prefix_actions=[np.asarray(queue[step + i][0]).tolist() for i in range(prefix_len)],
@@ -329,7 +364,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         return executor.submit(predict), request
 
     def harvest(step, completed_row=None):
-        nonlocal future, current_request, previous_commit_step
+        nonlocal future, current_request, previous_commit_step, active_pause
         if future is None or not future.done():
             return
         ready_actions = future.result()
@@ -340,7 +375,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         scheduled = current_request.get('scheduled_commit_step', 0)
         if step < scheduled:
             return  # Never replace a prefix already committed for execution.
-        if prefix_adapter is not None and scheduled and step > scheduled:
+        if prefix_adapter is not None and scheduled and step > scheduled and late_policy == 'discard':
             future.result()  # Propagate model errors even for a late result.
             base._trace(stream, 'late_prefix_result_discarded', task_id=task['task_id'], q=q,
                         trial_index=trial_index, condition=condition,
@@ -356,7 +391,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         rtc_fusion = None
         alignment = None
         merge_start = time.monotonic()
-        if alignment_policy is not None:
+        if late_policy == 'hold' and scheduled:
+            expired, overwritten, alignment = commit_prefix_hold(
+                queue, actions, origin, step, current_request['prediction_id'],
+                current_request['actions_raw'], current_request['prefix_len'])
+        elif alignment_policy is not None:
             expired, overwritten, alignment = commit_aligned(
                 queue, actions, origin, step, current_request['prediction_id'],
                 current_request['observation_raw_state'][:3],
@@ -399,6 +438,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             result['rtc_action_fusion'] = rtc_fusion
             result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
+        if active_pause is not None:
+            active_pause.update(end_step=step, end_monotonic=time.monotonic(),
+                                resumed=True)
+            active_pause['wall_seconds'] = active_pause['end_monotonic'] - active_pause['start_monotonic']
+            base._trace(stream, 'late_hold_end', q=q, **active_pause)
+            active_pause = None
         previous_commit_step = step
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition,
@@ -446,8 +491,19 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                     base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q,
                                 trial_index=trial_index, condition=condition, step=step)
             queued = buffer_count(queue, step)
+            holding = prefix_hold_due(current_request, step, late_policy)
+            if holding and active_pause is None:
+                active_pause = {'prediction_id': current_request['prediction_id'],
+                                'start_step': step, 'start_monotonic': time.monotonic(),
+                                'steps': 0, 'resumed': False}
+                pauses.append(active_pause)
+                base._trace(stream, 'late_hold_start', q=q, **active_pause)
             item = queue.pop(step, None)
-            if item is None:
+            if holding:
+                active_pause['steps'] += 1
+                action = np.zeros(7, dtype=np.float32)
+                source = None
+            elif item is None:
                 underflows.append(step)
                 # Explicit zero-translation, zero-rotation, neutral gripper command.
                 action = np.zeros(7, dtype=np.float32)
@@ -484,6 +540,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'before': before, 'after': after, 'action': action.tolist(),
                    'planned_action': planned_action.tolist(), 'applied_arm_gain': arm_gain,
                    'source': source, 'queue_before_pop_actions': queued,
+                   'late_hold': holding,
                    'queue_after_step_actions': buffer_count(queue, step + 1),
                    'inference_active': future is not None,
                    'inference_active_at_action': inference_active_at_action,
@@ -507,8 +564,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     finally:
         if stop is None:
             stop = time.monotonic()
+        if active_pause is not None:
+            active_pause.update(end_step=len(rows), end_monotonic=stop,
+                                wall_seconds=stop - active_pause['start_monotonic'])
         monitor.stop()
         executor.shutdown(wait=True)
+        base._write_json_atomic(run_dir / f'q{q}{artifact_tag}_late_hold.json', {
+            'late_policy': late_policy, 'pauses': pauses,
+            'count': len(pauses), 'steps': sum(p['steps'] for p in pauses),
+            'wall_seconds': sum(p['wall_seconds'] for p in pauses)})
         for request in requests:
             if 'actions' in request and not any(c['prediction_id'] == request['prediction_id'] for c in commits):
                 base._trace(stream, 'uncommitted_prediction', task_id=task['task_id'], q=q,
@@ -542,6 +606,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'synchronous_recording': synchronous,
               'prefix_plan_rejection': prefix_rejection,
               'late_discarded_predictions': sum(bool(r.get('late_discarded')) for r in requests),
+              'late_policy': late_policy, 'late_hold_pauses': pauses,
+              'late_hold_count': len(pauses),
+              'late_hold_steps': sum(p['steps'] for p in pauses),
+              'late_hold_wall_seconds': sum(p['wall_seconds'] for p in pauses),
               'underflow_steps': underflows, 'commits': commits,
               'tail_execution_steps': sum(bool(r['source'] and r['source']['beyond_sync_q_prefix']) for r in rows),
               'post_bootstrap_control_hz': (len(rows) - 1) / (rows[-1]['action_end_monotonic'] - rows[0]['action_end_monotonic']) if len(rows) > 1 else None,
@@ -563,6 +631,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prefix-lock', action='store_true')
+    parser.add_argument('--prefix-len', type=int, choices=(7, 8), default=8)
+    parser.add_argument('--late-policy', choices=('discard', 'hold'), default='discard')
     parser.add_argument('--adaptive-prefix', action='store_true')
     parser.add_argument('--action-blend', action='store_true')
     parser.add_argument('--rtc-action-fusion', action='store_true',
@@ -577,6 +647,10 @@ def main():
     args = parser.parse_args()
     if args.adaptive_prefix:
         args.prefix_lock = True
+    if (args.late_policy != 'discard' or args.prefix_len != 8) and not args.prefix_lock:
+        parser.error('--late-policy/--prefix-len require --prefix-lock')
+    if args.adaptive_prefix and (args.late_policy != 'discard' or args.prefix_len != 8):
+        parser.error('fixed late-hold diagnostic excludes adaptive prefix')
     if args.action_blend and args.prefix_lock:
         parser.error('action blending is tested separately from prefix locking')
     if args.rtc_action_fusion and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8):
@@ -600,9 +674,11 @@ def main():
                                   else 'prefix_lock_diagnostic' if args.prefix_lock
                                   else 'actual_delay_diagnostic'))
     if args.prefix_lock:
-        config['prefix_lock'] = {'length': 8, 'full_rtc': False,
+        config['prefix_lock'] = {'length': args.prefix_len, 'full_rtc': False,
+                                 'late_policy': args.late_policy,
                                  'early_result': 'wait until committed prefix ends',
-                                 'late_result': 'discard and record; never silently claim prefix agreement'}
+                                 'late_result': ('zero arm and gripper command; tick until ready; resume after prefix; crop tail at origin+H'
+                                                 if args.late_policy == 'hold' else 'discard and record; never silently claim prefix agreement')}
     if args.adaptive_prefix:
         config['adaptive_prefix'] = {'lengths': [5, 6, 7, 8], 'margin_s': 0.005,
                                      'latency_estimator': 'recent16 nearest-rank p80',
@@ -708,7 +784,7 @@ def main():
         model = base._load_and_check_model(config, torch)
         if args.prefix_lock:
             from perceptbudget.prefix_model import PrefixModel
-            prefix_adapter = PrefixModel(model, prefix_len=8)
+            prefix_adapter = PrefixModel(model, prefix_len=args.prefix_len)
             summary['limitations'][0] = 'prefix locking, not full RTC; no VJP guidance or blending'
         env = base._make_env(env_class, task)
         obs, _ = base._prepare_env_episode(env, task, np)
@@ -733,7 +809,7 @@ def main():
                 config['adaptive_prefix']['initial_latency_s'] = median(g['inference_seconds'] for g in gates)
                 summary['adaptive_prefix'] = dict(config['adaptive_prefix'])
             gate_actions, gate_raw = prefix_adapter.predict(warm_snapshot, task['instruction'],
-                                                           gate_timing, raw[8:16])
+                                                           gate_timing, raw[8:8 + args.prefix_len])
             summary['interface_gate'] = {'prefix_exact': gate_timing['prefix_exact'],
                                          'finite_raw': bool(np.isfinite(gate_raw).all()),
                                          'finite_actions': bool(np.isfinite(gate_actions).all()),
