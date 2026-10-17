@@ -5,6 +5,7 @@
 - 用户确认继续测试，先完整N10生成与端到端context耗时/数值gate，不跑任务。实验分支不变。新增CapturedRtcChunk同一graph实际包含k0..9各步VJP，不重放step0冒充N10；旧单步入口/默认路径不变。
 - 固定task0观测、合成remaining raw目标d7/s8用于数值对照，沿用H20/BF16/state。比对项目eager10步输出及各步VJP，另实际重算context并拷贝KV到图引用的稳定地址计时，固定shape不换context对象。
 - 输出专家-only及含context预热5次median、准备耗时、内存；分别判断整H1秒及RTC 2d<=H约束，不声称窗口够就可用q8或任务成功。独立服务/guarded_run/共享锁，数值不符或RAM不足明确停。
+- 已完成：FlashRT072f71c、PB449321b，M1/20261017T044731.565987Z-rtc-full-graph-59c3d2d8。raw max1.49e-8、VJPnormdiff0；专家582.23ms、context到raw879.38ms（各5median），普通FlashRT382.01ms（3median），准备8.59s。后者不含观测获取/snapshot/输出下载反归一化/控制，不称部署全链路E2E。d≈18/H20无合法RTC s，不跑任务。277tests（3defaultskip），专项CUDA5项实际通过，服务退出0。报告`../任务指导与相关参考/PerceptBudget_RTC完整10步生成测试_20261017.md`。不自动调H/N或扩大评测。
 
 ## 当前授权：FlashRT实验分支单步VJP（2026-10-17）
 
