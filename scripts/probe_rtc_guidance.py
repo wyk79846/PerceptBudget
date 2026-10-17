@@ -97,11 +97,18 @@ def main():
         if not result['forward_gate']:
             result['status'] = 'forward_mismatch_no_rollout'
             return
-        start = time.monotonic()
-        guided, records = guided_sample(expert.step_delta, noise, reference[8:].detach(),
-                                         delay=7, executed=8, num_steps=config['N'], beta=5.)
-        torch.cuda.synchronize()
-        result.update(status='vjp_probe_completed', rtc_expert_seconds=time.monotonic()-start,
+        timings = []
+        for trial in range(3):
+            start = time.monotonic()
+            guided, records = guided_sample(expert.step_delta, noise, reference[8:].detach(),
+                                             delay=7, executed=8, num_steps=config['N'], beta=5.)
+            torch.cuda.synchronize()
+            timings.append(time.monotonic()-start)
+            result.update(status='vjp_timing', rtc_expert_trials_seconds=timings)
+            base._write_json_atomic(run/'summary.json', result)
+            print('rtc_trial='+str(trial)+' seconds='+str(timings[-1]), flush=True)
+        result.update(status='vjp_probe_completed', rtc_expert_seconds=timings[0],
+                      rtc_warm_mean_seconds=sum(timings[1:])/2,
                       rtc_finite=bool(torch.isfinite(guided).all()),
                       per_step_vjp=records, torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                       note='Fixed same-scene synthetic previous chunk; feasibility only, not a valid async task result')
