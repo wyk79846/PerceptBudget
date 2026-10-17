@@ -5,7 +5,9 @@ Uses one LIBERO observation and a synthetic d=7/s=8 old-action target. This is
 a numerical/performance gate only; it does not run a task or change defaults.
 """
 
+import ctypes
 import gc
+import argparse
 import json
 import os
 from pathlib import Path
@@ -32,14 +34,27 @@ def _relative_rmse(actual, reference):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--horizon', type=int, choices=(20, 30), default=None)
+    parser.add_argument('--denoising-steps', type=int, default=None)
+    parser.add_argument('--attention-backends', nargs='+',
+                        choices=('math', 'flash', 'fa2-seqused'),
+                        default=('math', 'flash', 'fa2-seqused'))
+    args = parser.parse_args()
     config = load_config(repo_root=ROOT)
+    if args.horizon is not None:
+        config['H'] = args.horizon
+    if args.denoising_steps is not None:
+        if args.denoising_steps < 1:
+            parser.error('--denoising-steps must be positive')
+        config['N'] = args.denoising_steps
     root = create_run(config, 'M1', 'rtc-sdpa-backend', repo_root=ROOT)
     print('run_dir=' + str(root), flush=True)
     result = {
         'status': 'loading',
-        'scope': 'math vs Flash SDPA full RTC graph, one fixed observation; no task rollout',
+        'scope': 'selected RTC attention backend(s), one fixed observation; no task rollout',
         'defaults_changed': False,
-        'attention_backends': ['math', 'flash'],
+        'attention_backends': list(args.attention_backends),
         'H': config['H'],
         'N': config['N'],
         'delay_test': 7,
@@ -89,6 +104,24 @@ def main():
         vanilla_decode()
         result['flashrt_vanilla_full_inference'] = timed(torch, vanilla_decode, count=3)
         pipe, pl = model._pipe, model._pipe.pipeline
+
+        def native_expert_only():
+            stream = pipe._graph_torch_stream
+            stream_ptr = ctypes.c_void_p(stream.cuda_stream)
+            with torch.cuda.stream(stream):
+                pipe._noise_buf.normal_()
+                pipe._copy_tensor_to_pipeline_buf_stream(
+                    pipe._noise_buf, pl.input_noise_buf, stream.cuda_stream)
+                out_ptr = pl.forward_decode_only()
+                pipe._cudart.cudaMemcpyAsync(
+                    ctypes.c_void_p(pipe._noise_out.data_ptr()),
+                    ctypes.c_void_p(out_ptr), pipe._noise_out.numel() * 2,
+                    3, stream_ptr)
+            pipe._cudart.cudaStreamSynchronize(stream_ptr)
+
+        native_expert_only()
+        result['flashrt_native_expert_only'] = timed(
+            torch, native_expert_only, count=5)
         expert = DifferentiableExpert(pipe, attention_backend='math').snapshot_context()
 
         torch.manual_seed(7)
@@ -99,7 +132,7 @@ def main():
         mask = torch.tensor(soft_mask(config['H'], 7, 8), device='cuda')[:, None]
 
         references = {}
-        for name in ('math', 'flash'):
+        for name in args.attention_backends:
             torch.cuda.reset_peak_memory_stats()
             expert.set_attention_backend(name)
             result['status'] = 'capturing_' + name
@@ -151,27 +184,33 @@ def main():
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
-        math_raw, math_vjp_norms, math_error_norms = references['math']
-        flash_raw, flash_vjp_norms, flash_error_norms = references['flash']
-        result['flash_vs_math'] = {
-            'raw_max_abs': float((flash_raw - math_raw).abs().max()),
-            'raw_relative_rmse': _relative_rmse(flash_raw, math_raw),
-            'vjp_norms_max_abs': float((flash_vjp_norms - math_vjp_norms).abs().max()),
-            'weighted_error_norms_max_abs': float(
-                (flash_error_norms - math_error_norms).abs().max()),
-            'all_finite': bool(torch.isfinite(flash_raw).all()
-                               and torch.isfinite(flash_vjp_norms).all()),
-        }
+        if 'math' in references:
+            math_raw, math_vjp_norms, math_error_norms = references['math']
+            for name, label in (('flash', 'flash_vs_math'),
+                                ('fa2-seqused', 'fa2_seqused_vs_math')):
+                if name not in references:
+                    continue
+                raw, vjp_norms, error_norms = references[name]
+                result[label] = {
+                    'raw_max_abs': float((raw - math_raw).abs().max()),
+                    'raw_relative_rmse': _relative_rmse(raw, math_raw),
+                    'vjp_norms_max_abs': float((vjp_norms - math_vjp_norms).abs().max()),
+                    'weighted_error_norms_max_abs': float(
+                        (error_norms - math_error_norms).abs().max()),
+                    'all_finite': bool(torch.isfinite(raw).all()
+                                       and torch.isfinite(vjp_norms).all()),
+                }
         result['weights_frozen'] = all(
             not weight.requires_grad and weight.grad is None
             for weight in expert.weights.values())
         result['status'] = 'completed'
-        np.savez_compressed(
-            root / 'comparison.npz', math_raw=math_raw.numpy(),
-            flash_raw=flash_raw.numpy(), math_vjp_norms=math_vjp_norms.numpy(),
-            flash_vjp_norms=flash_vjp_norms.numpy(),
-            math_error_norms=math_error_norms.numpy(),
-            flash_error_norms=flash_error_norms.numpy())
+        arrays = {}
+        for name, (raw, vjp_norms, error_norms) in references.items():
+            prefix = name.replace('-', '_')
+            arrays[f'{prefix}_raw'] = raw.numpy()
+            arrays[f'{prefix}_vjp_norms'] = vjp_norms.numpy()
+            arrays[f'{prefix}_error_norms'] = error_norms.numpy()
+        np.savez_compressed(root / 'comparison.npz', **arrays)
     except BaseException as error:
         result.update(status='error', error=f'{type(error).__name__}: {error}')
         raise

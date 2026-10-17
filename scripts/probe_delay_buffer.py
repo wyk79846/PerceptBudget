@@ -285,7 +285,7 @@ def device_state():
 
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
-                action_blend_enabled=False, rtc_fusion_enabled=False,
+                action_blend_enabled=False, rtc_fusion_enabled=False, rtc_adapter=None,
                 artifact_tag='', alignment_policy=None, refresh_policy='boundary',
                 pending_arm_gain=1.0, synchronous=False, step_hook=None):
     if synchronous and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled or
@@ -293,6 +293,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         raise ValueError('Synchronous recording must execute an unchanged fresh prefix')
     if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
         raise ValueError('phase alignment is a separate diagnostic condition')
+    if rtc_adapter is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled
+                                    or alignment_policy is not None or synchronous):
+        raise ValueError('RTC VJP rollout is an isolated asynchronous condition')
     if not 0 < pending_arm_gain <= 1 or (prefix_adapter is not None and pending_arm_gain != 1):
         raise ValueError('invalid pending gain; committed prefixes must remain exact')
     observation, hz = base._prepare_env_episode(env, task, np)
@@ -343,6 +346,39 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'model_state': snapshot.get('state'),
                    'observation_raw_state': snapshot['raw_state'].tolist(),
                    'queue_before_submit_actions': buffer_count(queue, step)}
+        rtc_previous_raw = None
+        if rtc_adapter is not None and step > 0:
+            executed = step - previous_request_step
+            recent_rows = rows[-16:]
+            periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+                       for a, b in zip(recent_rows, recent_rows[1:])]
+            period_estimate = float(np.median(periods)) if periods else period
+            delay = rtc_adapter.estimate_delay_steps(period_estimate)
+            if not (delay <= executed <= config['H'] - delay):
+                raise RuntimeError(f'RTC infeasible before inference: d={delay}, '
+                                   f's={executed}, H={config["H"]}')
+            if step not in queue:
+                raise RuntimeError(f'RTC old-action target missing at control step {step}')
+            old_origin = queue[step][2]
+            if executed != step - old_origin:
+                raise RuntimeError('RTC executed-prefix length does not match queued chunk origin: '
+                                   f's={executed}, queue_origin={old_origin}, step={step}')
+            target_len = config['H'] - executed
+            try:
+                rtc_previous_raw = np.asarray(
+                    [queue[step + index][4] for index in range(target_len)],
+                    dtype=np.float32)
+            except (KeyError, IndexError) as exc:
+                raise RuntimeError('RTC old-action target is incomplete or lacks raw actions') from exc
+            if rtc_previous_raw.shape != (target_len, 32):
+                raise RuntimeError(f'invalid RTC old-action target shape {rtc_previous_raw.shape}')
+            request['rtc_guidance'] = {
+                'delay_estimate_steps': delay,
+                'executed_steps': executed,
+                'control_period_estimate_seconds': period_estimate,
+                'predicted_inference_seconds': rtc_adapter.latency_estimate_seconds,
+                'old_chunk_origin_step': old_origin,
+            }
         raw_prefix = None
         prefix_len = None
         if prefix_adapter is not None and step > 0:
@@ -367,7 +403,16 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         requests.append(request)
 
         def predict():
-            if prefix_adapter is None:
+            if rtc_adapter is not None and step == 0:
+                actions = base._infer_actions(model, snapshot, task['instruction'],
+                                              config['H'], request)
+                request['actions_raw'] = model._pipe._noise_out.float().cpu().numpy().copy().tolist()
+            elif rtc_adapter is not None:
+                actions = rtc_adapter.predict(
+                    snapshot, task['instruction'], rtc_previous_raw,
+                    delay=request['rtc_guidance']['delay_estimate_steps'],
+                    executed=request['rtc_guidance']['executed_steps'], request=request)
+            elif prefix_adapter is None:
                 actions = base._infer_actions(model, snapshot, task['instruction'],
                                               config['H'], request)
             else:
@@ -385,6 +430,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if future is None or not future.done():
             return
         ready_actions = future.result()
+        if rtc_adapter is not None and current_request.get('rtc_guidance'):
+            guidance = current_request['rtc_guidance']
+            guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
+            guidance['observed_inference_seconds'] = (
+                current_request.get('inference_ended_monotonic', time.monotonic())
+                - current_request.get('inference_started_monotonic',
+                                      current_request['input_ready_monotonic']))
         if selector is not None and not current_request.get('latency_observed'):
             selector.observe_latency(current_request['ready_monotonic'] - current_request['observation_monotonic'])
             current_request['latency_observed'] = True
@@ -642,6 +694,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'trial_index': trial_index, 'condition': condition,
               'action_blend': action_blend_enabled,
               'rtc_action_fusion': rtc_fusion_enabled,
+              'rtc_vjp_guidance': rtc_adapter is not None,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
               'advance_handoff': advance_handoff,
@@ -687,6 +740,15 @@ def main():
                         help='paper overlap weights on arm dims 0:6; gripper from new prediction')
     parser.add_argument('--rtc-action-fusion', action='store_true',
                         help='use RTC temporal fusion on arm dims; take gripper from newest prediction')
+    parser.add_argument('--rtc-vjp', action='store_true',
+                        help='run one task with full RTC denoising guidance')
+    parser.add_argument('--horizon', type=int, choices=(20, 30),
+                        help='action chunk horizon override for the opt-in RTC rollout')
+    parser.add_argument('--denoising-steps', type=int,
+                        help='override denoising steps for the opt-in RTC rollout')
+    parser.add_argument('--rtc-attention-backend', choices=('math', 'fa2-seqused'),
+                        default='math',
+                        help='RTC expert attention backend; FA2 seqused masks state padding')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
                         help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
@@ -707,6 +769,17 @@ def main():
         parser.error('action blending is tested separately from prefix locking')
     if args.rtc_action_fusion and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8):
         parser.error('RTC action fusion is a separate controller-side condition')
+    if args.rtc_vjp and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8
+                         or args.rtc_action_fusion or args.interface_only):
+        parser.error('--rtc-vjp is an isolated task rollout')
+    if args.horizon is not None and not args.rtc_vjp:
+        parser.error('--horizon is currently limited to the RTC rollout')
+    if args.denoising_steps is not None and not args.rtc_vjp:
+        parser.error('--denoising-steps is currently limited to the RTC rollout')
+    if args.denoising_steps is not None and args.denoising_steps < 1:
+        parser.error('--denoising-steps must be a positive integer')
+    if args.rtc_attention_backend != 'math' and not args.rtc_vjp:
+        parser.error('--rtc-attention-backend is currently limited to the RTC rollout')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
         parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
     if args.compare_action_blend_q8 and args.q is not None:
@@ -718,7 +791,10 @@ def main():
     if args.interface_only and not args.prefix_lock:
         parser.error('--interface-only requires --prefix-lock')
     pair_count = args.pairs if args.pairs is not None else 3
-    q_values = [8] if args.compare_action_blend_q8 else args.q or [8, 12]
+    q_values = ([8] if args.compare_action_blend_q8 else
+                args.q if args.rtc_vjp and args.q is not None else
+                [12 if args.horizon == 30 else 10] if args.rtc_vjp else
+                args.q or [8, 12])
     if args.advance_handoff and (not args.prefix_lock or args.adaptive_prefix or
                                 args.late_policy != 'hold' or min(q_values) <= args.prefix_len):
         parser.error('--advance-handoff requires fixed prefix, late hold and q > prefix-len')
@@ -726,8 +802,15 @@ def main():
         parser.error('--prefix-rtc-merge requires --advance-handoff')
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
+    if args.rtc_vjp and args.horizon is not None:
+        config['H'] = args.horizon
+    if args.rtc_vjp and args.denoising_steps is not None:
+        config['N'] = args.denoising_steps
+    if args.rtc_vjp and len(q_values) != 1:
+        parser.error('--rtc-vjp accepts exactly one q value per rollout')
     config.update(candidate_q=q_values,
                   execution_mode=('q8_paired_action_blend_comparison' if args.compare_action_blend_q8
+                                  else 'rtc_vjp_guidance_single_task' if args.rtc_vjp
                                   else 'prefix_lock_diagnostic' if args.prefix_lock
                                   else 'actual_delay_diagnostic'))
     if args.prefix_lock:
@@ -777,7 +860,8 @@ def main():
         }
     config['screen'] = {**config['screen'], 'task_ids': [0],
                         'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
-    purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
+    purpose = ('rtc-vjp-rollout' if args.rtc_vjp else
+               'q8-blend-ab' if args.compare_action_blend_q8 else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
                'action-blend-arm6' if args.blend_arm_only else 'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'advance-handoff-rtc-merge' if args.prefix_rtc_merge else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
@@ -798,8 +882,24 @@ def main():
         rtc_target = run_dir / 'source/flash_rt/runtime/rtc_temporal_fusion.py'
         rtc_target.parent.mkdir(parents=True, exist_ok=True)
         rtc_target.write_bytes(rtc_source.read_bytes())
+    if args.rtc_vjp:
+        rtc_sources = [
+            (ROOT, name) for name in ('perceptbudget/rtc_rollout.py',
+                                      'perceptbudget/rtc_expert.py',
+                                      'perceptbudget/rtc_guidance.py')
+        ]
+        rtc_sources.extend([
+            (Path(config['flashrt_root']), 'flash_rt/subgraphs/pi05/rtc_action_vjp.py'),
+            (Path(config['flashrt_root']), 'flash_rt/subgraphs/pi05/context_action.py'),
+        ])
+        for repo, name in rtc_sources:
+            source = repo / name
+            target = run_dir / 'source' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
     summary = {'status': 'running',
-               'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
+               'purpose': ('single-task full RTC VJP rollout; diagnostic only' if args.rtc_vjp
+                           else 'paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
                            else 'single-task action-blend pilot; diagnostic only'
                            if args.action_blend
                            else 'single-task six-dimensional arm RTC temporal fusion; diagnostic only'
@@ -824,11 +924,26 @@ def main():
         summary['rtc_action_fusion'] = dict(config['rtc_action_fusion'])
         summary['limitations'][0] = ('host-side RTC temporal fusion on arm dimensions; gripper uses latest prediction; '
                                      'no denoiser VJP or model changes')
+    if args.rtc_vjp:
+        summary['limitations'][0] = ('single task/seed/init exploratory trial; '
+                                     'not an estimated success rate; FlashRT itself is unchanged')
+        summary['rtc_vjp'] = {
+            'backend': ('project-side differentiable expert + FlashRT FA2 seqused split-KV CUDA graph'
+                        if args.rtc_attention_backend == 'fa2-seqused' else
+                        'project-side differentiable expert + math SDPA CUDA graph'),
+            'flashrt_modified': False,
+            'q': q_values[0], 'H': config['H'], 'N': config['N'], 'beta': 5.0,
+            'attention_backend': args.rtc_attention_backend,
+            'latency_prior_seconds': 0.5994,
+            'delay_selection': 'ceil(previous full context+RTC latency / measured control period)',
+            'handoff': 'crop elapsed new-action prefix at actual ready control step; keep original H deadline',
+        }
     if args.compare_action_blend_q8:
         summary['comparison'] = dict(config['comparison'])
         summary['limitations'].append('single task and fixed seed/init; diagnostic pairs do not estimate LIBERO-wide success rate')
     env = None
     prefix_adapter = None
+    rtc_adapter = None
     try:
         base._save_run_status(run_dir, 'running')
         summary['egl_cleanup'] = base._patch_egl_cleanup()
@@ -844,6 +959,9 @@ def main():
         summary['init_state_index'] = 0
         _, env_class = base._libero_api()
         model = base._load_and_check_model(config, torch)
+        if args.rtc_vjp:
+            from flash_rt.subgraphs.pi05.context_action import enable
+            enable(model)
         if args.prefix_lock:
             from perceptbudget.prefix_model import PrefixModel
             prefix_adapter = PrefixModel(model, prefix_len=args.prefix_len)
@@ -883,6 +1001,14 @@ def main():
             summary['status'] = 'interface_only_completed'
             base._save_run_status(run_dir, 'interface_only_completed', completed_episodes=0)
             return
+        if args.rtc_vjp:
+            from perceptbudget.rtc_rollout import RTCGuidanceAdapter
+            rtc_adapter = RTCGuidanceAdapter(
+                model, torch, horizon=config['H'], num_steps=config['N'],
+                latency_prior_seconds=summary['rtc_vjp']['latency_prior_seconds'],
+                attention_backend=args.rtc_attention_backend)
+            summary['rtc_vjp']['graph_capture_seconds'] = rtc_adapter.capture_seconds
+            base._write_json_atomic(run_dir / 'summary.json', summary)
         with (run_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
             if args.compare_action_blend_q8:
                 schedule = []
@@ -902,7 +1028,8 @@ def main():
                     summary['episodes'].append(episode)
                     base._write_json_atomic(run_dir / 'summary.json', summary)
             else:
-                condition = ('advance_prefix_handoff_rtc_merge' if args.prefix_rtc_merge else
+                condition = ('full_rtc_vjp' if args.rtc_vjp else
+                             'advance_prefix_handoff_rtc_merge' if args.prefix_rtc_merge else
                              'advance_prefix_handoff' if args.advance_handoff else
                              'rtc_temporal_fusion_6d' if args.rtc_action_fusion else
                              'paper_action_blend' if args.action_blend else 'crop_overwrite')
@@ -911,7 +1038,8 @@ def main():
                         env, task, q, model, stats, config, np, torch, run_dir, stream,
                         prefix_adapter, trial_index=trial_index, condition=condition,
                         action_blend_enabled=args.action_blend,
-                        rtc_fusion_enabled=args.rtc_action_fusion))
+                        rtc_fusion_enabled=args.rtc_action_fusion,
+                        rtc_adapter=rtc_adapter))
                     base._write_json_atomic(run_dir / 'summary.json', summary)
         summary['status'] = 'completed'
         summary['device_after'] = device_state()
