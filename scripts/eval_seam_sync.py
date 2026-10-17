@@ -105,34 +105,31 @@ def write_markdown(run_dir, summary):
         "- 状态输入：{}；精度：{}".format(
             settings.get("state_enabled"), settings.get("precision")),
         "",
-        "| task | baseline | SEAM | steps (base/SEAM) | inference median ms (base/SEAM) | 初态/画面/fixture 匹配 | 首 chunk 相同 |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| task | stock BF16 | FP32 no VLS | FP32+SEAM | steps (base/no-VLS/SEAM) | 初态与场景匹配 |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for pair in summary.get("pairs", []):
-        base_ms = pair.get("baseline_inference_median_seconds")
-        seam_ms = pair.get("seam_inference_median_seconds")
-        rows.append("| {} `{}` | {} | {} | {}/{} | {}/{} | {} | {} |".format(
+        rows.append("| {} `{}` | {} | {} | {} | {}/{}/{} | {} |".format(
             pair["task_id"], pair["task_name"],
             "成功" if pair["baseline_success"] else "失败/超时",
+            "成功" if pair["fp32_control_success"] else "失败/超时",
             "成功" if pair["seam_success"] else "失败/超时",
-            pair["baseline_steps"], pair["seam_steps"],
-            "—" if base_ms is None else "{:.1f}".format(base_ms * 1000),
-            "—" if seam_ms is None else "{:.1f}".format(seam_ms * 1000),
-            "{}/{}/{}".format(
-                pair["initial_state_max_abs_delta"] == 0,
-                pair["initial_frames_match"], pair["fixture_layout_match"]),
-            pair["first_chunk_match"],
+            pair["baseline_steps"], pair["fp32_control_steps"], pair["seam_steps"],
+            "{}/{}/{}".format(pair["initial_state_max_abs_delta"] == 0,
+                              pair["initial_frames_match"],
+                              pair["fixture_layout_match"]),
         ))
     aggregate = summary.get("aggregate")
     if aggregate:
         rows.extend((
             "",
-            "- 汇总成功率：baseline {}/{}；SEAM {}/{}。".format(
+            "- 汇总成功率：stock BF16 {}/{}；FP32 no VLS {}/{}；FP32+SEAM {}/{}。".format(
                 aggregate["baseline_successes"], aggregate["paired_tasks"],
+                aggregate["fp32_control_successes"], aggregate["paired_tasks"],
                 aggregate["seam_successes"], aggregate["paired_tasks"]),
-            "- 共同配对初态：{} / {} 帧相同；首 chunk 相同 {} / {}。".format(
-                aggregate["initial_frame_matches"], aggregate["paired_tasks"],
-                aggregate["first_chunk_matches"], aggregate["paired_tasks"]),
+            "- stock BF16 vs FP32 no VLS 用于隔离求解精度；FP32 no VLS vs SEAM 用于隔离 VLS。",
+            "- 三条件共同配对初态：{} / {} 帧相同。".format(
+                aggregate["initial_frame_matches"], aggregate["paired_tasks"]),
         ))
     if summary.get("error"):
         rows.extend(("", "## Error", "", "```text", summary["error"], "```"))
@@ -169,21 +166,25 @@ def run_episode(*, env, task, condition, model, adapter, stats, config,
         snapshot = base._make_snapshot(observation, stats, config["state_enabled"])
         request = {}
         infer_start = time.monotonic()
-        if condition == "seam" and prior_raw is not None:
-            actions = adapter.predict(
-                snapshot, task["instruction"], prior_raw[EXECUTE_K:],
-                executed=EXECUTE_K, delay_estimate=0, request=request,
-            )
-            current_raw = np.asarray(request["actions_raw"], dtype=np.float32)
-            if current_raw.shape != (HORIZON, 32) or not np.isfinite(current_raw).all():
-                raise RuntimeError("SEAM output is not finite Hx32")
-            seam_meta = request.get("seam_guidance", {})
-        else:
+        if condition == "baseline":
             actions = base._infer_actions(
                 model, snapshot, task["instruction"], HORIZON, request,
             )
             current_raw = raw_chunk(model, HORIZON)
             seam_meta = None
+        elif condition == "fp32_control" or condition == "seam":
+            previous_tail = (prior_raw[EXECUTE_K:]
+                             if condition == "seam" and prior_raw is not None
+                             else None)
+            actions = adapter.predict(
+                snapshot, task["instruction"], previous_tail,
+                executed=EXECUTE_K if previous_tail is not None else 0,
+                delay_estimate=0, request=request,
+            )
+            current_raw = np.asarray(request["actions_raw"], dtype=np.float32)
+            if current_raw.shape != (HORIZON, 32) or not np.isfinite(current_raw).all():
+                raise RuntimeError("SEAM output is not finite Hx32")
+            seam_meta = request.get("seam_guidance", {})
         inference_seconds.append(time.monotonic() - infer_start)
         actions = validate_actions(actions, HORIZON)
         if condition == "seam" and prior_raw is not None:
@@ -308,10 +309,10 @@ def main(argv=None):
         "task_ids": list(args.task_ids), "trials_per_task": 1,
         "seed": SEED, "init_state_index": INIT_STATE_INDEX,
     }
-    run_dir = create_run(config, "M1", "seam-sync-h50-k10", repo_root=ROOT)
+    run_dir = create_run(config, "M1", "seam-precision-control-h50-k10", repo_root=ROOT)
     print("run_dir=" + str(run_dir), flush=True)
     summary = {
-        "status": "running", "purpose": "paired synchronous SEAM screen",
+        "status": "running", "purpose": "synchronous solver-precision control and SEAM screen",
         "settings": {"H": HORIZON, "N": DENOISING_STEPS, "K": EXECUTE_K,
                      "M": SEAM_M, "lambda": SEAM_LAMBDA,
                      "control_hz": CONTROL_HZ, "seed": SEED,
@@ -324,10 +325,10 @@ def main(argv=None):
         "episodes": [], "pairs": [],
         "limitations": [
             "每任务每条件一次，仅为小规模筛查，不是论文规模复现。",
-            "SEAM 与基线均使用本项目当前模型/状态输入配置；仅衔接算法不同。",
+            "stock BF16、FP32 no VLS、FP32+SEAM 三条件用于分离求解精度与 VLS；FP32 条件共享同一采样与累积路径。",
             "同步推理期间暂停仿真；不测异步延迟收益。",
         ],
-        "episodes_expected": len(args.task_ids) * 2,
+        "episodes_expected": len(args.task_ids) * 3,
         "source_hashes": {},
     }
     source_files = [
@@ -371,7 +372,8 @@ def main(argv=None):
             "checkpoint_config_path": str(checkpoint_config_path),
             "denoising_steps": model._pipe._num_steps,
             "initial_noise_dtype": str(model._pipe._noise_buf.dtype),
-            "seam_solver_state_dtype": "float32 accumulator; BF16 expert inputs",
+            "stock_solver_state_dtype": "BF16 accumulation",
+            "fp32_control_and_seam_solver_state_dtype": "FP32 accumulation; BF16 expert inputs",
             "flashrt_root": config["flashrt_root"],
         }
         enable_context(model)
@@ -392,7 +394,7 @@ def main(argv=None):
         )
         summary["seam_runtime"] = {
             "implementation": "FlashRT isolated native fused CUDA VLS graph",
-            "no_op_parity": adapter.output_parity,
+            "solver_precision_diagnostic": adapter.solver_precision_diagnostic,
             "graph_capture_seconds": adapter.capture_seconds,
             "expected_synchronous_guidance": {
                 "executed_prefix": EXECUTE_K, "delay_steps": 0,
@@ -414,10 +416,10 @@ def main(argv=None):
                     base._seed_process(SEED, np, torch)
                     base._infer_actions(model, warm_snapshot, task["instruction"], HORIZON, {})
 
-                # Alternate order across tasks to reduce warm-start/order bias.
-                conditions = ["baseline", "seam"]
-                if task_index % 2:
-                    conditions.reverse()
+                # Rotate order across tasks to reduce warm-start/order bias.
+                conditions = ["baseline", "fp32_control", "seam"]
+                shift = task_index % len(conditions)
+                conditions = conditions[shift:] + conditions[:shift]
                 episodes_by_condition = {}
                 for order_index, condition in enumerate(conditions):
                     episode = run_episode(
@@ -433,20 +435,31 @@ def main(argv=None):
                         episode["control_steps"], episode["real_seconds"]), flush=True)
 
                 baseline = episodes_by_condition["baseline"]
+                fp32_control = episodes_by_condition["fp32_control"]
                 seam = episodes_by_condition["seam"]
-                state_delta = max(abs(a-b) for a, b in zip(
-                    baseline["initial_raw_state"], seam["initial_raw_state"]))
+                episodes = [baseline, fp32_control, seam]
+                state_delta = max(
+                    max(abs(a-b) for a, b in zip(
+                        episodes[0]["initial_raw_state"],
+                        episode["initial_raw_state"]))
+                    for episode in episodes[1:])
                 pair = {
                     "task_id": task["task_id"], "task_name": task["task_name"],
                     "baseline_success": baseline["success"],
+                    "fp32_control_success": fp32_control["success"],
                     "seam_success": seam["success"],
                     "baseline_steps": baseline["control_steps"],
+                    "fp32_control_steps": fp32_control["control_steps"],
                     "seam_steps": seam["control_steps"],
                     "initial_state_max_abs_delta": state_delta,
-                    "initial_frames_match": baseline["initial_frames_sha256"] == seam["initial_frames_sha256"],
-                    "fixture_layout_match": baseline["fixture_layout_sha256"] == seam["fixture_layout_sha256"],
-                    "first_chunk_match": baseline["first_chunk_sha256"] == seam["first_chunk_sha256"],
+                    "initial_frames_match": len({
+                        episode["initial_frames_sha256"] for episode in episodes}) == 1,
+                    "fixture_layout_match": len({
+                        episode["fixture_layout_sha256"] for episode in episodes}) == 1,
+                    "first_chunk_match_fp32_vs_seam":
+                        fp32_control["first_chunk_sha256"] == seam["first_chunk_sha256"],
                     "baseline_inference_median_seconds": baseline["inference_median_seconds"],
+                    "fp32_control_inference_median_seconds": fp32_control["inference_median_seconds"],
                     "seam_inference_median_seconds": seam["inference_median_seconds"],
                 }
                 summary["pairs"].append(pair)
@@ -460,10 +473,12 @@ def main(argv=None):
         summary["aggregate"] = {
             "paired_tasks": total,
             "baseline_successes": sum(p["baseline_success"] for p in summary["pairs"]),
+            "fp32_control_successes": sum(p["fp32_control_success"] for p in summary["pairs"]),
             "seam_successes": sum(p["seam_success"] for p in summary["pairs"]),
             "baseline_success_rate": (sum(p["baseline_success"] for p in summary["pairs"]) / total) if total else None,
+            "fp32_control_success_rate": (sum(p["fp32_control_success"] for p in summary["pairs"]) / total) if total else None,
             "seam_success_rate": (sum(p["seam_success"] for p in summary["pairs"]) / total) if total else None,
-            "first_chunk_matches": sum(p["first_chunk_match"] for p in summary["pairs"]),
+            "fp32_seam_first_chunk_matches": sum(p["first_chunk_match_fp32_vs_seam"] for p in summary["pairs"]),
             "initial_frame_matches": sum(p["initial_frames_match"] for p in summary["pairs"]),
             "fixture_layout_matches": sum(p["fixture_layout_match"] for p in summary["pairs"]),
         }

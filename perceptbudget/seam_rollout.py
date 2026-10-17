@@ -37,7 +37,7 @@ class SEAMGuidanceAdapter:
                 f"FlashRT uses N={self.pipeline.num_steps}; SEAM expects "
                 f"N={self.num_steps}")
         self.capture_seconds = time.monotonic() - started
-        self.output_parity = self._check_native_noop_parity()
+        self.solver_precision_diagnostic = self._measure_solver_precision_delta()
 
     def _run_decode_graph(self, graph, noise):
         """Run a native decode graph with fixed noise and return raw BF16 output."""
@@ -60,8 +60,8 @@ class SEAMGuidanceAdapter:
         stream.synchronize()
         return pipe._noise_out.detach().clone()
 
-    def _check_native_noop_parity(self):
-        """Require the zero-window SEAM graph to exactly match native decode."""
+    def _measure_solver_precision_delta(self):
+        """Measure the solver-precision delta with guidance disabled."""
         import numpy as np
 
         pl = self.native.pipeline
@@ -74,17 +74,22 @@ class SEAMGuidanceAdapter:
             np.zeros((self.horizon, 32), dtype=np.float32), 0, 0)
         baseline = self._run_decode_graph(baseline_graph, noise)
         candidate = self._run_decode_graph(seam_graph, noise)
-        max_error = float((candidate.float() - baseline.float()).abs().max().item())
+        difference = candidate.float() - baseline.float()
+        max_error = float(difference.abs().max().item())
+        baseline_rms = float(baseline.float().square().mean().sqrt().item())
+        relative_rmse = float(
+            difference.square().mean().sqrt().item() / max(baseline_rms, 1e-12))
         result = {
             'implementation': 'flashrt_native_fused_cuda',
-            'window_zero_bit_exact': bool(self.torch.equal(candidate, baseline)),
-            'max_absolute_error': max_error,
-            'threshold': 0.0,
+            'window_zero_is_unsteered_fp32_solver': True,
+            'bit_exact_to_bf16_accumulation': bool(
+                self.torch.equal(candidate, baseline)),
+            'max_absolute_difference_from_bf16_accumulation': max_error,
+            'relative_rmse_from_bf16_accumulation': relative_rmse,
         }
-        if not result['window_zero_bit_exact']:
+        if not self.torch.isfinite(candidate).all():
             raise RuntimeError(
-                'Native SEAM no-op changed baseline actions: '
-                f'max error {max_error}')
+                'Unsteered FP32 solver produced non-finite actions')
         return result
 
     def estimate_delay_steps(self, control_period_seconds):
@@ -122,19 +127,33 @@ class SEAMGuidanceAdapter:
         if graph is None or context_graph is None:
             raise RuntimeError('FlashRT native context/SEAM graphs are unavailable')
 
-        expected = (self.horizon - int(executed), 32)
-        tail = np.asarray(previous_tail, dtype=np.float32)
-        if tail.shape != expected:
-            raise ValueError(
-                f'old SEAM tail shape {tail.shape}, expected {expected}')
-        prior_tail, prior_clip_stats = clip_prior_tail_to_executed_actions(
-            tail, self.physical_action_dim)
+        if previous_tail is None:
+            if int(executed) != 0 or int(delay_estimate) != 0:
+                raise ValueError(
+                    'an absent prior is valid only for an unsteered fresh chunk')
+            tail = np.empty((0, 32), dtype=np.float32)
+            prior_tail = np.zeros((self.horizon, 32), dtype=np.float32)
+            prior_clip_stats = {
+                'raw_out_of_range_fraction': 0.0,
+                'raw_max_abs': 0.0,
+                'clip_delta_rms': 0.0,
+            }
+            guided_start = 0
+            guided_window = 0
+        else:
+            expected = (self.horizon - int(executed), 32)
+            tail = np.asarray(previous_tail, dtype=np.float32)
+            if tail.shape != expected:
+                raise ValueError(
+                    f'old SEAM tail shape {tail.shape}, expected {expected}')
+            prior_tail, prior_clip_stats = clip_prior_tail_to_executed_actions(
+                tail, self.physical_action_dim)
+            # Rows before the estimated handoff are expired and cropped on commit.
+            # Guide only the surviving overlap, using the matching old-queue rows.
+            guided_start = min(max(int(delay_estimate), 0), len(tail))
+            guided_window = min(self.max_window, len(tail) - guided_start,
+                                self.horizon - guided_start)
         prior = self._aligned_prior(prior_tail)
-        # Rows before the estimated handoff are expired and cropped on commit.
-        # Guide only the surviving overlap, using the matching old-queue rows.
-        guided_start = min(max(int(delay_estimate), 0), len(tail))
-        guided_window = min(self.max_window, len(tail) - guided_start,
-                            self.horizon - guided_start)
         self.native.set_prior(prior, guided_start, guided_window)
 
         stream = pipe._graph_torch_stream
@@ -158,7 +177,8 @@ class SEAMGuidanceAdapter:
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['actions_raw'] = raw_actions.tolist()
         request['seam_guidance'] = {
-            'method': 'SEAM VLS on FlashRT native CUDA path',
+            'method': ('SEAM VLS on FlashRT native CUDA path'
+                       if guided_window else 'unsteered FP32 solver control'),
             'implementation': 'fused Euler residual-add + VLS CUDA kernel',
             'paper_is_synchronous': True,
             'execution_steps_before_request': int(executed),
@@ -167,8 +187,10 @@ class SEAMGuidanceAdapter:
             'old_tail_length': int(len(tail)),
             'guided_start': int(guided_start),
             'guided_window': int(guided_window),
+            'vls_enabled': bool(guided_window and self.strength > 0),
             'strength': self.strength,
             'physical_action_dim': self.physical_action_dim,
+            'solver_accumulation': 'FP32; BF16 expert inputs',
             'prior_matches_executed_action_clip': True,
             'prior_clip_stats': prior_clip_stats,
         }
