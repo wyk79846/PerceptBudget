@@ -4,7 +4,7 @@
 
 FlashRT 的逐文件修改清单见 [PERCEPTBUDGET_CHANGES.md](../FlashRT-upstream/PERCEPTBUDGET_CHANGES.md)。主项目保留既有 RTC 诊断；SEAM 同步入口为 `scripts/eval_seam_sync.py`，真实延迟异步入口为 `scripts/eval_seam_async.py`，早期异步 SEAM 探针保留在历史分支中。
 
-异步入口固定 H20/N10/K10/M上限10/λ0.1、关闭额外 state，默认 LIBERO-10 十任务各一次，每任务独立进程。推理期间旧动作原速执行；旧 tail 按队列实际来源对齐，按估计延迟选择引导窗口，提交按实际已过控制步裁剪。窗口可能短于 10；日志保留真实延迟、有效引导步数和断供。该入口不使用运动减半、位置重对齐、硬前缀锁定或最终动作平均。启动命令：`/home/wyk/venvs/lutvla/bin/python scripts/eval_seam_async.py`。结果独立保存，不能与既有同步 9/10 混用。
+异步入口固定 H20/N10/K10/M上限10/λ0.1、关闭额外 state，默认 LIBERO-10 十任务各一次，每任务独立进程。推理期间旧动作原速执行；旧 tail 按队列实际来源对齐，保留观测时刻完整 M 引导窗口（包括推理期间会执行的旧动作），提交时才按实际已过控制步裁剪。实际可执行的引导动作可能短于 10；日志保留真实延迟、有效引导步数和断供。该入口不使用运动减半、位置重对齐、硬前缀锁定或最终动作平均。启动命令：`/home/wyk/venvs/lutvla/bin/python scripts/eval_seam_async.py`。结果独立保存，不能与既有同步 9/10 混用。
 
 配置中的 `flashrt_revision` 固定实际本地提交，`flashrt_base_revision` 记录官方参考版本；`scripts/check_setup.py` 同时检查提交和继承关系。后续提交 FlashRT 源码后，更新实际版本字段。
 

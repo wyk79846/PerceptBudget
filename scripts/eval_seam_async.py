@@ -47,6 +47,9 @@ def audit_episode(task_dir, episode, np):
     if any(c['commit_step'] > c['observation_step'] + 20 for c in commits):
         raise RuntimeError('a prediction committed after its original deadline')
     guided = [r['seam_guidance'] for r in requests if r.get('seam_guidance', {}).get('vls_enabled')]
+    if any(g['guided_start'] != 0 or g['guided_window'] != min(10, g['old_tail_length'])
+           for g in guided):
+        raise RuntimeError('async VLS did not preserve the observation-time full guidance window')
     return {
         'executed_prediction_actions_checked': actions_checked,
         'control_steps_with_prediction_source_while_inference_pending': overlap_steps,
@@ -163,7 +166,8 @@ def main():
                   refresh_anchor='request', pending_arm_gain=1.0,
                   model_lifetime='task',
                   seam={'K':10, 'M_max':10, 'lambda':0.1, 'physical_action_dim':7,
-                        'delay': 'previous measured inference latency / recent actual control period',
+                        'guidance_timebase': 'observation origin; guide full old tail up to M, including committed rows',
+                        'delay': 'measured for diagnostics; actual elapsed steps determine commit crop',
                         'handoff': 'crop by actual elapsed control steps; preserve origin+H deadline'})
     config['screen'] = {**config['screen'], 'suites':['libero_10'],
                         'task_ids':args.task_ids, 'trials_per_task':1, 'seed':7,

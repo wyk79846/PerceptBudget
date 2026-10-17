@@ -364,6 +364,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             request['seam_async'] = {
                 'old_chunk_origin_step': seam_origin,
                 'control_period_estimate_seconds': observed_period,
+                'estimated_delay_steps': seam_delay,
+                'guidance_timebase': 'observation step; preserve full old-tail window',
                 'prior_unavailable': seam_tail is None,
                 'reason': 'old queue exhausted' if seam_tail is None else 'valid old tail',
             }
@@ -427,7 +429,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             if seam_adapter is not None:
                 actions = seam_adapter.predict(
                     snapshot, task['instruction'], seam_tail,
-                    executed=seam_executed, delay_estimate=seam_delay, request=request)
+                    # Keep the synchronous VLS window at the observation origin.
+                    # Committed old actions also constrain the new continuation;
+                    # only execution at commit discards the actual expired rows.
+                    executed=seam_executed, delay_estimate=0, request=request)
             elif rtc_adapter is not None and step == 0:
                 actions = base._infer_actions(model, snapshot, task['instruction'],
                                               config['H'], request)
