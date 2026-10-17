@@ -73,6 +73,15 @@ def get_tasks(task_ids):
     return tasks
 
 
+def make_env(env_class, task):
+    env = base._make_env(env_class, task)
+    # LIBERO randomizes fixture poses on hard reset. The robot state vector
+    # does not contain those poses, so freeze each task's first reset layout
+    # before running the paired baseline/SEAM episodes.
+    env._pb_lock_fixtures = True
+    return env
+
+
 def raw_chunk(model, horizon):
     import torch
     raw = getattr(model._pipe, "_noise_out", None)
@@ -95,7 +104,7 @@ def write_markdown(run_dir, summary):
         "- 状态输入：{}；精度：{}".format(
             settings.get("state_enabled"), settings.get("precision")),
         "",
-        "| task | baseline | SEAM | steps (base/SEAM) | inference median ms (base/SEAM) | 初态匹配 | 首 chunk 相同 |",
+        "| task | baseline | SEAM | steps (base/SEAM) | inference median ms (base/SEAM) | 初态/画面/fixture 匹配 | 首 chunk 相同 |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for pair in summary.get("pairs", []):
@@ -108,7 +117,10 @@ def write_markdown(run_dir, summary):
             pair["baseline_steps"], pair["seam_steps"],
             "—" if base_ms is None else "{:.1f}".format(base_ms * 1000),
             "—" if seam_ms is None else "{:.1f}".format(seam_ms * 1000),
-            pair["initial_frames_match"], pair["first_chunk_match"],
+            "{}/{}/{}".format(
+                pair["initial_state_max_abs_delta"] == 0,
+                pair["initial_frames_match"], pair["fixture_layout_match"]),
+            pair["first_chunk_match"],
         ))
     aggregate = summary.get("aggregate")
     if aggregate:
@@ -137,6 +149,9 @@ def run_episode(*, env, task, condition, model, adapter, stats, config,
     initial_state = np.asarray(snapshot["raw_state"], dtype=np.float64)
     initial_frame_hash = digest_arrays([np.ascontiguousarray(image) for image in snapshot["images"]])
     initial_state_hash = hashlib.sha256(initial_state.tobytes()).hexdigest()
+    fixture_layout_hash = hashlib.sha256(json.dumps(
+        env._pb_fixture_layout, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
 
     records = []
     prior_raw = None
@@ -253,6 +268,7 @@ def run_episode(*, env, task, condition, model, adapter, stats, config,
         "initial_raw_state": initial_state.tolist(),
         "initial_raw_state_sha256": initial_state_hash,
         "initial_frames_sha256": initial_frame_hash,
+        "fixture_layout_sha256": fixture_layout_hash,
         "first_chunk_sha256": records[0]["raw_chunk_sha256"] if records else None,
         "chunks": records,
     }
@@ -293,6 +309,7 @@ def main(argv=None):
                      "M": SEAM_M, "lambda": SEAM_LAMBDA,
                      "control_hz": CONTROL_HZ, "seed": SEED,
                      "init_state_index": INIT_STATE_INDEX,
+                     "fixture_layout_locked": True,
                      "state_enabled": config["state_enabled"],
                      "precision": config["precision"]},
         "suite": "libero_10", "task_ids": list(args.task_ids),
@@ -346,7 +363,7 @@ def main(argv=None):
         # Prime the first task's prompt and capture FlashRT's context graph
         # before attaching the optional SEAM decoder graph.
         first_task = tasks[0]
-        env = base._make_env(env_class, first_task)
+        env = make_env(env_class, first_task)
         obs, _ = base._prepare_env_episode(env, first_task, np)
         warm_snapshot = base._make_snapshot(obs, stats, config["state_enabled"])
         base._seed_process(SEED, np, torch)
@@ -372,7 +389,7 @@ def main(argv=None):
                 if task_index or task["task_id"] != first_task["task_id"]:
                     if env is not None:
                         env.close()
-                    env = base._make_env(env_class, task)
+                    env = make_env(env_class, task)
                     obs, _ = base._prepare_env_episode(env, task, np)
                     warm_snapshot = base._make_snapshot(obs, stats, config["state_enabled"])
                     base._seed_process(SEED, np, torch)
@@ -408,6 +425,7 @@ def main(argv=None):
                     "seam_steps": seam["control_steps"],
                     "initial_state_max_abs_delta": state_delta,
                     "initial_frames_match": baseline["initial_frames_sha256"] == seam["initial_frames_sha256"],
+                    "fixture_layout_match": baseline["fixture_layout_sha256"] == seam["fixture_layout_sha256"],
                     "first_chunk_match": baseline["first_chunk_sha256"] == seam["first_chunk_sha256"],
                     "baseline_inference_median_seconds": baseline["inference_median_seconds"],
                     "seam_inference_median_seconds": seam["inference_median_seconds"],
@@ -428,6 +446,7 @@ def main(argv=None):
             "seam_success_rate": (sum(p["seam_success"] for p in summary["pairs"]) / total) if total else None,
             "first_chunk_matches": sum(p["first_chunk_match"] for p in summary["pairs"]),
             "initial_frame_matches": sum(p["initial_frames_match"] for p in summary["pairs"]),
+            "fixture_layout_matches": sum(p["fixture_layout_match"] for p in summary["pairs"]),
         }
         summary["status"] = "completed"
         base._save_run_status(run_dir, "completed", completed_episodes=len(summary["episodes"]))
