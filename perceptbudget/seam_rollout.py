@@ -1,11 +1,11 @@
-"""SEAM-VLS adapter for a small asynchronous LIBERO pilot.
+"""FlashRT-native SEAM-VLS adapter for the asynchronous LIBERO pilot.
 
-The published SEAM method is evaluated at synchronous chunk boundaries. This
-adapter keeps our existing async queue/expired-prefix crop, and steers the new
-chunk toward the still-queued old tail captured when inference starts. It is
-therefore an explicitly labeled async adaptation, not an exact reproduction.
+The action denoiser stays on FlashRT's native CUDA/GEMM path. Only the small
+post-Euler SEAM correction is added, fused into the residual-add kernel. This
+remains an asynchronous adaptation of a paper evaluated synchronously.
 """
 
+import ctypes
 import math
 import time
 
@@ -13,77 +13,93 @@ import time
 class SEAMGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  strength=0.1, max_window=20, latency_prior_seconds=0.4):
-        from perceptbudget.rtc_expert import DifferentiableExpert
-        from perceptbudget.seam_guidance import CapturedSeamChunk
+        from flash_rt.subgraphs.pi05.seam_vls import enable
 
         self.model = model
         self.pipe = model._pipe
-        self.pipeline = self.pipe.pipeline
         self.torch = torch
         self.horizon = int(horizon)
         self.num_steps = int(num_steps)
         self.latency_estimate_seconds = float(latency_prior_seconds)
         self.strength = float(strength)
         self.max_window = int(max_window)
-        sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
-                             dtype=torch.bfloat16)
-        self.expert = DifferentiableExpert(self.pipe).snapshot_context(
-            pad_context=True)
-        self.output_parity = self._check_vanilla_parity()
         started = time.monotonic()
-        self.graph = CapturedSeamChunk(
-            self.expert.step_delta, sample, num_steps=self.num_steps,
-            strength=self.strength, max_window=self.max_window)
-        torch.cuda.synchronize()
+        self.native = enable(model, strength=self.strength,
+                             max_window=self.max_window)
+        self.pipeline = self.native.pipeline
+        if int(self.pipeline.num_steps) != self.num_steps:
+            raise RuntimeError(
+                f"FlashRT uses N={self.pipeline.num_steps}; SEAM expects "
+                f"N={self.num_steps}")
         self.capture_seconds = time.monotonic() - started
+        self.output_parity = self._check_native_noop_parity()
 
-    def _check_vanilla_parity(self):
-        """Refuse the policy experiment if the frozen expert diverges."""
+    def _run_decode_graph(self, graph, noise):
+        """Run a native decode graph with fixed noise and return raw BF16 output."""
         torch = self.torch
+        pipe = self.pipe
+        pl = self.native.pipeline
+        stream = pipe._graph_torch_stream
+        context_graph = getattr(pl, '_context_graph', None)
+        if context_graph is None:
+            raise RuntimeError('FlashRT context graph was not captured')
+        with torch.cuda.stream(stream):
+            context_graph.replay(pl._graph_stream)
+            pipe._copy_tensor_to_pipeline_buf_stream(
+                noise, pl.input_noise_buf, stream.cuda_stream)
+            graph.replay(pl._graph_stream)
+            pipe._cudart.cudaMemcpyAsync(
+                ctypes.c_void_p(pipe._noise_out.data_ptr()),
+                ctypes.c_void_p(pl.input_noise_buf.ptr.value),
+                pipe._noise_out.numel() * 2, 3, stream.cuda_stream)
+        stream.synchronize()
+        return pipe._noise_out.detach().clone()
+
+    def _check_native_noop_parity(self):
+        """Require the zero-window SEAM graph to exactly match native decode."""
+        import numpy as np
+
+        pl = self.native.pipeline
+        baseline_graph = getattr(pl, '_decoder_only_graph', None)
+        seam_graph = getattr(pl, '_seam_vls_graph', None)
+        if baseline_graph is None or seam_graph is None:
+            raise RuntimeError('FlashRT native decoder graphs were not captured')
         noise = self.pipe._noise_buf.detach().clone()
-        reference = self.pipe._noise_out.detach().clone().float()
-        with torch.no_grad():
-            candidate = self.expert(noise).float()
-        torch.cuda.synchronize(noise.device)
-        difference = candidate - reference
-        reference_rms = reference.square().mean().sqrt().clamp_min(1e-6)
-        relative_rmse = difference.square().mean().sqrt() / reference_rms
+        self.native.set_prior(
+            np.zeros((self.horizon, 32), dtype=np.float32), 0, 0)
+        baseline = self._run_decode_graph(baseline_graph, noise)
+        candidate = self._run_decode_graph(seam_graph, noise)
+        max_error = float((candidate.float() - baseline.float()).abs().max().item())
         result = {
-            'relative_rmse': float(relative_rmse.item()),
-            'max_absolute_error': float(difference.abs().max().item()),
-            'threshold': 0.02,
-            'passed': bool(relative_rmse.item() <= 0.02),
+            'implementation': 'flashrt_native_fused_cuda',
+            'window_zero_bit_exact': bool(self.torch.equal(candidate, baseline)),
+            'max_absolute_error': max_error,
+            'threshold': 0.0,
         }
-        if not result['passed']:
-            raise RuntimeError('SEAM expert parity gate failed: '
-                               f"relative RMSE {result['relative_rmse']:.4%} > 2%")
+        if not result['window_zero_bit_exact']:
+            raise RuntimeError(
+                'Native SEAM no-op changed baseline actions: '
+                f'max error {max_error}')
         return result
 
     def estimate_delay_steps(self, control_period_seconds):
         if control_period_seconds <= 0:
             raise ValueError('control period must be positive')
-        return max(1, math.ceil(self.latency_estimate_seconds / control_period_seconds))
+        return max(1, math.ceil(
+            self.latency_estimate_seconds / control_period_seconds))
 
-    def _refresh_context(self):
-        torch = self.torch
-        pl = self.pipeline
-        prefix = (int(pl.attn.dec_devpos.item()) if pl._fixed_shape
-                  else int(pl.encoder_seq_len))
-        capacity = self.expert.context_capacity
-        if prefix <= 0 or prefix > capacity:
-            raise RuntimeError('SEAM context length is outside the captured fixed capacity')
-        with torch.no_grad():
-            self.expert._context['key'].zero_()
-            self.expert._context['value'].zero_()
-            self.expert._context['key'][:, :prefix].copy_(
-                pl.attn.enc_K[:, :prefix])
-            self.expert._context['value'][:, :prefix].copy_(
-                pl.attn.enc_V[:, :prefix])
-            key_mask = self.expert._context['key_mask']
-            key_mask.zero_()
-            key_mask[..., :prefix] = True
-            key_mask[..., capacity:] = True
-        self.expert.prefix_length = prefix
+    def _aligned_prior(self, previous_tail):
+        import numpy as np
+
+        tail = np.asarray(previous_tail, dtype=np.float32)
+        if (tail.ndim != 2 or tail.shape[1] != 32 or
+                not 1 <= tail.shape[0] <= self.horizon or
+                not np.isfinite(tail).all()):
+            raise ValueError('previous_tail must be finite with shape (1..H, 32)')
+        prior = np.empty((self.horizon, 32), dtype=np.float32)
+        prior[:len(tail)] = tail
+        prior[len(tail):] = tail[-1]
+        return prior
 
     def predict(self, snapshot, prompt, previous_tail, *, executed,
                 delay_estimate, request):
@@ -91,43 +107,59 @@ class SEAMGuidanceAdapter:
         from flash_rt.core.utils.actions import unnormalize_actions
 
         torch = self.torch
-        pipe, pl = self.pipe, self.pipeline
+        pipe = self.pipe
         request['inference_started_monotonic'] = time.monotonic()
         self.model.set_prompt(prompt, state=snapshot.get('state'))
-        torch.cuda.synchronize(pipe._noise_buf.device)
-        with torch.cuda.stream(pipe._graph_torch_stream):
-            pipe._fill_img_buf({'images': snapshot['images']})
-            pipe._copy_tensor_to_pipeline_buf_stream(
-                pipe._img_buf, pl.input_images_buf,
-                pipe._graph_torch_stream.cuda_stream)
-            pl._context_graph.replay(pl._graph_stream)
-        pipe._graph_torch_stream.synchronize()
-        self._refresh_context()
+        pl = self.native.pipeline
+        graph = getattr(pl, '_seam_vls_graph', None)
+        context_graph = getattr(pl, '_context_graph', None)
+        if graph is None or context_graph is None:
+            raise RuntimeError('FlashRT native context/SEAM graphs are unavailable')
 
         expected = (self.horizon - int(executed), 32)
-        if tuple(previous_tail.shape) != expected:
-            raise ValueError(f'old SEAM tail shape {previous_tail.shape}, expected {expected}')
-        device = pipe._noise_buf.device
-        noise = torch.empty((self.horizon, 32), device=device,
-                            dtype=torch.bfloat16)
-        noise.normal_()
-        prior = torch.as_tensor(np.asarray(previous_tail, dtype=np.float32),
-                                device=device)
-        raw, vls = self.graph.replay(noise, prior)
-        raw = raw.detach().clone()
-        torch.cuda.synchronize()
+        tail = np.asarray(previous_tail, dtype=np.float32)
+        if tail.shape != expected:
+            raise ValueError(
+                f'old SEAM tail shape {tail.shape}, expected {expected}')
+        prior = self._aligned_prior(tail)
+        # Rows before the estimated handoff are expired and cropped on commit.
+        # Guide only the surviving overlap, using the matching old-queue rows.
+        guided_start = min(max(int(delay_estimate), 0), len(tail))
+        guided_window = min(self.max_window, len(tail) - guided_start,
+                            self.horizon - guided_start)
+        self.native.set_prior(prior, guided_start, guided_window)
 
-        raw_actions = raw.float().cpu().numpy().astype(np.float32, copy=True)
+        stream = pipe._graph_torch_stream
+        with torch.cuda.stream(stream):
+            pipe._fill_img_buf({'images': snapshot['images']})
+            pipe._copy_tensor_to_pipeline_buf_stream(
+                pipe._img_buf, pl.input_images_buf, stream.cuda_stream)
+            context_graph.replay(pl._graph_stream)
+            pipe._noise_buf.normal_()
+            pipe._copy_tensor_to_pipeline_buf_stream(
+                pipe._noise_buf, pl.input_noise_buf, stream.cuda_stream)
+            graph.replay(pl._graph_stream)
+            pipe._cudart.cudaMemcpyAsync(
+                ctypes.c_void_p(pipe._noise_out.data_ptr()),
+                ctypes.c_void_p(pl.input_noise_buf.ptr.value),
+                pipe._noise_out.numel() * 2, 3, stream.cuda_stream)
+        stream.synchronize()
+
+        raw_actions = pipe._noise_out.float().cpu().numpy().astype(
+            np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['actions_raw'] = raw_actions.tolist()
         request['seam_guidance'] = {
-            'method': 'SEAM VLS async adaptation',
+            'method': 'SEAM VLS async adaptation on FlashRT native CUDA path',
+            'implementation': 'fused Euler residual-add + VLS CUDA kernel',
             'paper_is_synchronous': True,
             'execution_steps_before_request': int(executed),
             'estimated_inference_delay_steps': int(delay_estimate),
             'old_tail_start_offset': int(executed),
-            'old_tail_length': int(len(previous_tail)),
-            **vls,
+            'old_tail_length': int(len(tail)),
+            'guided_start': int(guided_start),
+            'guided_window': int(guided_window),
+            'strength': self.strength,
         }
         request['inference_ended_monotonic'] = time.monotonic()
         self.latency_estimate_seconds = (

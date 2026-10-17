@@ -749,6 +749,8 @@ def main():
                         help='use RTC temporal fusion on arm dims; take gripper from newest prediction')
     parser.add_argument('--seam-vls', action='store_true',
                         help='paired q=8 async pilot of SEAM VLS adaptation versus crop/overwrite')
+    parser.add_argument('--flashrt-root', type=Path, default=None,
+                        help='optional FlashRT checkout for an isolated implementation test')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
                         help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
@@ -796,6 +798,8 @@ def main():
         parser.error('--prefix-rtc-merge requires --advance-handoff')
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
     config = load_config(repo_root=ROOT)
+    if args.flashrt_root is not None:
+        config['flashrt_root'] = str(args.flashrt_root.expanduser().resolve())
     config.update(candidate_q=q_values,
                   execution_mode=('q8_paired_action_blend_comparison' if args.compare_action_blend_q8
                                   else 'seam_vls_async_adaptation' if args.seam_vls
@@ -842,9 +846,10 @@ def main():
         config['seam_vls'] = {
             'source': 'https://arxiv.org/abs/2607.04609',
             'method': 'paper Eq. 3-8 closed-form VLS applied to async old-tail overlap',
+            'implementation': 'FlashRT native CUDA path; SEAM correction fused into Euler residual-add',
             'strength': 0.1,
             'max_guided_window': 20,
-            'previous_tail': 'old queue at request time, aligned by actual executed steps',
+            'previous_tail': 'old queue at request time; guide only new-chunk rows at/after estimated inference delay, aligned to the same old-queue indices',
             'async_policy': 'continue old queue during inference; crop expired new prefix on commit; keep original H deadline',
             'claim': 'SEAM-inspired asynchronous adaptation; paper reports synchronous execution',
             'backpropagation': False,
@@ -881,11 +886,20 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
     if args.seam_vls:
-        for name in ('perceptbudget/rtc_expert.py',
-                     'perceptbudget/seam_guidance.py',
+        for name in ('perceptbudget/seam_guidance.py',
                      'perceptbudget/seam_rollout.py'):
             source = ROOT / name
             target = run_dir / 'source' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+        flashrt_root = Path(config['flashrt_root'])
+        for name in ('flash_rt/subgraphs/pi05/seam_vls.py',
+                     'flash_rt/models/pi05/pipeline_rtx.py',
+                     'csrc/kernels/elementwise.cuh',
+                     'csrc/kernels/elementwise.cu',
+                     'csrc/bindings.cpp'):
+            source = flashrt_root / name
+            target = run_dir / 'source/flashrt-native' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(source.read_bytes())
     if args.rtc_action_fusion:
@@ -995,7 +1009,7 @@ def main():
                 model, torch, horizon=config['H'], num_steps=config['N'],
                 strength=config['seam_vls']['strength'],
                 max_window=config['seam_vls']['max_guided_window'])
-            summary['seam_vls']['expert_output_parity'] = seam_adapter.output_parity
+            summary['seam_vls']['native_noop_parity'] = seam_adapter.output_parity
             summary['seam_vls']['graph_capture_seconds'] = seam_adapter.capture_seconds
             base._write_json_atomic(run_dir / 'summary.json', summary)
         with (run_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
