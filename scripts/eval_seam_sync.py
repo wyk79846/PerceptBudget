@@ -277,9 +277,14 @@ def run_episode(*, env, task, condition, model, adapter, stats, config,
 
 
 def main(argv=None):
+    global HORIZON, SEAM_M
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-ids", type=int, nargs="+", default=list(range(10)),
                         help="LIBERO-10 task ids; default: all 10 once per condition")
+    parser.add_argument("--horizon", type=int, default=HORIZON,
+                        help="action horizon H; default: %(default)s")
+    parser.add_argument("--seam-m", type=int, default=SEAM_M,
+                        help="SEAM guidance window M; default: %(default)s")
     parser.add_argument("--state-enabled", action=argparse.BooleanOptionalAction,
                         default=None,
                         help="override the project state-prompt setting for both arms")
@@ -288,6 +293,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if len(set(args.task_ids)) != len(args.task_ids) or any(i < 0 or i >= 10 for i in args.task_ids):
         parser.error("task ids must be unique integers from 0 through 9")
+    if args.horizon <= EXECUTE_K:
+        parser.error("horizon H must be greater than K={}".format(EXECUTE_K))
+    if args.seam_m <= 0:
+        parser.error("SEAM M must be positive")
+
+    HORIZON, SEAM_M = args.horizon, args.seam_m
 
     os.environ.update(MUJOCO_GL="egl", MUJOCO_EGL_DEVICE_ID="0", PYOPENGL_PLATFORM="egl")
     flashrt_root = args.flashrt_root.expanduser().resolve()
@@ -309,7 +320,9 @@ def main(argv=None):
         "task_ids": list(args.task_ids), "trials_per_task": 1,
         "seed": SEED, "init_state_index": INIT_STATE_INDEX,
     }
-    run_dir = create_run(config, "M1", "seam-precision-control-h50-k10", repo_root=ROOT)
+    run_dir = create_run(
+        config, "M1", "seam-h{}-k{}-m{}".format(
+            HORIZON, EXECUTE_K, SEAM_M), repo_root=ROOT)
     print("run_dir=" + str(run_dir), flush=True)
     summary = {
         "status": "running", "purpose": "synchronous solver-precision control and SEAM screen",
