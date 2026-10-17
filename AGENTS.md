@@ -1,5 +1,13 @@
 # 协作规则
 
+## 当前开发目录（2026-10-17，优先于下方历史）
+
+- 用户要求减少工作区：代码修改集中在 `/home/wyk/workspace/PerceptBudget` 及 config.json 对应的 `/home/wyk/workspace/FlashRT-upstream`，当前开发分支均为 `project/perceptbudget`。
+- SEAM 同步运行器已整合到主项目，默认读取 config.json 的 FlashRT 路径。旧 `PerceptBudget-seam`、`FlashRT-seam-native` 工作区归档，不作为开发或运行入口。不要为常规实验另建并行目录。
+- FlashRT 每次增删改文件，更新其根目录 `PERCEPTBUDGET_CHANGES.md`，写明文件、用途、启用方式和验证状态。官方参考基点为 e4fe123；RTC 与 SEAM 均为项目本地扩展。
+- 已有 RTC 工作先存入 Git 后保留；合并时保留主项目 RTC expert/probe 实现，当前 SEAM 使用独立同步入口，早期异步 SEAM 探针只留历史。
+- 结果统一写到 config.output_root。此次整合不训练、不覆盖历史结果、不更改全项目 H/N/state/异步衔接默认值。
+
 ## 当前授权：参考 LeRobot 优化本项目 RTC（2026-10-17）
 
 - LeRobot 仅作只读参考，不在 LeRobot 侧实现或安装运行环境。RTC 实现和优化留在本项目的可选 FlashRT 接入路径。

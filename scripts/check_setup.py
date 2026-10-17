@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,9 +63,13 @@ def validate_config(config):
         return results
     paths = {key: check_path(config, key, kind, results) for key, kind in PATHS.items()}
     revision = config["flashrt_revision"]
-    revision_ok = revision == FLASHRT_REVISION
+    base_revision = config.get("flashrt_base_revision", revision)
+    revision_ok = (isinstance(revision, str)
+                   and re.fullmatch(r"[0-9a-f]{40}", revision) is not None
+                   and base_revision == FLASHRT_REVISION)
     add(results, "flashrt_revision", "ok" if revision_ok else "error",
-        "固定快照 " + FLASHRT_REVISION if revision_ok else "必须固定为 " + FLASHRT_REVISION)
+        "固定实际提交 " + revision + "；官方基点 " + str(base_revision)
+        if revision_ok else "实际版本须为40位提交哈希，官方基点须为 " + FLASHRT_REVISION)
     checkpoint, model, stats = (paths[k] for k in ("checkpoint_path", "model_path", "norm_stats_path"))
     model_id = config["model_id"]
     if not isinstance(model_id, str) or not model_id.strip():
@@ -132,7 +137,9 @@ def check_flashrt_checkout(config, results):
     else:
         actual = head.stdout.strip()
         expected = config.get("flashrt_revision")
-        valid = actual == expected == FLASHRT_REVISION
+        base_revision = config.get("flashrt_base_revision", expected)
+        valid = (actual == expected and base_revision == FLASHRT_REVISION
+                 and git("merge-base", "--is-ancestor", FLASHRT_REVISION, actual).returncode == 0)
         add(results, "flashrt_git_revision", "ok" if valid else "error",
             actual + ("（与配置固定版本一致）" if valid else "（与配置固定版本不一致）"))
 

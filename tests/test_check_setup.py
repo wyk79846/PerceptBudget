@@ -45,6 +45,22 @@ class CandidateParameterCheckTests(unittest.TestCase):
         self.assertEqual(statuses["N"], "error")
         self.assertEqual(statuses["precision"], "error")
 
+    def test_accepts_pinned_local_revision_with_official_base(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            config = self._config(temp_root)
+            config.update(flashrt_revision="a" * 40,
+                          flashrt_base_revision=check_setup.FLASHRT_REVISION)
+            self.assertEqual(self._parameter_results(config)["flashrt_revision"], "ok")
+
+    def test_rejects_unpinned_or_wrong_base_revision(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            config = self._config(temp_root)
+            config["flashrt_revision"] = "a" * 40
+            self.assertEqual(self._parameter_results(config)["flashrt_revision"], "error")
+            config.update(flashrt_revision="project/perceptbudget",
+                          flashrt_base_revision=check_setup.FLASHRT_REVISION)
+            self.assertEqual(self._parameter_results(config)["flashrt_revision"], "error")
+
 
 if __name__ == "__main__":
     unittest.main()

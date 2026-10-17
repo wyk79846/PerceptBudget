@@ -289,7 +289,7 @@ def main(argv=None):
                         default=None,
                         help="override the project state-prompt setting for both arms")
     parser.add_argument("--flashrt-root", type=Path,
-                        default=Path("/home/wyk/workspace/FlashRT-seam-native"))
+                        help="override config.json flashrt_root")
     args = parser.parse_args(argv)
     if len(set(args.task_ids)) != len(args.task_ids) or any(i < 0 or i >= 10 for i in args.task_ids):
         parser.error("task ids must be unique integers from 0 through 9")
@@ -301,8 +301,8 @@ def main(argv=None):
     HORIZON, SEAM_M = args.horizon, args.seam_m
 
     os.environ.update(MUJOCO_GL="egl", MUJOCO_EGL_DEVICE_ID="0", PYOPENGL_PLATFORM="egl")
-    flashrt_root = args.flashrt_root.expanduser().resolve()
     config = load_config(repo_root=ROOT)
+    flashrt_root = (args.flashrt_root or Path(config["flashrt_root"])).expanduser().resolve()
     if args.state_enabled is not None:
         config["state_enabled"] = bool(args.state_enabled)
     config.update(
@@ -324,6 +324,7 @@ def main(argv=None):
         config, "M1", "seam-h{}-k{}-m{}".format(
             HORIZON, EXECUTE_K, SEAM_M), repo_root=ROOT)
     print("run_dir=" + str(run_dir), flush=True)
+    base._save_run_status(run_dir, "running")
     summary = {
         "status": "running", "purpose": "synchronous solver-precision control and SEAM screen",
         "settings": {"H": HORIZON, "N": DENOISING_STEPS, "K": EXECUTE_K,

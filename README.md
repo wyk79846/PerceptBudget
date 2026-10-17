@@ -1,6 +1,20 @@
 # PerceptBudget
 
-2026-10-17：SEAM 小规模探索保存在独立分支 `experiment/seam`，未并入异步基线，也未修改 FlashRT 源码。task0/q8 单任务配对均成功，但 SEAM 异步适配推理中位数约632ms并出现46步断供；不据此认定更优。详见[SEAM试验记录](../任务产出/perceptbudget/M1/20261017T092254.249928Z-seam-vls-q8-pilot-9fe366bf/SEAM_q8_pilot.md)。
+当前开发入口（2026-10-17）：主项目固定为 `/home/wyk/workspace/PerceptBudget`，FlashRT 固定为 `config.json` 指向的 `/home/wyk/workspace/FlashRT-upstream`。两仓库当前开发分支均为 `project/perceptbudget`。SEAM 已整合到这两个目录，后续修改直接在此进行。旧 SEAM 工作区转入任务产出归档，历史结果路径保留原样。
+
+FlashRT 的逐文件修改清单见 [PERCEPTBUDGET_CHANGES.md](../FlashRT-upstream/PERCEPTBUDGET_CHANGES.md)。主项目保留既有 RTC 诊断；SEAM 当前采用独立同步入口 `scripts/eval_seam_sync.py`，早期异步 SEAM 探针保留在历史分支中。
+
+配置中的 `flashrt_revision` 固定实际本地提交，`flashrt_base_revision` 记录官方参考版本；`scripts/check_setup.py` 同时检查提交和继承关系。后续提交 FlashRT 源码后，更新实际版本字段。
+
+从主项目启动已测试的 SEAM 小测配置（需要设备 GPU，以下命令会实际运行 task0 三条件对照）：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python scripts/guarded_run.py -- \
+  /home/wyk/venvs/lutvla/bin/python scripts/eval_seam_sync.py \
+  --task-ids 0 --horizon 20 --seam-m 10 --no-state-enabled
+```
+
+入口默认从 `config.json` 读取 FlashRT 路径；H20/M10、关闭额外 state 仅作用于这条 SEAM 命令，不改全项目基准配置。三条件为 BF16 普通求解器、BF16 网络配 FP32 求解状态、同精度加 SEAM。最新十任务结果为 10/10、9/10、9/10，见[结果记录](../任务产出/perceptbudget/M1/SEAM_H20_十任务对比_20261017.md)。以下带日期的旧说明为历史记录，以本段入口为准。
 
 [M1阶段交付报告（审查稿）](../任务指导与相关参考/PerceptBudget_M1阶段交付报告_审查稿_20261016.md)已整理，等待用户审查；不新增实验，不自动进入下一阶段。
 
