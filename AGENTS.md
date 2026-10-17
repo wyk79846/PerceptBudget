@@ -5,6 +5,8 @@
 - 用户授权修改，但先做单次去噪前向+动作VJP gate。PerceptBudget及FlashRT-upstream已切experiment/rtc-vjp分支，既有frontend加载修复及tokenizer脏改保留，不混入新提交。
 - 新上游rtc_action_vjp.py为显式启用CUDA Graph前向+VJP实验后端，先使用共享权重的可微expert，减少Python调度，默认无hook/无路径变化。不是已补齐native CUDA反向内核，不冒充完整RTC系统。
 - 仅script/probe_rtc_step.py一个固定scene，检查eager/graph前向梯度、runtime target/mask、冻结权重、单步native对照、预热耗时。独立服务/guarded_run/GPU锁；通过单步后再报告决定，不自动跑完整任务或大编译。
+- 单步已完成：FlashRT264e3f3新增入口、PB fb1b425探针；M1/20261017T044313.178469Z-rtc-step-graph-f1287b35。eager264.80ms/graph58.69ms（均5次median），四输出误差0，native单步max.0078125；target/mask与冻结权重检查通过，专项GPU toy4tests通过。服务退出0。scope仍shared-weight可微expert+graph，非native CUDA反向内核/完整RTC。报告`../任务指导与相关参考/PerceptBudget_FlashRT单步RTC梯度扩展_20261017.md`，不自动扩到任务。
+- 全套272tests运行OK（2默认skip，其中专项GPU已单独4项实跑），新测试验证noise/target/mask/beta动态输入，不是固定旧结果重放。两仓库保留experiment/rtc-vjp分支；FlashRT默认源码与原有两项脏改未被本次覆盖。
 
 ## 当前授权：真正RTC去噪VJP接入探针（2026-10-17）
 
