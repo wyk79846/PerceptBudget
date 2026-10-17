@@ -9,6 +9,37 @@ new observation is submitted; expired actions are cropped by the controller.
 import math
 
 
+def clip_prior_tail_to_executed_actions(previous_tail, physical_action_dim=7):
+    """Match the normalized prior to the actions FlashRT actually executes.
+
+    FlashRT clips model-space actions to [-1, 1] before unnormalizing them.
+    VLS must therefore use that same clipped representation for the physical
+    dimensions; otherwise it steers toward commands that were never executed.
+    Padding dimensions are left untouched because they are not guided.
+    """
+    import numpy as np
+
+    tail = np.asarray(previous_tail, dtype=np.float32)
+    action_dim = int(physical_action_dim)
+    if (tail.ndim != 2 or tail.shape[0] < 1 or tail.shape[1] < 1
+            or not 0 <= action_dim <= tail.shape[1]
+            or not np.isfinite(tail).all()):
+        raise ValueError('previous_tail must be finite LxD with a valid physical dimension')
+    clipped = tail.copy()
+    physical = clipped[:, :action_dim]
+    out_of_range = np.abs(physical) > 1.0
+    stats = {
+        'raw_out_of_range_fraction': (
+            float(out_of_range.mean()) if out_of_range.size else 0.0),
+        'raw_max_abs': float(np.abs(physical).max()) if physical.size else 0.0,
+        'clip_delta_rms': (
+            float(np.sqrt(np.square(physical - np.clip(physical, -1.0, 1.0)).mean()))
+            if physical.size else 0.0),
+    }
+    clipped[:, :action_dim] = np.clip(physical, -1.0, 1.0)
+    return clipped, stats
+
+
 def aligned_prior(previous_tail, horizon):
     """Pad an old chunk tail to H by repeating its last action, as in SEAM."""
     import torch
@@ -28,7 +59,7 @@ def aligned_prior(previous_tail, horizon):
 
 
 def vls_step(candidate, prior, *, step, num_steps, strength=0.1,
-             guided_window=None):
+             guided_window=None, physical_action_dim=None):
     """Apply one paper Eq. 8 correction after the ordinary Euler update."""
     import torch
 
@@ -37,23 +68,28 @@ def vls_step(candidate, prior, *, step, num_steps, strength=0.1,
             or not math.isfinite(strength) or strength < 0):
         raise ValueError('invalid SEAM candidate, prior, step, or strength')
     window = candidate.shape[0] if guided_window is None else int(guided_window)
+    action_dim = (candidate.shape[1] if physical_action_dim is None
+                  else int(physical_action_dim))
     if not 0 <= window <= candidate.shape[0]:
         raise ValueError('guided_window must be within the action horizon')
+    if not 0 <= action_dim <= candidate.shape[1]:
+        raise ValueError('physical_action_dim must be within the action width')
     result = candidate.clone()
     if window == 0 or strength == 0:
         return result
 
     # The paper writes t_i=1-i/N, so 1-t_{i+1}=(i+1)/N.
     alpha = (step + 1) / num_steps
-    x = candidate[:window].float()
-    target = alpha * prior[:window].float()
+    x = candidate[:window, :action_dim].float()
+    target = alpha * prior[:window, :action_dim].float()
     correction = -2.0 * (x - target)
-    result[:window] = (x + strength * alpha * correction).to(candidate.dtype)
+    result[:window, :action_dim] = (
+        x + strength * alpha * correction).to(candidate.dtype)
     return result
 
 
 def seam_sample(step_delta, noise, previous_tail, *, num_steps=10,
-                strength=0.1, max_window=20):
+                strength=0.1, max_window=20, physical_action_dim=7):
     """Generate a chunk with SEAM VLS and no autograd/backward pass.
 
     ``step_delta(x, i)`` returns FlashRT's already dt-scaled Euler update.
@@ -70,23 +106,27 @@ def seam_sample(step_delta, noise, previous_tail, *, num_steps=10,
     window = min(int(previous_tail.shape[0]), int(max_window))
     prior = aligned_prior(previous_tail.detach(), noise.shape[0])
     model_dtype = noise.dtype
-    state = noise.detach().clone()
+    # Match the standard OpenPI flow solver: retain the integration state in
+    # FP32, casting only the input presented to the BF16 expert each step.
+    state = noise.detach().float().clone()
     corrections = []
     with torch.no_grad():
         for step in range(num_steps):
-            delta = step_delta(state, step)
+            model_state = state.to(model_dtype)
+            delta = step_delta(model_state, step)
             if delta.shape != state.shape or not delta.is_floating_point():
                 raise ValueError('step_delta must return a floating tensor with noise shape')
-            # FlashRT stores the Euler state in BF16 between denoising steps.
-            candidate = (state.float() + delta.float()).to(model_dtype)
+            candidate = state + delta.float()
             updated = vls_step(candidate, prior, step=step,
                                num_steps=num_steps, strength=strength,
-                               guided_window=window)
-            state = updated.to(model_dtype)
+                               guided_window=window,
+                               physical_action_dim=physical_action_dim)
+            state = updated.float()
             corrections.append(float((state.float() - candidate.float()).norm()))
-    return state, {'guided_window': window,
+    return state.to(model_dtype), {'guided_window': window,
                    'overlap_length': int(previous_tail.shape[0]),
                    'strength': float(strength),
+                   'physical_action_dim': int(physical_action_dim),
                    'correction_norms': corrections}
 
 
@@ -94,7 +134,7 @@ class CapturedSeamChunk:
     """Capture the N-step SEAM loop once; noise and old tail stay runtime inputs."""
 
     def __init__(self, step_delta, sample, *, num_steps=10, strength=0.1,
-                 max_window=20, warmups=2):
+                 max_window=20, physical_action_dim=7, warmups=2):
         import torch
 
         if (torch.is_inference_mode_enabled() or sample.device.type != 'cuda'
@@ -107,6 +147,9 @@ class CapturedSeamChunk:
         self.num_steps = int(num_steps)
         self.strength = float(strength)
         self.max_window = int(max_window)
+        self.physical_action_dim = int(physical_action_dim)
+        if not 0 <= self.physical_action_dim <= sample.shape[1]:
+            raise ValueError('physical_action_dim must be within action width')
         self.model_dtype = sample.dtype
         self.noise = sample.detach().clone()
         self.prior = torch.zeros(sample.shape, device=sample.device,
@@ -131,16 +174,19 @@ class CapturedSeamChunk:
     def _run(self):
         import torch
 
-        state = self.noise
+        state = self.noise.float()
         for step in range(self.num_steps):
-            delta = self.step_delta(state, step)
-            candidate = (state.float() + delta.float()).to(self.model_dtype)
+            model_state = state.to(self.model_dtype)
+            delta = self.step_delta(model_state, step)
+            candidate = state + delta.float()
             alpha = (step + 1) / self.num_steps
             target = alpha * self.prior
             correction = -2.0 * (candidate.float() - target) * self.mask
-            state = (candidate.float() + self.strength * alpha * correction).to(
-                self.model_dtype)
-        self.output.copy_(state)
+            guided = candidate.float() + self.strength * alpha * correction
+            state = candidate.clone()
+            state[:, :self.physical_action_dim] = guided[
+                :, :self.physical_action_dim]
+        self.output.copy_(state.to(self.model_dtype))
         return self.output
 
     def replay(self, noise, previous_tail):
@@ -167,4 +213,5 @@ class CapturedSeamChunk:
             'guided_window': window,
             'overlap_length': int(previous_tail.shape[0]),
             'strength': self.strength,
+            'physical_action_dim': self.physical_action_dim,
         }

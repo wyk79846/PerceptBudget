@@ -29,6 +29,7 @@ DENOISING_STEPS = 10
 EXECUTE_K = 10
 SEAM_M = 20
 SEAM_LAMBDA = 0.1
+LIBERO_PHYSICAL_ACTION_DIM = 7
 CONTROL_HZ = base.CONTROL_FREQ_HZ
 SEED = base.SEED
 INIT_STATE_INDEX = 0
@@ -278,6 +279,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-ids", type=int, nargs="+", default=list(range(10)),
                         help="LIBERO-10 task ids; default: all 10 once per condition")
+    parser.add_argument("--state-enabled", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="override the project state-prompt setting for both arms")
     parser.add_argument("--flashrt-root", type=Path,
                         default=Path("/home/wyk/workspace/FlashRT-seam-native"))
     args = parser.parse_args(argv)
@@ -287,12 +291,15 @@ def main(argv=None):
     os.environ.update(MUJOCO_GL="egl", MUJOCO_EGL_DEVICE_ID="0", PYOPENGL_PLATFORM="egl")
     flashrt_root = args.flashrt_root.expanduser().resolve()
     config = load_config(repo_root=ROOT)
+    if args.state_enabled is not None:
+        config["state_enabled"] = bool(args.state_enabled)
     config.update(
         flashrt_root=str(flashrt_root),
         H=HORIZON, N=DENOISING_STEPS, candidate_q=[EXECUTE_K],
         execution_mode="seam_synchronous_quality",
         seam={"H": HORIZON, "N": DENOISING_STEPS, "K": EXECUTE_K,
               "M": SEAM_M, "lambda": SEAM_LAMBDA,
+              "physical_action_dim": LIBERO_PHYSICAL_ACTION_DIM,
               "prior": "previous normalized raw action chunk after first K actions",
               "schedule": "pause during inference; execute first K; repeat"},
     )
@@ -311,6 +318,7 @@ def main(argv=None):
                      "init_state_index": INIT_STATE_INDEX,
                      "fixture_layout_locked": True,
                      "state_enabled": config["state_enabled"],
+                     "physical_action_dim": LIBERO_PHYSICAL_ACTION_DIM,
                      "precision": config["precision"]},
         "suite": "libero_10", "task_ids": list(args.task_ids),
         "episodes": [], "pairs": [],
@@ -351,10 +359,19 @@ def main(argv=None):
                              for task in tasks]
         load_started = time.monotonic()
         model = base._load_and_check_model(config, torch)
+        checkpoint_config_path = Path(config["checkpoint_path"]) / "config.json"
+        checkpoint_config = {}
+        if checkpoint_config_path.is_file():
+            checkpoint_config = json.loads(
+                checkpoint_config_path.read_text(encoding="utf-8"))
         summary["model"] = {
             "loaded_once": True, "load_seconds": time.monotonic() - load_started,
             "horizon": model._pipe.chunk_size,
+            "checkpoint_action_horizon": checkpoint_config.get("action_horizon"),
+            "checkpoint_config_path": str(checkpoint_config_path),
             "denoising_steps": model._pipe._num_steps,
+            "initial_noise_dtype": str(model._pipe._noise_buf.dtype),
+            "seam_solver_state_dtype": "float32 accumulator; BF16 expert inputs",
             "flashrt_root": config["flashrt_root"],
         }
         enable_context(model)
@@ -371,6 +388,7 @@ def main(argv=None):
         adapter = SEAMGuidanceAdapter(
             model, torch, horizon=HORIZON, num_steps=DENOISING_STEPS,
             strength=SEAM_LAMBDA, max_window=SEAM_M,
+            physical_action_dim=LIBERO_PHYSICAL_ACTION_DIM,
         )
         summary["seam_runtime"] = {
             "implementation": "FlashRT isolated native fused CUDA VLS graph",
@@ -379,6 +397,7 @@ def main(argv=None):
             "expected_synchronous_guidance": {
                 "executed_prefix": EXECUTE_K, "delay_steps": 0,
                 "guided_start": 0, "guided_window": SEAM_M,
+                "physical_action_dim": LIBERO_PHYSICAL_ACTION_DIM,
                 "old_tail_length": HORIZON - EXECUTE_K,
             },
         }

@@ -1,8 +1,10 @@
-"""FlashRT-native SEAM-VLS adapter for the asynchronous LIBERO pilot.
+"""FlashRT-native SEAM-VLS adapter for LIBERO evaluation.
 
 The action denoiser stays on FlashRT's native CUDA/GEMM path. Only the small
-post-Euler SEAM correction is added, fused into the residual-add kernel. This
-remains an asynchronous adaptation of a paper evaluated synchronously.
+post-Euler SEAM correction is added, fused into the residual-add kernel. The
+paper method is synchronous; async callers must crop expired actions before
+passing a prior. For LIBERO, only the seven physical action dimensions are
+guided; the model's remaining 25 output channels are padding.
 """
 
 import ctypes
@@ -12,7 +14,8 @@ import time
 
 class SEAMGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
-                 strength=0.1, max_window=20, latency_prior_seconds=0.4):
+                 strength=0.1, max_window=20, physical_action_dim=7,
+                 latency_prior_seconds=0.4):
         from flash_rt.subgraphs.pi05.seam_vls import enable
 
         self.model = model
@@ -23,9 +26,11 @@ class SEAMGuidanceAdapter:
         self.latency_estimate_seconds = float(latency_prior_seconds)
         self.strength = float(strength)
         self.max_window = int(max_window)
+        self.physical_action_dim = int(physical_action_dim)
         started = time.monotonic()
         self.native = enable(model, strength=self.strength,
-                             max_window=self.max_window)
+                             max_window=self.max_window,
+                             physical_action_dim=self.physical_action_dim)
         self.pipeline = self.native.pipeline
         if int(self.pipeline.num_steps) != self.num_steps:
             raise RuntimeError(
@@ -105,6 +110,7 @@ class SEAMGuidanceAdapter:
                 delay_estimate, request):
         import numpy as np
         from flash_rt.core.utils.actions import unnormalize_actions
+        from perceptbudget.seam_guidance import clip_prior_tail_to_executed_actions
 
         torch = self.torch
         pipe = self.pipe
@@ -121,7 +127,9 @@ class SEAMGuidanceAdapter:
         if tail.shape != expected:
             raise ValueError(
                 f'old SEAM tail shape {tail.shape}, expected {expected}')
-        prior = self._aligned_prior(tail)
+        prior_tail, prior_clip_stats = clip_prior_tail_to_executed_actions(
+            tail, self.physical_action_dim)
+        prior = self._aligned_prior(prior_tail)
         # Rows before the estimated handoff are expired and cropped on commit.
         # Guide only the surviving overlap, using the matching old-queue rows.
         guided_start = min(max(int(delay_estimate), 0), len(tail))
@@ -150,7 +158,7 @@ class SEAMGuidanceAdapter:
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['actions_raw'] = raw_actions.tolist()
         request['seam_guidance'] = {
-            'method': 'SEAM VLS async adaptation on FlashRT native CUDA path',
+            'method': 'SEAM VLS on FlashRT native CUDA path',
             'implementation': 'fused Euler residual-add + VLS CUDA kernel',
             'paper_is_synchronous': True,
             'execution_steps_before_request': int(executed),
@@ -160,6 +168,9 @@ class SEAMGuidanceAdapter:
             'guided_start': int(guided_start),
             'guided_window': int(guided_window),
             'strength': self.strength,
+            'physical_action_dim': self.physical_action_dim,
+            'prior_matches_executed_action_clip': True,
+            'prior_clip_stats': prior_clip_stats,
         }
         request['inference_ended_monotonic'] = time.monotonic()
         self.latency_estimate_seconds = (
