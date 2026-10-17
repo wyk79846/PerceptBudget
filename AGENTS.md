@@ -1,5 +1,11 @@
 # 协作规则
 
+## 当前授权：完整10步RTC图测试（2026-10-17）
+
+- 用户确认继续测试，先完整N10生成与端到端context耗时/数值gate，不跑任务。实验分支不变。新增CapturedRtcChunk同一graph实际包含k0..9各步VJP，不重放step0冒充N10；旧单步入口/默认路径不变。
+- 固定task0观测、合成remaining raw目标d7/s8用于数值对照，沿用H20/BF16/state。比对项目eager10步输出及各步VJP，另实际重算context并拷贝KV到图引用的稳定地址计时，固定shape不换context对象。
+- 输出专家-only及含context预热5次median、准备耗时、内存；分别判断整H1秒及RTC 2d<=H约束，不声称窗口够就可用q8或任务成功。独立服务/guarded_run/共享锁，数值不符或RAM不足明确停。
+
 ## 当前授权：FlashRT实验分支单步VJP（2026-10-17）
 
 - 用户授权修改，但先做单次去噪前向+动作VJP gate。PerceptBudget及FlashRT-upstream已切experiment/rtc-vjp分支，既有frontend加载修复及tokenizer脏改保留，不混入新提交。
