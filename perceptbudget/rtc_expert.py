@@ -99,12 +99,14 @@ class DifferentiableExpert:
         buf.download(bits)
         return torch.from_numpy(bits).view(torch.bfloat16).to(self.device)
 
-    def snapshot_context(self):
+    def snapshot_context(self, *, pad_context=False):
         """Freeze valid prefix KV, actual decoder RoPE and actual style rows.
 
         Includes state tokens already encoded by FlashRT. Excludes ALL cached
         action rows, even when called after vanilla decode. Existing K already
         has encoder RMS folding and RoPE applied: never rotate/normalize again.
+        With ``pad_context=True``, retain a fixed maximum context shape and add
+        an attention mask so dynamic state-token lengths can share one graph.
         Host downloads of small tables are deliberate probe overhead.
         """
         if torch.is_inference_mode_enabled():
@@ -118,8 +120,10 @@ class DifferentiableExpert:
         prefix = (int(attn.dec_devpos.item()) if pl._fixed_shape
                   else int(pl.encoder_seq_len))
         keys, values = attn.enc_K, attn.enc_V
+        capacity = keys.shape[1] - self.chunk_size if pad_context else prefix
         if (prefix <= 0 or keys.ndim != 4 or values.shape != keys.shape
                 or keys.shape[0] != 18 or tuple(keys.shape[2:]) != (1, 256)
+                or capacity <= 0 or prefix > capacity
                 or prefix + self.chunk_size > keys.shape[1]
                 or keys.dtype != self.dtype or values.dtype != self.dtype
                 or keys.device != self.device or values.device != self.device):
@@ -127,18 +131,31 @@ class DifferentiableExpert:
         n, h = self.num_steps, self.chunk_size
         # Build locally then publish together; failed download keeps old snapshot.
         with torch.no_grad():
+            key = torch.zeros((keys.shape[0], capacity, *keys.shape[2:]),
+                              device=keys.device, dtype=keys.dtype)
+            value = torch.zeros_like(key)
+            key[:, :prefix].copy_(keys[:, :prefix])
+            value[:, :prefix].copy_(values[:, :prefix])
             context = {
-                'key': keys[:, :prefix].detach().clone(),
-                'value': values[:, :prefix].detach().clone(),
+                'key': key,
+                'value': value,
                 'rope': self._download_bf16('decoder_rope_weights', (h, 256)),
                 'attn': self._download_bf16('decoder_style_attn', (n, 18, h, 3072)),
                 'ffn': self._download_bf16('decoder_style_ffn', (n, 18, h, 3072)),
                 'final': self._download_bf16('decoder_style_final', (n, h, 3072)),
             }
+            if pad_context:
+                key_mask = torch.zeros((1, 1, 1, capacity + h),
+                                       device=keys.device, dtype=torch.bool)
+                key_mask[..., :prefix] = True
+                key_mask[..., capacity:] = True
+                context['key_mask'] = key_mask
         if self.device.type == 'cuda':
             torch.cuda.synchronize(self.device)
         self._context = context
         self.prefix_length = prefix
+        self.context_capacity = capacity
+        self.pad_context = bool(pad_context)
         return self
 
     @staticmethod
@@ -212,7 +229,8 @@ class DifferentiableExpert:
             with sdpa_kernel(self.attention_backend):
                 attended = F.scaled_dot_product_attention(
                     q, k, v, dropout_p=0.0, is_causal=False,
-                    scale=256 ** -0.5, enable_gqa=True)
+                    scale=256 ** -0.5, enable_gqa=True,
+                    attn_mask=ctx.get('key_mask'))
             attended = attended.squeeze(0).transpose(0, 1).reshape(self.chunk_size, 2048)
             projected = attended @ w['attn_o_w'][i]
             hidden = (hidden.float() + projected.float() * gate).to(self.dtype)

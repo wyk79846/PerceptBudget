@@ -286,6 +286,7 @@ def device_state():
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False,
+                seam_adapter=None,
                 artifact_tag='', alignment_policy=None, refresh_policy='boundary',
                 pending_arm_gain=1.0, synchronous=False, step_hook=None):
     if synchronous and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled or
@@ -293,6 +294,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         raise ValueError('Synchronous recording must execute an unchanged fresh prefix')
     if alignment_policy is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled):
         raise ValueError('phase alignment is a separate diagnostic condition')
+    if seam_adapter is not None and (prefix_adapter or action_blend_enabled
+                                     or rtc_fusion_enabled or alignment_policy is not None
+                                     or synchronous):
+        raise ValueError('SEAM VLS is an isolated asynchronous condition')
     if not 0 < pending_arm_gain <= 1 or (prefix_adapter is not None and pending_arm_gain != 1):
         raise ValueError('invalid pending gain; committed prefixes must remain exact')
     observation, hz = base._prepare_env_episode(env, task, np)
@@ -343,6 +348,40 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'model_state': snapshot.get('state'),
                    'observation_raw_state': snapshot['raw_state'].tolist(),
                    'queue_before_submit_actions': buffer_count(queue, step)}
+        seam_previous_tail = None
+        if seam_adapter is not None and step > 0:
+            executed = step - previous_request_step
+            if not 0 < executed < config['H']:
+                raise RuntimeError(f'SEAM requires a nonempty previous tail; executed={executed}')
+            recent_rows = rows[-16:]
+            periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+                       for a, b in zip(recent_rows, recent_rows[1:])]
+            period_estimate = float(np.median(periods)) if periods else period
+            delay = seam_adapter.estimate_delay_steps(period_estimate)
+            tail_length = config['H'] - executed
+            if step not in queue:
+                raise RuntimeError(f'SEAM old-tail target missing at control step {step}')
+            old_origin = queue[step][2]
+            if executed != step - old_origin:
+                raise RuntimeError('SEAM tail does not align with the currently executing chunk: '
+                                   f's={executed}, queue_origin={old_origin}, step={step}')
+            try:
+                seam_previous_tail = np.asarray(
+                    [queue[step + index][4] for index in range(tail_length)],
+                    dtype=np.float32)
+            except (KeyError, IndexError) as exc:
+                raise RuntimeError('SEAM old tail is incomplete or lacks raw actions') from exc
+            if seam_previous_tail.shape != (tail_length, 32):
+                raise RuntimeError(f'invalid SEAM old-tail shape {seam_previous_tail.shape}')
+            request['seam_guidance'] = {
+                'execution_steps_before_request': executed,
+                'estimated_inference_delay_steps': delay,
+                'estimated_usable_overlap_steps': max(0, tail_length - delay),
+                'control_period_estimate_seconds': period_estimate,
+                'predicted_inference_seconds': seam_adapter.latency_estimate_seconds,
+                'old_chunk_origin_step': old_origin,
+                'old_tail_length': tail_length,
+            }
         raw_prefix = None
         prefix_len = None
         if prefix_adapter is not None and step > 0:
@@ -368,8 +407,21 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
 
         def predict():
             if prefix_adapter is None:
-                actions = base._infer_actions(model, snapshot, task['instruction'],
-                                              config['H'], request)
+                if seam_adapter is not None and step > 0:
+                    actions = seam_adapter.predict(
+                        snapshot, task['instruction'], seam_previous_tail,
+                        executed=request['seam_guidance']['execution_steps_before_request'],
+                        delay_estimate=request['seam_guidance']['estimated_inference_delay_steps'],
+                        request=request)
+                else:
+                    actions = base._infer_actions(model, snapshot, task['instruction'],
+                                                  config['H'], request)
+                    if seam_adapter is not None:
+                        raw = getattr(model._pipe, '_noise_out', None)
+                        if (raw is None or tuple(raw.shape) != (config['H'], 32)
+                                or not torch.isfinite(raw).all()):
+                            raise RuntimeError('FlashRT did not expose a finite raw Hx32 chunk for SEAM')
+                        request['actions_raw'] = raw.float().cpu().numpy().tolist()
             else:
                 actions, raw = prefix_adapter.predict(snapshot, task['instruction'], request, raw_prefix,
                                                      prefix_len=prefix_len)
@@ -385,6 +437,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if future is None or not future.done():
             return
         ready_actions = future.result()
+        if seam_adapter is not None and current_request.get('seam_guidance'):
+            current_request['seam_guidance']['actual_delay_steps'] = max(
+                0, step - current_request['observation_step'])
+            current_request['seam_guidance']['observed_inference_seconds'] = (
+                current_request.get('inference_ended_monotonic', time.monotonic())
+                - current_request.get('inference_started_monotonic',
+                                      current_request['input_ready_monotonic']))
         if selector is not None and not current_request.get('latency_observed'):
             selector.observe_latency(current_request['ready_monotonic'] - current_request['observation_monotonic'])
             current_request['latency_observed'] = True
@@ -642,6 +701,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'trial_index': trial_index, 'condition': condition,
               'action_blend': action_blend_enabled,
               'rtc_action_fusion': rtc_fusion_enabled,
+              'seam_vls_guidance': seam_adapter is not None,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
               'advance_handoff': advance_handoff,
@@ -687,6 +747,8 @@ def main():
                         help='paper overlap weights on arm dims 0:6; gripper from new prediction')
     parser.add_argument('--rtc-action-fusion', action='store_true',
                         help='use RTC temporal fusion on arm dims; take gripper from newest prediction')
+    parser.add_argument('--seam-vls', action='store_true',
+                        help='paired q=8 async pilot of SEAM VLS adaptation versus crop/overwrite')
     parser.add_argument('--q', type=int, nargs='+', choices=(5, 8, 10, 12, 15),
                         help='control-step refresh interval(s); default: 8 12')
     parser.add_argument('--compare-action-blend-q8', action='store_true',
@@ -707,6 +769,11 @@ def main():
         parser.error('action blending is tested separately from prefix locking')
     if args.rtc_action_fusion and (args.action_blend or args.prefix_lock or args.compare_action_blend_q8):
         parser.error('RTC action fusion is a separate controller-side condition')
+    if args.seam_vls and (args.action_blend or args.prefix_lock
+                          or args.rtc_action_fusion or args.compare_action_blend_q8
+                          or args.advance_handoff or args.adaptive_prefix
+                          or args.interface_only):
+        parser.error('--seam-vls is an isolated async pilot')
     if args.compare_action_blend_q8 and (args.action_blend or args.prefix_lock or args.interface_only):
         parser.error('--compare-action-blend-q8 already runs baseline and blending; do not combine modes')
     if args.compare_action_blend_q8 and args.q is not None:
@@ -718,7 +785,10 @@ def main():
     if args.interface_only and not args.prefix_lock:
         parser.error('--interface-only requires --prefix-lock')
     pair_count = args.pairs if args.pairs is not None else 3
-    q_values = [8] if args.compare_action_blend_q8 else args.q or [8, 12]
+    q_values = ([8] if args.compare_action_blend_q8 else
+                args.q or ([8] if args.seam_vls else [8, 12]))
+    if args.seam_vls and len(q_values) != 1:
+        parser.error('--seam-vls accepts exactly one q value')
     if args.advance_handoff and (not args.prefix_lock or args.adaptive_prefix or
                                 args.late_policy != 'hold' or min(q_values) <= args.prefix_len):
         parser.error('--advance-handoff requires fixed prefix, late hold and q > prefix-len')
@@ -728,6 +798,7 @@ def main():
     config = load_config(repo_root=ROOT)
     config.update(candidate_q=q_values,
                   execution_mode=('q8_paired_action_blend_comparison' if args.compare_action_blend_q8
+                                  else 'seam_vls_async_adaptation' if args.seam_vls
                                   else 'prefix_lock_diagnostic' if args.prefix_lock
                                   else 'actual_delay_diagnostic'))
     if args.prefix_lock:
@@ -767,6 +838,19 @@ def main():
             'model_vjp': False,
         }
         config['execution_mode'] = 'rtc_action_fusion_diagnostic'
+    if args.seam_vls:
+        config['seam_vls'] = {
+            'source': 'https://arxiv.org/abs/2607.04609',
+            'method': 'paper Eq. 3-8 closed-form VLS applied to async old-tail overlap',
+            'strength': 0.1,
+            'max_guided_window': 20,
+            'previous_tail': 'old queue at request time, aligned by actual executed steps',
+            'async_policy': 'continue old queue during inference; crop expired new prefix on commit; keep original H deadline',
+            'claim': 'SEAM-inspired asynchronous adaptation; paper reports synchronous execution',
+            'backpropagation': False,
+            'training': False,
+        }
+        config['execution_mode'] = 'seam_vls_async_adaptation'
     if args.compare_action_blend_q8:
         config['execution_mode'] = 'q8_paired_action_blend_comparison'
         config['comparison'] = {
@@ -776,8 +860,11 @@ def main():
             'fixed_task_seed_init': [0, 7, 0],
         }
     config['screen'] = {**config['screen'], 'task_ids': [0],
-                        'trials_per_task': pair_count * 2 if args.compare_action_blend_q8 else 1}
+                        'trials_per_task': (pair_count * 2 if args.compare_action_blend_q8
+                                            else 2 if args.seam_vls else 1)}
     purpose = ('q8-blend-ab' if args.compare_action_blend_q8 else
+               'seam-vls-q8-pilot' if args.seam_vls and q_values == [8] else
+               'seam-vls-pilot' if args.seam_vls else
                'rtc-action-fusion-6d' if args.rtc_action_fusion else
                'action-blend-arm6' if args.blend_arm_only else 'action-blend-pilot' if args.action_blend else 'adaptive-prefix-pilot'
                if args.adaptive_prefix else 'advance-handoff-rtc-merge' if args.prefix_rtc_merge else 'advance-handoff-pilot' if args.advance_handoff else 'prefix-lock-pilot' if args.prefix_lock else 'delay-buffer-pilot')
@@ -793,13 +880,23 @@ def main():
         target = run_dir / 'source' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
+    if args.seam_vls:
+        for name in ('perceptbudget/rtc_expert.py',
+                     'perceptbudget/seam_guidance.py',
+                     'perceptbudget/seam_rollout.py'):
+            source = ROOT / name
+            target = run_dir / 'source' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
     if args.rtc_action_fusion:
         rtc_source = Path(config['flashrt_root']) / 'flash_rt/runtime/rtc_temporal_fusion.py'
         rtc_target = run_dir / 'source/flash_rt/runtime/rtc_temporal_fusion.py'
         rtc_target.parent.mkdir(parents=True, exist_ok=True)
         rtc_target.write_bytes(rtc_source.read_bytes())
     summary = {'status': 'running',
-               'purpose': ('paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
+               'purpose': ('paired crop/overwrite versus SEAM-VLS async adaptation pilot'
+                           if args.seam_vls else
+                           'paired q=8 baseline/action-blend comparison' if args.compare_action_blend_q8
                            else 'single-task action-blend pilot; diagnostic only'
                            if args.action_blend
                            else 'single-task six-dimensional arm RTC temporal fusion; diagnostic only'
@@ -824,11 +921,17 @@ def main():
         summary['rtc_action_fusion'] = dict(config['rtc_action_fusion'])
         summary['limitations'][0] = ('host-side RTC temporal fusion on arm dimensions; gripper uses latest prediction; '
                                      'no denoiser VJP or model changes')
+    if args.seam_vls:
+        summary['seam_vls'] = dict(config['seam_vls'])
+        summary['limitations'][0] = ('single task/seed paired pilot; SEAM paper is synchronous, '
+                                     'this is an async adaptation, not a paper reproduction')
+        summary['limitations'].append('does not establish success rate or generalize beyond task 0')
     if args.compare_action_blend_q8:
         summary['comparison'] = dict(config['comparison'])
         summary['limitations'].append('single task and fixed seed/init; diagnostic pairs do not estimate LIBERO-wide success rate')
     env = None
     prefix_adapter = None
+    seam_adapter = None
     try:
         base._save_run_status(run_dir, 'running')
         summary['egl_cleanup'] = base._patch_egl_cleanup()
@@ -844,6 +947,9 @@ def main():
         summary['init_state_index'] = 0
         _, env_class = base._libero_api()
         model = base._load_and_check_model(config, torch)
+        if args.seam_vls:
+            from flash_rt.subgraphs.pi05.context_action import enable
+            enable(model)
         if args.prefix_lock:
             from perceptbudget.prefix_model import PrefixModel
             prefix_adapter = PrefixModel(model, prefix_len=args.prefix_len)
@@ -883,6 +989,15 @@ def main():
             summary['status'] = 'interface_only_completed'
             base._save_run_status(run_dir, 'interface_only_completed', completed_episodes=0)
             return
+        if args.seam_vls:
+            from perceptbudget.seam_rollout import SEAMGuidanceAdapter
+            seam_adapter = SEAMGuidanceAdapter(
+                model, torch, horizon=config['H'], num_steps=config['N'],
+                strength=config['seam_vls']['strength'],
+                max_window=config['seam_vls']['max_guided_window'])
+            summary['seam_vls']['expert_output_parity'] = seam_adapter.output_parity
+            summary['seam_vls']['graph_capture_seconds'] = seam_adapter.capture_seconds
+            base._write_json_atomic(run_dir / 'summary.json', summary)
         with (run_dir / 'trace.jsonl').open('w', encoding='utf-8') as stream:
             if args.compare_action_blend_q8:
                 schedule = []
@@ -901,6 +1016,26 @@ def main():
                     episode['pair_index'] = pair_index
                     summary['episodes'].append(episode)
                     base._write_json_atomic(run_dir / 'summary.json', summary)
+            elif args.seam_vls:
+                q = q_values[0]
+                baseline = run_episode(
+                    env, task, q, model, stats, config, np, torch, run_dir, stream,
+                    prefix_adapter, trial_index=1, condition='crop_overwrite',
+                    artifact_tag='_trial01')
+                summary['episodes'].append(baseline)
+                base._write_json_atomic(run_dir / 'summary.json', summary)
+                guided = run_episode(
+                    env, task, q, model, stats, config, np, torch, run_dir, stream,
+                    prefix_adapter, trial_index=2, condition='seam_vls_async_adaptation',
+                    seam_adapter=seam_adapter, artifact_tag='_trial02')
+                summary['episodes'].append(guided)
+                summary['paired_initial_state_match'] = (
+                    baseline.get('initial_sim_state_sha256')
+                    == guided.get('initial_sim_state_sha256'))
+                summary['paired_initial_frames_match'] = (
+                    baseline.get('initial_frames_sha256')
+                    == guided.get('initial_frames_sha256'))
+                base._write_json_atomic(run_dir / 'summary.json', summary)
             else:
                 condition = ('advance_prefix_handoff_rtc_merge' if args.prefix_rtc_merge else
                              'advance_prefix_handoff' if args.advance_handoff else
