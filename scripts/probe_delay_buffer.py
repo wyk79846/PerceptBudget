@@ -286,6 +286,7 @@ def device_state():
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False, rtc_adapter=None,
+                seam_adapter=None,
                 artifact_tag='', alignment_policy=None, refresh_policy='boundary',
                 pending_arm_gain=1.0, synchronous=False, step_hook=None):
     if synchronous and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled or
@@ -296,6 +297,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     if rtc_adapter is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled
                                     or alignment_policy is not None or synchronous):
         raise ValueError('RTC VJP rollout is an isolated asynchronous condition')
+    if seam_adapter is not None and (prefix_adapter or action_blend_enabled or rtc_fusion_enabled
+                                     or rtc_adapter or alignment_policy is not None
+                                     or synchronous or pending_arm_gain != 1.0):
+        raise ValueError('SEAM async uses ordinary absolute-step cropping and full-speed actions')
     if not 0 < pending_arm_gain <= 1 or (prefix_adapter is not None and pending_arm_gain != 1):
         raise ValueError('invalid pending gain; committed prefixes must remain exact')
     observation, hz = base._prepare_env_episode(env, task, np)
@@ -346,6 +351,22 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                    'model_state': snapshot.get('state'),
                    'observation_raw_state': snapshot['raw_state'].tolist(),
                    'queue_before_submit_actions': buffer_count(queue, step)}
+        seam_tail, seam_executed, seam_origin, seam_delay = None, 0, None, 0
+        if seam_adapter is not None and step > 0:
+            from perceptbudget.seam_rollout import queued_raw_tail
+            seam_tail, seam_executed, seam_origin = queued_raw_tail(queue, step, config['H'])
+            recent_rows = rows[-16:]
+            periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+                       for a, b in zip(recent_rows, recent_rows[1:])]
+            observed_period = float(np.median(periods)) if periods else period
+            if seam_tail is not None:
+                seam_delay = seam_adapter.estimate_delay_steps(observed_period)
+            request['seam_async'] = {
+                'old_chunk_origin_step': seam_origin,
+                'control_period_estimate_seconds': observed_period,
+                'prior_unavailable': seam_tail is None,
+                'reason': 'old queue exhausted' if seam_tail is None else 'valid old tail',
+            }
         rtc_previous_raw = None
         if rtc_adapter is not None and step > 0:
             executed = step - previous_request_step
@@ -403,7 +424,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         requests.append(request)
 
         def predict():
-            if rtc_adapter is not None and step == 0:
+            if seam_adapter is not None:
+                actions = seam_adapter.predict(
+                    snapshot, task['instruction'], seam_tail,
+                    executed=seam_executed, delay_estimate=seam_delay, request=request)
+            elif rtc_adapter is not None and step == 0:
                 actions = base._infer_actions(model, snapshot, task['instruction'],
                                               config['H'], request)
                 request['actions_raw'] = model._pipe._noise_out.float().cpu().numpy().copy().tolist()
@@ -430,6 +455,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if future is None or not future.done():
             return
         ready_actions = future.result()
+        if seam_adapter is not None:
+            guidance = current_request['seam_guidance']
+            actual_delay = max(0, step - current_request['observation_step'])
+            guidance['actual_delay_steps'] = actual_delay
+            guidance['surviving_guided_actions'] = max(
+                0, guidance['guided_start'] + guidance['guided_window']
+                - max(actual_delay, guidance['guided_start']))
         if rtc_adapter is not None and current_request.get('rtc_guidance'):
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
@@ -695,6 +727,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'action_blend': action_blend_enabled,
               'rtc_action_fusion': rtc_fusion_enabled,
               'rtc_vjp_guidance': rtc_adapter is not None,
+              'seam_vls_guidance': seam_adapter is not None,
               'alignment_policy': alignment_policy,
               'refresh_policy': refresh_policy,
               'advance_handoff': advance_handoff,

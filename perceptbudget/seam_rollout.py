@@ -12,6 +12,29 @@ import math
 import time
 
 
+def queued_raw_tail(queue, step, horizon):
+    """Snapshot the still-valid raw tail from the current queue's own origin."""
+    import numpy as np
+
+    if step not in queue:
+        return None, 0, None
+    origin = int(queue[step][2])
+    executed = int(step - origin)
+    if not 0 <= executed < horizon:
+        raise ValueError('queued SEAM actions are outside their original horizon')
+    items = []
+    for offset in range(executed, horizon):
+        item = queue.get(origin + offset)
+        if (item is None or len(item) < 5 or item[2] != origin
+                or item[3] != offset):
+            raise ValueError('SEAM needs a contiguous raw tail from one prediction')
+        items.append(item[4])
+    tail = np.asarray(items, dtype=np.float32)
+    if tail.shape != (horizon - executed, 32) or not np.isfinite(tail).all():
+        raise ValueError('invalid raw SEAM queue tail')
+    return tail.copy(), executed, origin
+
+
 class SEAMGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  strength=0.1, max_window=20, physical_action_dim=7,

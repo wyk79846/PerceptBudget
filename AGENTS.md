@@ -2,6 +2,8 @@
 
 ## 当前开发目录（2026-10-17，优先于下方历史）
 
+- 当前用户授权：测 H20/N10/K10/M上限10/λ0.1、无额外 state 的 SEAM 实际异步成功率，LIBERO-10 十任务各一次。入口 scripts/eval_seam_async.py，单任务进程依次运行并持有 GPU 锁、内存保护；推理时原速执行旧队列，提交按实际延迟裁剪。记录实际 M、断供、并发和来源，不将同步 9/10 当异步结果，不训练。
+
 - 用户要求减少工作区：代码修改集中在 `/home/wyk/workspace/PerceptBudget` 及 config.json 对应的 `/home/wyk/workspace/FlashRT-upstream`，当前开发分支均为 `project/perceptbudget`。
 - SEAM 同步运行器已整合到主项目，默认读取 config.json 的 FlashRT 路径。旧 `PerceptBudget-seam`、`FlashRT-seam-native` 工作区归档，不作为开发或运行入口。不要为常规实验另建并行目录。
 - FlashRT 每次增删改文件，更新其根目录 `PERCEPTBUDGET_CHANGES.md`，写明文件、用途、启用方式和验证状态。官方参考基点为 e4fe123；RTC 与 SEAM 均为项目本地扩展。
