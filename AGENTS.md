@@ -1,5 +1,11 @@
 # 协作规则
 
+## 当前授权：真正RTC去噪VJP接入探针（2026-10-17）
+
+- 用户提供2506.07339v2并授权尝试原始RTC，不得用最终动作平均或前缀覆盖冒充。保持FlashRT文件不改；先尝试项目侧可微expert共享FlashRT已加载权重和context KV，只对noisy action求VJP、主模型权重冻结。
+- 先单场景数值前向对照及一次真实梯度引导耗时/内存探针：原N10/H20/BF16/state不变，paper Eq2-5/算法1，beta5；同noise对照decode-only，relative RMSE<=2%仅作数值gate，不作成功率保证；未过gate不跑任务。真实延迟若已超过H可覆盖范围，不硬做q8任务。
+- 新代码仅perceptbudget/rtc_expert.py、rtc_guidance.py和scripts/probe_rtc_guidance.py及必要测试，不重构正式运行器；独立run/systemd/guarded_run/共享GPU锁，不扩大评测。必要数值修正允许独立新探针，但不覆盖历史结果。
+
 ## 当前授权：普通异步六维融合（2026-10-16）
 
 - 在刚完成的无前缀普通异步论文融合基础，仅改前六维融合、夹爪直接取新预测，CLI --action-blend --blend-arm-only --q 8，task0一次。q8仍为boundary请求步间隔，不启用前缀、advance、减半或event小模型，BF16/N10/H20/state/seed7/init0/220上限不变。不改FlashRT或默认七维入口。
