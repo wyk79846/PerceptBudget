@@ -4,7 +4,7 @@
 
 - LeRobot 仅作只读参考，不在 LeRobot 侧实现或安装运行环境。RTC 实现和优化留在本项目的可选 FlashRT 接入路径。
 - 用户同意继续处理明显偏慢的 RTC。新增 PyTorch Flash SDPA 可选后端；`math` 仍是默认。先用同一固定观测比较 math/flash 的完整 N10 CUDA Graph 输出、VJP、耗时与显存，不跑任务，不切换默认。
-- 合成 BF16/GQA 探针已验证 Flash SDPA 前向、反向及 CUDA Graph capture 可运行；真实模型数值和时延对照待完成。LeRobot RTC 本身没有可直接复用的反向加速后端。
+- 合成 BF16/GQA 探针及真实模型固定场景对照已完成：run `M1/20261017T050552.262146Z-rtc-sdpa-backend-ebde4f12`，math/flash 新旧动作一致输入下的RTC原始输出相对RMSE 0.240%；上下文刷新+RTC中位数870.78/599.40ms，Flash快31.2%，但仍慢于原版推理371.88ms。无任务成功率结论；默认仍为math。详情见`../任务指导与相关参考/PerceptBudget_RTC_FlashSDPA后端对照_20261017.md`。LeRobot RTC本身没有可直接复用的反向加速后端。
 
 ## 当前授权：完整10步RTC图测试（2026-10-17）
 
