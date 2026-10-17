@@ -1,5 +1,11 @@
 # 协作规则
 
+## 当前授权：FlashRT实验分支单步VJP（2026-10-17）
+
+- 用户授权修改，但先做单次去噪前向+动作VJP gate。PerceptBudget及FlashRT-upstream已切experiment/rtc-vjp分支，既有frontend加载修复及tokenizer脏改保留，不混入新提交。
+- 新上游rtc_action_vjp.py为显式启用CUDA Graph前向+VJP实验后端，先使用共享权重的可微expert，减少Python调度，默认无hook/无路径变化。不是已补齐native CUDA反向内核，不冒充完整RTC系统。
+- 仅script/probe_rtc_step.py一个固定scene，检查eager/graph前向梯度、runtime target/mask、冻结权重、单步native对照、预热耗时。独立服务/guarded_run/GPU锁；通过单步后再报告决定，不自动跑完整任务或大编译。
+
 ## 当前授权：真正RTC去噪VJP接入探针（2026-10-17）
 
 - 用户提供2506.07339v2并授权尝试原始RTC，不得用最终动作平均或前缀覆盖冒充。保持FlashRT文件不改；先尝试项目侧可微expert共享FlashRT已加载权重和context KV，只对noisy action求VJP、主模型权重冻结。
