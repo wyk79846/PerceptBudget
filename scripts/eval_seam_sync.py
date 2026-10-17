@@ -336,7 +336,8 @@ def main(argv=None):
         model = base._load_and_check_model(config, torch)
         summary["model"] = {
             "loaded_once": True, "load_seconds": time.monotonic() - load_started,
-            "horizon": model._pipe.chunk_size, "denoising_steps": model._pipe.num_steps,
+            "horizon": model._pipe.chunk_size,
+            "denoising_steps": model._pipe._num_steps,
             "flashrt_root": config["flashrt_root"],
         }
         enable_context(model)
