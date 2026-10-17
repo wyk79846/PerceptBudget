@@ -1,5 +1,11 @@
 # 协作规则
 
+## 当前授权：参考 LeRobot 优化本项目 RTC（2026-10-17）
+
+- LeRobot 仅作只读参考，不在 LeRobot 侧实现或安装运行环境。RTC 实现和优化留在本项目的可选 FlashRT 接入路径。
+- 用户同意继续处理明显偏慢的 RTC。新增 PyTorch Flash SDPA 可选后端；`math` 仍是默认。先用同一固定观测比较 math/flash 的完整 N10 CUDA Graph 输出、VJP、耗时与显存，不跑任务，不切换默认。
+- 合成 BF16/GQA 探针已验证 Flash SDPA 前向、反向及 CUDA Graph capture 可运行；真实模型数值和时延对照待完成。LeRobot RTC 本身没有可直接复用的反向加速后端。
+
 ## 当前授权：完整10步RTC图测试（2026-10-17）
 
 - 用户确认继续测试，先完整N10生成与端到端context耗时/数值gate，不跑任务。实验分支不变。新增CapturedRtcChunk同一graph实际包含k0..9各步VJP，不重放step0冒充N10；旧单步入口/默认路径不变。

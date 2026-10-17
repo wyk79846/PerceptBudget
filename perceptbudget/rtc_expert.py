@@ -39,9 +39,10 @@ class DifferentiableExpert:
     Both Hx32 and 1xHx32 inputs are accepted and preserve their rank.
     """
 
-    def __init__(self, pipe):
+    def __init__(self, pipe, *, attention_backend='math'):
         self.pipe = pipe
         self.pipeline = pipe.pipeline
+        self.set_attention_backend(attention_backend)
         pl = self.pipeline
         if pl is None:
             raise RuntimeError('prepare the FlashRT pipeline before creating expert')
@@ -77,6 +78,17 @@ class DifferentiableExpert:
                 raise ValueError(f'unsupported decoder tensor {name}: '
                                  f'{tuple(weight.shape)}, {weight.dtype}, {weight.device}')
         self._context = None
+
+    def set_attention_backend(self, name):
+        """Select the SDPA backend before building a new graph capture."""
+        backends = {
+            'math': SDPBackend.MATH,
+            'flash': SDPBackend.FLASH_ATTENTION,
+        }
+        if name not in backends:
+            raise ValueError("attention backend must be 'math' or 'flash'")
+        self.attention_backend_name = name
+        self.attention_backend = backends[name]
 
     def _download_bf16(self, name, shape):
         """Read exact CudaBuffer bits; no writes or guessed host RoPE math."""
@@ -197,7 +209,7 @@ class DifferentiableExpert:
             q = q.transpose(0, 1).unsqueeze(0)
             # Eight Q heads share one KV head. Full bidirectional suffix, no
             # causal mask; padding was removed by the valid-prefix snapshot.
-            with sdpa_kernel(SDPBackend.MATH):
+            with sdpa_kernel(self.attention_backend):
                 attended = F.scaled_dot_product_attention(
                     q, k, v, dropout_p=0.0, is_causal=False,
                     scale=256 ** -0.5, enable_gqa=True)
