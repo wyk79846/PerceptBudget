@@ -5,6 +5,7 @@
 - 用户提供2506.07339v2并授权尝试原始RTC，不得用最终动作平均或前缀覆盖冒充。保持FlashRT文件不改；先尝试项目侧可微expert共享FlashRT已加载权重和context KV，只对noisy action求VJP、主模型权重冻结。
 - 先单场景数值前向对照及一次真实梯度引导耗时/内存探针：原N10/H20/BF16/state不变，paper Eq2-5/算法1，beta5；同noise对照decode-only，relative RMSE<=2%仅作数值gate，不作成功率保证；未过gate不跑任务。真实延迟若已超过H可覆盖范围，不硬做q8任务。
 - 新代码仅perceptbudget/rtc_expert.py、rtc_guidance.py和scripts/probe_rtc_guidance.py及必要测试，不重构正式运行器；独立run/systemd/guarded_run/共享GPU锁，不扩大评测。必要数值修正允许独立新探针，但不覆盖历史结果。
+- 已完成核心接入gate：0885a62/f36029f，首次M1/20261017T042252.830728Z-rtc-vjp-gate-e75fd17b；预热M1/20261017T042416.054442Z-rtc-vjp-gate-c0e4fdd2。前向relativeRMSE raw.252%/前7维.196%，max.00390625；10个VJP均有限非零。warm expert-only2.578秒>H20名义1秒，不跑完整任务/不声称成功率或完整系统已接通。共享只读weights、FlashRT三关键文件hash未变。268 tests（1skip）、两服务退出0。报告`../任务指导与相关参考/PerceptBudget_原始RTC接入探针_20261017.md`。不自动投入编译/反向优化，不扩大评测。
 
 ## 当前授权：普通异步六维融合（2026-10-16）
 
