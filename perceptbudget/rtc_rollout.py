@@ -12,7 +12,7 @@ class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
                  attention_backend='math', guidance_enabled=True, audit_reference=False,
-                 reference_backend=False, eager_backend=False):
+                 reference_backend=False, eager_backend=False, native_fused_output_root=None):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -37,6 +37,8 @@ class RTCGuidanceAdapter:
             # one fixed-shape CUDA graph. Math remains the default for parity.
             self.pipe, attention_backend=attention_backend).snapshot_context(
                 fixed_prefix_capacity=attention_backend != 'flash')
+        if native_fused_output_root is not None:
+            self.expert.enable_native_fused_ffn(native_fused_output_root)
         capture_started = time.monotonic()
         self.graph = (None if self.reference_backend or self.eager_backend else CapturedRtcChunk(
             self.expert.step_delta, sample, num_steps=self.num_steps))
@@ -201,6 +203,7 @@ class RTCGuidanceAdapter:
                                'eager_single_forward' if self.eager_backend else 'captured_graph'),
             'attention_backend': self.attention_backend,
             'vjp_norms': vjp_norms.cpu().tolist(),
+            'native_fused_ffn': self.expert.native_fused_ffn,
             'weighted_error_norms': error_norms.cpu().tolist(),
         })
         request['inference_ended_monotonic'] = time.monotonic()

@@ -108,6 +108,7 @@ def main():
     parser.add_argument('--state', action='store_true', help='Enable normalized robot state in the FlashRT prompt')
     parser.add_argument('--eager-rtc', action='store_true', help='Validate same RTC equations without CUDA graph workspace/capture')
     parser.add_argument('--preflight-rtc', action='store_true', help='Validate and time RTC before the task; keep live task timing separate')
+    parser.add_argument('--native-fused-ffn',action='store_true',help='Experimental native FFN and fused input gradients; not baseline-equivalent')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
@@ -116,6 +117,9 @@ def main():
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--resume-from', type=Path, help='Reuse completed tasks from a compatible stopped screen; preserve original attempts')
     args = parser.parse_args()
+    if args.native_fused_ffn and (args.spatial_screen or not args.rtc_only or not args.preflight_rtc
+                                  or args.attention_backend!='flash-varlen'):
+        parser.error('--native-fused-ffn requires single --rtc-only --preflight-rtc --attention-backend flash-varlen')
     if args.resume_from and not args.spatial_screen:
         parser.error('--resume-from is only valid for a screen parent')
     if args.paper_reference and not args.rtc_only:
@@ -138,7 +142,8 @@ def main():
                   rtc_deterministic_attention=args.deterministic_attention,
                   release_rtc_graph_before_artifacts=args.rtc_only and args.state,
                   disk_backed_frames=args.rtc_only and args.state,
-                  rtc_validation_before_task=args.preflight_rtc)
+                  rtc_validation_before_task=args.preflight_rtc,
+                  rtc_native_fused_ffn=args.native_fused_ffn)
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -154,7 +159,8 @@ def main():
         print('run_dir=' + str(run), flush=True)
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
-                     'perceptbudget/rtc_expert.py'):
+                     'perceptbudget/rtc_expert.py', 'perceptbudget/rtc_native_probe.py',
+                     'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu'):
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
@@ -187,7 +193,8 @@ def main():
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=args.denoising_steps,
                                          attention_backend=args.attention_backend, audit_reference=True,
-                                         reference_backend=args.paper_reference, eager_backend=args.eager_rtc)
+                                         reference_backend=args.paper_reference, eager_backend=args.eager_rtc,
+                                         native_fused_output_root=config['output_root'] if args.native_fused_ffn else None)
             result['initial_graph_capture_seconds'] = adapter.capture_seconds
             if args.preflight_rtc:
                 from scripts.probe_rtc_step import timed
