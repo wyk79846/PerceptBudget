@@ -1,5 +1,7 @@
 # 协作规则
 
+- 最新state批次在task1完整220步后、结果落盘前触发内存保护。修正只在executor结束后、CPU帧数组压缩之前释放已无用途的RTC CUDA图，记录释放前后MemAvailable/torch allocated/reserved，保留768MiB保护。补测用--resume-from旧批次，仅复用有效task0成功，旧task1无效尝试保留；新run明确记录source_task_dir与版本修订，续测task1–9，不改变推理/动作参数。
+
 - 用户要求重试state RTC：项目侧Flash SDPA适配为有效prefix长度改变时先释放旧图，再按真实长度重建同后端图，不保留多长度图、不忽略padding、不换后端。每种新长度首次独立参考核查，记录valid_prefix_length/context_graph_rebuilt/context_prepare_seconds；重建和参考核查可能显著增加时延，报告不能只报复用图稳态耗时。重测仍N5/q5/d5/H20/state开启/Spatial十任务，invalid立即停批次，旧无效run保留。
 
 - 当前授权：按最近q5的相同Spatial十任务配置，仅开启state，N5/H20/q5/d5、确定性Flash SDPA、seed7/init0/220步不变。入口加--state，沿用归一化8维state进入FlashRT prompt（不是新增连续state投影）。先以task0检查兼容性，数值或有效prefix长度不符则批次明确停止，不静默换后端，不重复启动无效十任务。q5无state对照7/10、稳态median457.18ms/p95469.08ms，0断供。

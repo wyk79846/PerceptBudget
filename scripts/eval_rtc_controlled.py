@@ -24,10 +24,26 @@ from scripts import probe_delay_buffer as probe
 
 def spatial_screen(config, args):
     """Sequential isolated task workers; durable results in one run folder."""
+    reused = []
+    if args.resume_from:
+        previous_config = json.loads((args.resume_from/'run.json').read_text())['config_snapshot']
+        for key in ('H', 'N', 'state_enabled', 'controlled_delay_steps', 'candidate_q',
+                    'rtc_attention_backend', 'rtc_deterministic_attention',
+                    'checkpoint_path', 'flashrt_revision'):
+            if previous_config.get(key) != config.get(key):
+                raise ValueError(f'resume cannot mix settings: {key}')
+        old = json.loads((args.resume_from/'summary.json').read_text())
+        for item in old['tasks']:
+            if item.get('status') == 'completed':
+                reused.append({**item, 'source_task_dir': str(args.resume_from/'tasks'/f"task{item['task_id']:02d}")})
+        config['resume_source'] = str(args.resume_from)
     run = create_run(config, 'M1', f'rtc-spatial-n5-q{args.q}-d5' + ('-state' if args.state else ''), repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
-    summary = {'status': 'running', 'expected_tasks': 10, 'tasks': [],
+    summary = {'status': 'running', 'expected_tasks': 10, 'tasks': reused,
                'note': 'fixed five simulated delay steps; not real-time async'}
+    if args.resume_from:
+        summary.update(resume_source=str(args.resume_from), reused_task_ids=[r['task_id'] for r in reused],
+                       amendment='Only post-episode graph workspace release changed; completed source task preserved, invalid attempt excluded.')
     def save():
         valid = [r for r in summary['tasks'] if r.get('status') == 'completed']
         summary['valid_tasks'] = len(valid)
@@ -45,6 +61,8 @@ def spatial_screen(config, args):
         base._save_run_status(run, summary['status'])
     save()
     for task_id in range(10):
+        if any(r['task_id'] == task_id for r in reused):
+            continue
         directory = run/'tasks'/f'task{task_id:02d}'
         directory.mkdir(parents=True)
         command = [config['python_executable'], str(ROOT/'scripts/guarded_run.py'), '--',
@@ -88,7 +106,10 @@ def main():
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--spatial-screen', action='store_true')
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--resume-from', type=Path, help='Reuse completed tasks from a compatible stopped screen; preserve original attempts')
     args = parser.parse_args()
+    if args.resume_from and not args.spatial_screen:
+        parser.error('--resume-from is only valid for a screen parent')
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
     if args.spatial_screen and (args.worker_run or not args.rtc_only or args.suite != 'libero_spatial'
@@ -101,7 +122,8 @@ def main():
                   candidate_q=[args.q], pending_arm_gain=1.0,
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
                   rtc_attention_backend=args.attention_backend,
-                  rtc_deterministic_attention=args.deterministic_attention)
+                  rtc_deterministic_attention=args.deterministic_attention,
+                  release_rtc_graph_before_artifacts=args.rtc_only and args.state)
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')

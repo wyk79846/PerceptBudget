@@ -43,6 +43,22 @@ class RTCGuidanceAdapter:
 
         self.capture_seconds = time.monotonic() - capture_started
 
+    def release_graph(self):
+        """Drop inference-only workspaces before CPU trajectory compression."""
+        import gc
+        def memory():
+            available = next(int(line.split()[1])*1024 for line in
+                             open('/proc/meminfo') if line.startswith('MemAvailable:'))
+            return {'available_ram_bytes': available,
+                    'cuda_allocated_bytes': self.torch.cuda.memory_allocated(),
+                    'cuda_reserved_bytes': self.torch.cuda.memory_reserved()}
+        self.torch.cuda.synchronize()
+        before = memory()
+        self.graph = None
+        gc.collect()
+        self.torch.cuda.empty_cache()
+        return {'before': before, 'after': memory()}
+
     def _refresh_context_for_prefix(self, prefix):
         """Flash SDPA has no padding mask: replace, never retain, length graphs."""
         started = time.monotonic()

@@ -708,6 +708,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                                 wall_seconds=stop - active_pause['start_monotonic'])
         monitor.stop()
         executor.shutdown(wait=True)
+        if rtc_adapter is not None and config.get('release_rtc_graph_before_artifacts'):
+            released = rtc_adapter.release_graph()
+            base._trace(stream, 'rtc_graph_released_before_artifacts', details=released)
         base._write_json_atomic(run_dir / f'q{q}{artifact_tag}_late_hold.json', {
             'late_policy': late_policy, 'pauses': pauses,
             'count': len(pauses), 'steps': sum(p['steps'] for p in pauses),
