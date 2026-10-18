@@ -33,6 +33,17 @@ def guidance_scale(tau, beta=5.):
     return min(beta, (1-tau)/(tau*r2))
 
 
+def soft_mask_tensor(horizon, delay, executed, *, device):
+    """FP32 device expression matching the independently audited reference."""
+    import torch
+    if not 0 <= delay <= executed <= horizon-delay or horizon <= 0:
+        raise ValueError('RTC requires 0 <= d <= s <= H-d')
+    i = torch.arange(horizon, device=device, dtype=torch.float32)
+    c = (horizon-executed-i)/(horizon-executed-delay+1)
+    return torch.where(i < delay, torch.ones_like(i), torch.where(
+        i < horizon-executed, c*torch.expm1(c)/(math.e-1), torch.zeros_like(i)))[:, None]
+
+
 def guided_sample(step_delta, noise, previous, *, delay, executed, num_steps=10, beta=5.):
     """Return (raw action, per-step diagnostics); no output averaging or clamp."""
     import torch
@@ -40,8 +51,7 @@ def guided_sample(step_delta, noise, previous, *, delay, executed, num_steps=10,
         raise ValueError('expected Hx32 noise and positive N')
     if previous.shape != (noise.shape[0]-executed, noise.shape[1]):
         raise ValueError('previous must be remaining H-s raw32 actions')
-    mask = torch.tensor(soft_mask(noise.shape[0], delay, executed),
-                        dtype=torch.float32, device=noise.device)[:, None]
+    mask = soft_mask_tensor(noise.shape[0], delay, executed, device=noise.device)
     target = torch.zeros_like(noise, dtype=torch.float32)
     target[:len(previous)] = previous.detach().float()
     x = noise.detach().float()
@@ -51,10 +61,12 @@ def guided_sample(step_delta, noise, previous, *, delay, executed, num_steps=10,
         with torch.enable_grad():
             x = x.detach().requires_grad_(True)
             delta = step_delta(x, step).float()
-            estimate = x + (1-tau) * num_steps * delta
+            t = 1-tau
+            velocity = -num_steps*delta
+            estimate = x-t*velocity
             error = ((target - estimate).detach() * mask).detach()
             correction, = torch.autograd.grad(estimate, x, grad_outputs=error)
-            scale = guidance_scale(tau, beta)
+            scale = beta if step == 0 else min(beta, (t*t+(1-t)**2)/(t*(1-t)))
             next_x = x + delta + (scale / num_steps) * correction
         if not torch.isfinite(next_x).all():
             raise RuntimeError('nonfinite RTC update')

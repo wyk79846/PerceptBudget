@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-18 用户授权修正优化RTC路径：保留参考版速度重建/反传顺序、统一FP32设备软掩码与系数舍入；先同输入数值gate，再测Flash SDPA耗时与同一受控任务。只改可选RTC，不改普通推理/SEAM/模型权重/全局默认后端，不训练，不使用子agent。Flash SDPA固定有效prompt长度（state关闭），不静默忽略padding。
+
 - 2026-10-18 两版RTC差异已在同输入隔离：旧eager与旧CUDA图逐位相同；只将estimate由 `x+(t*N)*delta` 换为 `x-t*(-N*delta)` 即重现参考版首个guided chunk（相对旧max .00731444，相对参考5.96e-8）。第3次去噪首次VJP分叉，源于FP32缩放顺序令一个梯度跨过BF16舍入中点；不是CUDA图自身或VJP接口错误。诊断run `M1/20261018T052343.180443Z-rtc-difference-isolation-e1ce4d41`，报告 `M1/RTC_两版本差异定位_20261018.md`。本轮仅诊断，不改生产/FlashRT路径，不由单任务一成一败宣称数学逻辑错误或普遍质量优劣。
 
 - 2026-10-18 RTC排查结果：H20/N10/q10/d5/state关闭，慢速 `scripts/eval_rtc_controlled.py --rtc-only --paper-reference` task0在354步成功，原图RTC520步超时、无引导485步成功。初态/首帧/首chunk完全一致，首个guided raw最大差.00731444。FP32解析测试通过，但BF16图与独立参考未过1e-4严格门槛；不能把数值差直接宣称已定位逻辑错误。参考路径不使用完整专家CUDA图，约4.914s/请求，非实时部署；不切全局默认。报告见任务产出 M1/RTC_逐步论文参考核查_20261018.md。两次核查内存中断已标记，不计失败率。

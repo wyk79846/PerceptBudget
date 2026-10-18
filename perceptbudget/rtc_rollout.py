@@ -34,7 +34,7 @@ class RTCGuidanceAdapter:
             # FA2 seqused masks variable state-prompt padding while preserving
             # one fixed-shape CUDA graph. Math remains the default for parity.
             self.pipe, attention_backend=attention_backend).snapshot_context(
-                fixed_prefix_capacity=True)
+                fixed_prefix_capacity=attention_backend != 'flash')
         capture_started = time.monotonic()
         self.graph = (None if self.reference_backend else CapturedRtcChunk(
             self.expert.step_delta, sample, num_steps=self.num_steps))
@@ -52,7 +52,7 @@ class RTCGuidanceAdapter:
     def predict(self, snapshot, prompt, previous_raw, *, delay, executed, request):
         import numpy as np
         from flash_rt.core.utils.actions import unnormalize_actions
-        from perceptbudget.rtc_guidance import soft_mask
+        from perceptbudget.rtc_guidance import soft_mask_tensor
 
         torch = self.torch
         pipe, pl = self.pipe, self.pipeline
@@ -68,6 +68,8 @@ class RTCGuidanceAdapter:
 
         prefix = (int(pl.attn.dec_devpos.item()) if pl._fixed_shape
                   else int(pl.encoder_seq_len))
+        if self.attention_backend == 'flash' and prefix != self.expert.context_capacity:
+            raise RuntimeError('Flash SDPA RTC requires fixed prompt length; use math/fa2-seqused for variable state tokens')
         self.expert.refresh_context(
             pl.attn.enc_K[:, :self.expert.context_capacity],
             pl.attn.enc_V[:, :self.expert.context_capacity], prefix)
@@ -83,8 +85,7 @@ class RTCGuidanceAdapter:
         target = torch.zeros_like(noise)
         target[:len(previous_raw)].copy_(torch.as_tensor(
             np.asarray(previous_raw, dtype=np.float32), device=device))
-        mask = torch.tensor(soft_mask(self.horizon, delay, executed),
-                            device=device, dtype=torch.float32)[:, None]
+        mask = soft_mask_tensor(self.horizon, delay, executed, device=device)
         if not self.guidance_enabled:
             mask.zero_()
         if self.reference_backend:

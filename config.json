@@ -2,7 +2,7 @@
   "model_id": "pi05_libero_pytorch",
   "python_executable": "/home/wyk/venvs/lutvla/bin/python",
   "flashrt_root": "/home/wyk/workspace/FlashRT-upstream",
-  "flashrt_revision": "c81d9a0dbe2363ac9ff424a9e9ce514f5bd710e6",
+  "flashrt_revision": "c678efee0287fe4d635f53ee1f62ba4e6b351552",
   "flashrt_base_revision": "e4fe1232ee49f8d3cd96e32706114fd960b320fb",
   "flashrt_loading_patch": "/home/wyk/workspace/PerceptBudget/patches/flashrt_low_memory_load.patch",
   "flashrt_loading_patch_sha256": "4658d612e3371cdb40717d162b9d3c7979081bca5f7628f0bc4b2effe83e46cc",

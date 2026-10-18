@@ -5,6 +5,7 @@ Reconstruct the first guided request of the saved task0 experiment. No full
 rollout, no training, no changes to FlashRT or production solver defaults.
 """
 import fcntl
+import argparse
 import gc
 import json
 import math
@@ -69,8 +70,11 @@ def compare(a, b, np):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--attention-backend', choices=('math', 'flash'), default='math')
+    args = parser.parse_args()
     config = load_config(repo_root=ROOT)
-    config.update(H=20, N=10, state_enabled=False)
+    config.update(H=20, N=10, state_enabled=False, rtc_attention_backend=args.attention_backend)
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         root = create_run(config, 'M1', 'rtc-difference-isolation', repo_root=ROOT)
@@ -86,7 +90,8 @@ def main():
         import numpy as np
         from perceptbudget.libero_input import load_libero_norm_stats, raw_libero_state
         from perceptbudget.rtc_expert import DifferentiableExpert
-        from perceptbudget.rtc_guidance import soft_mask, paper_reference
+        from perceptbudget.rtc_guidance import soft_mask, soft_mask_tensor, paper_reference
+        from scripts.probe_rtc_step import timed
         from flash_rt.subgraphs.pi05.context_action import enable
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         result = {'status': 'running', 'comparisons': {}}
@@ -133,7 +138,8 @@ def main():
                                                           pipe._graph_torch_stream.cuda_stream)
                 pl._context_graph.replay(pl._graph_stream)
             pipe._graph_torch_stream.synchronize()
-            expert = DifferentiableExpert(pipe).snapshot_context(fixed_prefix_capacity=True)
+            expert = DifferentiableExpert(pipe, attention_backend=args.attention_backend).snapshot_context(
+                fixed_prefix_capacity=args.attention_backend != 'flash')
             noise = torch.empty((20, 32), device='cuda', dtype=torch.bfloat16).normal_().float()
             previous = old[10:]
             target = torch.zeros_like(noise)
@@ -144,9 +150,27 @@ def main():
             mask_new = torch.where(i < 5, torch.ones_like(i), torch.where(
                 i < 10, c*torch.expm1(c)/(math.e-1), torch.zeros_like(i)))[:, None]
             result['mask_max_difference'] = float((mask_old-mask_new).abs().max())
+            mask_new = soft_mask_tensor(20, 5, 10, device=noise.device)
             graph = CapturedRtcChunk(expert.step_delta, noise, num_steps=10)
-            captured = graph.replay(noise, target, mask_old)[0].detach().cpu().numpy().copy()
+            captured = graph.replay(noise, target, mask_new)[0].detach().cpu().numpy().copy()
             torch.cuda.synchronize()
+            result['attention_backend'] = args.attention_backend
+            result['expert_graph_timing'] = timed(torch, lambda: graph.replay(noise, target, mask_new))
+            def fresh_context():
+                with torch.cuda.stream(pipe._graph_torch_stream):
+                    model.set_prompt(task['instruction'], state=None)
+                    pipe._fill_img_buf({'images': snapshot['images']})
+                    pipe._copy_tensor_to_pipeline_buf_stream(pipe._img_buf, pl.input_images_buf,
+                                                              pipe._graph_torch_stream.cuda_stream)
+                    pl._context_graph.replay(pl._graph_stream)
+                pipe._graph_torch_stream.synchronize()
+                prefix = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
+                if args.attention_backend == 'flash' and prefix != expert.context_capacity:
+                    raise RuntimeError('prompt length changed during fixed-input flash timing')
+                expert.refresh_context(pl.attn.enc_K[:, :expert.context_capacity],
+                                       pl.attn.enc_V[:, :expert.context_capacity], prefix)
+                return graph.replay(noise, target, mask_new)
+            result['context_and_graph_timing'] = timed(torch, fresh_context)
             del graph
             gc.collect()
             torch.cuda.empty_cache()
@@ -180,6 +204,8 @@ def main():
             # Verify diagnostic replicas really correspond to both production implementations.
             reference, _ = paper_reference(expert.step_delta, noise, previous, delay=5, executed=10)
             result['paper_replica_max_difference'] = float(np.max(np.abs(reference.cpu().numpy()-outputs['paper_eager'])))
+            result['fixed_graph_vs_reference_max_difference'] = float(np.max(np.abs(reference.cpu().numpy()-captured)))
+            result['numerical_gate_passed'] = result['fixed_graph_vs_reference_max_difference'] < 1e-4
             np.savez_compressed(root/'inputs.npz', noise=noise.cpu().numpy(), target=target.cpu().numpy(),
                                 old_mask=mask_old.cpu().numpy(), reference_mask=mask_new.cpu().numpy(), captured=captured)
             result['status'] = 'completed'

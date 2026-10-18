@@ -53,6 +53,23 @@ class ActionVjpImportTest(unittest.TestCase):
 
 
 class ActionVjpCpuTest(unittest.TestCase):
+    def test_reference_order_preserves_bf16_gradient_rounding_tie(self):
+        import torch
+        cls = load_backend()
+        graph = cls.__new__(cls)
+        graph.x = torch.zeros(4, 32, requires_grad=True)
+        graph.step, graph.num_steps, graph.tau = 2, 10, .2
+        graph.delta_fn = lambda x, k: x.to(torch.bfloat16).float()
+        graph.target = torch.full_like(graph.x, .0061187744140625)
+        graph.mask = torch.ones(4, 1)
+        graph.beta = torch.tensor(5.)
+        actual = graph._run()[2]
+        e = graph.target
+        expected = e + ((e*(-.8))*(-10)).bfloat16().float()
+        folded = e + (e*8).bfloat16().float()
+        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        self.assertTrue(bool((actual != folded).any()))
+
     def test_real_autograd_formula_and_frozen_weight_on_cpu(self):
         try:
             import torch
