@@ -63,16 +63,33 @@ class NativeGeGLU(torch.autograd.Function):
         return dg.to(gate.dtype), du.to(up.dtype), None
 
 
+class FusedAda(NativeAda):
+    @staticmethod
+    def backward(ctx, grad):
+        from perceptbudget.rtc_fused_backward import ada_backward
+        x, style = ctx.saved_tensors
+        return ada_backward(x,style,grad), None, None, None
+
+
+class FusedGeGLU(NativeGeGLU):
+    @staticmethod
+    def backward(ctx, grad):
+        from perceptbudget.rtc_fused_backward import geglu_backward
+        gate, up = ctx.saved_tensors
+        dg, du = geglu_backward(gate,up,grad)
+        return dg,du,None
+
+
 def ffn(x, style, weights, *, native=False, gemm=None, fvk=None, ones=None,
-        include_residual=True):
+        include_residual=True, fused_backward=False):
     """One real-width FFN sublayer, including Ada norm and gated residual."""
     from perceptbudget.rtc_expert import DifferentiableExpert
     gate = style.float().chunk(3, -1)[2]
     if native:
-        norm = NativeAda.apply(x, style, ones, fvk)
+        norm = (FusedAda if fused_backward else NativeAda).apply(x, style, ones, fvk)
         a = NativeLinear.apply(norm, weights[0], gemm)
         b = NativeLinear.apply(norm, weights[1], gemm)
-        act = NativeGeGLU.apply(a, b, fvk)
+        act = (FusedGeGLU if fused_backward else NativeGeGLU).apply(a, b, fvk)
         projected = NativeLinear.apply(act, weights[2], gemm)
     else:
         norm, _ = DifferentiableExpert._ada(x, style)

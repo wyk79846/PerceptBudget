@@ -205,6 +205,14 @@ class DifferentiableExpert:
                 raise ValueError(f'unsupported decoder tensor {name}: '
                                  f'{tuple(weight.shape)}, {weight.dtype}, {weight.device}')
         self._context = None
+        self.native_fused_ffn = False
+
+    def enable_native_fused_ffn(self, output_root):
+        """Experimental opt-in; call only before capturing a new RTC graph."""
+        from perceptbudget.rtc_fused_backward import load
+        load(output_root)
+        self._native_ffn_ones = torch.ones(1024, device=self.device, dtype=self.dtype)
+        self.native_fused_ffn = True
 
     def set_attention_backend(self, name):
         """Select the math, PyTorch Flash SDPA, or FlashRT FA2 backend."""
@@ -416,6 +424,13 @@ class DifferentiableExpert:
             attended = attended.squeeze(0).transpose(0, 1).reshape(self.chunk_size, 2048)
             projected = attended @ w['attn_o_w'][i]
             hidden = (hidden.float() + projected.float() * gate).to(self.dtype)
+            if self.native_fused_ffn:
+                from perceptbudget.rtc_native_probe import ffn
+                hidden = ffn(hidden, ctx['ffn'][step,i],
+                    [w['ffn_gate_w'][i],w['ffn_up_w'][i],w['ffn_down_w'][i]],
+                    native=True,gemm=self.pipeline.gemm,fvk=self.pipeline.fvk,
+                    ones=self._native_ffn_ones,fused_backward=True)
+                continue
             norm, gate = self._ada(hidden, ctx['ffn'][step, i])
             activated = self._geglu(norm @ w['ffn_gate_w'][i], norm @ w['ffn_up_w'][i])
             projected = activated @ w['ffn_down_w'][i]

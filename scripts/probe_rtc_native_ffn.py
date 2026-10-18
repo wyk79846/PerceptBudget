@@ -1,5 +1,6 @@
 """Real model single-FFN native forward/input-VJP gate. No task rollout."""
 import fcntl
+import argparse
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,10 @@ from perceptbudget.experiment import create_run, load_config
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--fused-backward',action='store_true')
+    parser.add_argument('--full-rtc-gate',action='store_true')
+    args=parser.parse_args()
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=5, state_enabled=True)
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'])
@@ -25,20 +30,27 @@ def main():
         base._patch_egl_cleanup()
         torch, _ = base._check_cuda_and_native(config)
         torch.use_deterministic_algorithms(True)
+        if args.fused_backward:
+            from perceptbudget.rtc_fused_backward import load
+            load(config['output_root'])
         import numpy as np
         from perceptbudget.libero_input import load_libero_norm_stats
         from perceptbudget.rtc_expert import DifferentiableExpert
         from perceptbudget.rtc_native_probe import ffn
+        from flash_rt.subgraphs.pi05.context_action import enable
         model = base._load_and_check_model(config, torch)
+        enable(model)
         task = base._load_tasks([0], ['libero_spatial'])[0]
         _, env_class = base._libero_api()
         env = base._make_env(env_class, task)
-        result = {'status':'running', 'scope':'single FFN; no rollout or full RTC replacement'}
+        result = {'status':'running', 'scope':'single FFN; no rollout or full RTC replacement',
+                  'fused_backward':args.fused_backward}
         try:
             obs, _ = base._prepare_env_episode(env, task, np)
             stats = load_libero_norm_stats(config['norm_stats_path'])
             base._infer_actions(model, base._make_snapshot(obs, stats, True), task['instruction'],20,{})
-            expert = DifferentiableExpert(model._pipe).snapshot_context()
+            expert = DifferentiableExpert(model._pipe,attention_backend='flash-varlen').snapshot_context(
+                fixed_prefix_capacity=True)
             pl = model._pipe.pipeline
             torch.manual_seed(7)
             x = torch.randn(20,1024,device='cuda',dtype=torch.bfloat16).requires_grad_()
@@ -50,7 +62,7 @@ def main():
                 weights = [expert.weights[k][layer] for k in ('ffn_gate_w','ffn_up_w','ffn_down_w')]
                 def execute(native, include_residual=True):
                     y = ffn(x,style,weights,native=native,gemm=pl.gemm,fvk=pl.fvk,ones=ones,
-                            include_residual=include_residual)
+                            include_residual=include_residual, fused_backward=args.fused_backward)
                     dx, = torch.autograd.grad(y,x,grad_outputs=dy)
                     return y, dx
                 reference = tuple(t.detach().clone() for t in execute(False))
@@ -93,6 +105,52 @@ def main():
                 print(json.dumps(row),flush=True)
             result['status'] = 'completed' if all(r['gate_passed'] for r in result['cases']) else 'numeric_gate_failed'
             result['weights_frozen'] = all(not w.requires_grad and w.grad is None for w in expert.weights.values())
+            if args.full_rtc_gate and result['status']=='completed':
+                import gc
+                from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
+                from perceptbudget.rtc_guidance import soft_mask_tensor, paper_reference
+                noise=torch.randn(20,32,device='cuda',dtype=torch.bfloat16).float()
+                previous=model._pipe._noise_out[5:].detach().float().clone()
+                target=torch.zeros_like(noise)
+                target[:15].copy_(previous)
+                mask=soft_mask_tensor(20,5,5,device=noise.device)
+                full={}
+                def fresh_context():
+                    pipe=model._pipe
+                    with torch.cuda.stream(pipe._graph_torch_stream):
+                        pl._context_graph.replay(pl._graph_stream)
+                    pipe._graph_torch_stream.synchronize()
+                    expert.refresh_context(pl.attn.enc_K[:,:expert.context_capacity],
+                        pl.attn.enc_V[:,:expert.context_capacity],int(pl.attn.dec_devpos.item()))
+                for name in ('baseline','fused'):
+                    if name=='fused': expert.enable_native_fused_ffn(config['output_root'])
+                    captured=CapturedRtcChunk(expert.step_delta,noise,num_steps=5)
+                    got=tuple(v.detach().clone() for v in captured.replay(noise,target,mask))
+                    torch.cuda.synchronize()
+                    if name=='baseline': baseline=got
+                    else: fused=got
+                    full[name+'_expert']=timed(torch,lambda: captured.replay(noise,target,mask))
+                    def all_stages():
+                        fresh_context()
+                        return captured.replay(noise,target,mask)
+                    full[name+'_context_and_expert']=timed(torch,all_stages)
+                    del captured
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                for key,a,b in zip(('raw','vjp_norm','error_norm'),baseline,fused):
+                    full[key+'_max_abs_vs_baseline']=float((a-b).abs().max())
+                    full[key+'_relative_l2_vs_baseline']=float((a-b).norm()/a.norm().clamp_min(1e-12))
+                reference, norms=paper_reference(expert.step_delta,noise,previous,
+                    delay=5,executed=5,num_steps=5)
+                full['same_backend_reference_raw_max_abs']=float((reference-fused[0]).abs().max())
+                full['same_backend_reference_vjp_max_abs']=float((torch.tensor(norms,device=noise.device)-fused[1]).abs().max())
+                full['reference_gate_passed']=all(full[k]<=1e-4 for k in (
+                    'same_backend_reference_raw_max_abs','same_backend_reference_vjp_max_abs'))
+                full['baseline_equivalence_gate_passed']=all(full[k]<=1e-4 for k in (
+                    'raw_max_abs_vs_baseline','vjp_norm_max_abs_vs_baseline'))
+                result['full_rtc']=full
+                result['note']='Fixed-input full RTC gate, no rollout; backend change is not bitwise equivalence.'
+                print('full_rtc='+json.dumps(full),flush=True)
         except BaseException as exc:
             result.update(status='invalid',error=f'{type(exc).__name__}: {exc}')
             raise
