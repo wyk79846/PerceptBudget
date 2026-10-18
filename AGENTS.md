@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-18 用户授权原生专家前向加输入反传的单层试验。已有 GitHub baseline cbed4c8/tag rtc-before-native-backward-20261018。新增 rtc_native_probe.py 和 probe_rtc_native_ffn.py，仅探针，FlashRT/默认RTC未改。真实权重/style+合成隐藏输入，三组FFN输出与VJP含/不含残差核对通过探索门槛；原生前向+Torch解析反传约0.934–0.940ms，旧约0.963–1.049ms（末组波动），初轮约2–3%收益。结果M1/20261018T153803.611197Z-rtc-native-ffn-gate-3a79f6b6。不是整个专家或完整RTC替换，不能声称全模型提速。两次中间跨流捕获invalid保留，最终同流创建叶子/梯度种子解决。300tests通过/4skip。详见RTC_NATIVE_PROBE.md，暂不扩大任务。
+
 - 当前用户授权压缩带state RTC耗时：新增可选flash-varlen项目侧后端，用Torch已有FlashAttention变长前向/反向及GPU累计长度，让单一固定容量CUDA图排除padding、适配state有效长度，不改变RTC公式或checkpoint，不改FlashRT源码。先GPU小张量前向/VJP/同图变长重放验证，再真实模型独立参考gate及计时，最后仅同一个Spatial task0验证。N5/q5/d5/state/确定性保持，不冒充真实20Hz异步。preflight-rtc将一次性核查计时单列，任务计时不混入核查；报告仍需说明受控等待及后端数值可能不同。
 
 - 磁盘帧补测task4仍在164步后触发内存保护，不能归因于保存期或宣布内存已修复。获用户“继续”授权后，同state测试可选--eager-rtc：不创建RTC CUDA图，沿用同一确定性Flash SDPA及已核对RTC公式，每步仅一次前向+VJP。续测4–9，前4项保留原图版本有效结果；resume摘要显式标注prior/current solver backend，不能将混合执行结果当作全图快版性能或同质完整性能基准。先验证task4数值和内存，失败立即停，不关闭768MiB保护。
