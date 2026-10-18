@@ -24,7 +24,7 @@ from scripts import probe_delay_buffer as probe
 
 def spatial_screen(config, args):
     """Sequential isolated task workers; durable results in one run folder."""
-    run = create_run(config, 'M1', f'rtc-spatial-n5-q{args.q}-d5', repo_root=ROOT)
+    run = create_run(config, 'M1', f'rtc-spatial-n5-q{args.q}-d5' + ('-state' if args.state else ''), repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = {'status': 'running', 'expected_tasks': 10, 'tasks': [],
                'note': 'fixed five simulated delay steps; not real-time async'}
@@ -33,7 +33,7 @@ def spatial_screen(config, args):
         summary['valid_tasks'] = len(valid)
         summary['successes'] = sum(r['conditions']['rtc']['status'] == 'success' for r in valid)
         base._write_json_atomic(run/'summary.json', summary)
-        rows = [f'# RTC Spatial 十任务，N5/q{args.q}/d5', '', summary['note'], '',
+        rows = [f'# RTC Spatial 十任务，N5/q{args.q}/d5，state={config["state_enabled"]}', '', summary['note'], '',
                 f"状态：{summary['status']}；有效{len(valid)}/10；成功{summary['successes']}。", '',
                 '| task | 结果 | 步数 | 请求中位ms | 断供 |', '|---:|---|---:|---:|---:|']
         for item in summary['tasks']:
@@ -54,6 +54,8 @@ def spatial_screen(config, args):
                    '--attention-backend', args.attention_backend, '--worker-run', str(run)]
         if args.deterministic_attention:
             command.append('--deterministic-attention')
+        if args.state:
+            command.append('--state')
         print(f'task={task_id} start', flush=True)
         with (directory/'worker.log').open('w') as log:
             completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -65,6 +67,10 @@ def spatial_screen(config, args):
         summary['tasks'].append(item)
         save()
         print(f"task={task_id} result={item.get('conditions', {}).get('rtc', {}).get('status', item['status'])}", flush=True)
+        if item['status'] != 'completed':
+            summary['status'] = 'stopped_invalid'
+            save()
+            return
     summary['status'] = 'completed' if summary['valid_tasks'] == 10 else 'partial_invalid'
     save()
 
@@ -75,6 +81,7 @@ def main():
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
+    parser.add_argument('--state', action='store_true', help='Enable normalized robot state in the FlashRT prompt')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
@@ -89,7 +96,7 @@ def main():
         parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 5/8 --denoising-steps 5')
     config = (json.loads((args.worker_run/'run.json').read_text())['config_snapshot']
               if args.worker_run else load_config(repo_root=ROOT))
-    config.update(H=20, N=args.denoising_steps, state_enabled=False, controlled_delay_steps=5,
+    config.update(H=20, N=args.denoising_steps, state_enabled=args.state, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
                   candidate_q=[args.q], pending_arm_gain=1.0,
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
@@ -106,7 +113,7 @@ def main():
             run = args.worker_run/'tasks'/f'task{args.task_id:02d}'
             base._write_json_atomic(run/'run.json', {'status': 'created', 'config_snapshot': config})
         else:
-            run = create_run(config, 'M1', f'rtc-controlled-d5-q{args.q}', repo_root=ROOT)
+            run = create_run(config, 'M1', f'rtc-controlled-d5-q{args.q}' + ('-state' if args.state else ''), repo_root=ROOT)
         print('run_dir=' + str(run), flush=True)
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
@@ -136,7 +143,7 @@ def main():
                   'note': 'controlled simulation delay d5; wall-clock simulation pauses; not real-time'}
         try:
             obs, _ = base._prepare_env_episode(env, task, np)
-            base._infer_actions(model, base._make_snapshot(obs, stats, False),
+            base._infer_actions(model, base._make_snapshot(obs, stats, config['state_enabled']),
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=args.denoising_steps,
                                          attention_backend=args.attention_backend, audit_reference=True,
@@ -153,6 +160,9 @@ def main():
                         directory, stream, rtc_adapter=adapter,
                         condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
                 requests = json.loads((directory / f'q{args.q}_requests.json').read_text())
+                if config['state_enabled']:
+                    assert all(np.asarray(r['model_state']).shape == (8,) and
+                               np.isfinite(r['model_state']).all() for r in requests)
                 commits = episode['commits'][1:]
                 assert all(c['commit_step'] - c['observation_step'] == 5 for c in commits)
                 assert not episode['underflow_steps']

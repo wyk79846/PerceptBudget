@@ -1,5 +1,7 @@
 # 协作规则
 
+- 当前授权：按最近q5的相同Spatial十任务配置，仅开启state，N5/H20/q5/d5、确定性Flash SDPA、seed7/init0/220步不变。入口加--state，沿用归一化8维state进入FlashRT prompt（不是新增连续state投影）。先以task0检查兼容性，数值或有效prefix长度不符则批次明确停止，不静默换后端，不重复启动无效十任务。q5无state对照7/10、稳态median457.18ms/p95469.08ms，0断供。
+
 - 当前授权由q6改为q5：不测q6；在相同Spatial十任务各一次上测试N5/q5/d5，其余沿用q8（H20、state关闭、确定性Flash SDPA、seed7/init0、220步）。q8已完成7/10成功、0断供，191次稳态请求median458.43ms/p95466.27ms，十任务数值/来源审计通过。q5独立run不覆盖q8；仍受控延迟，不是真20Hz部署。
 
 - 当前用户授权：LIBERO Spatial十个不同任务各一次，RTC N5/q8/H20、固定延迟d5（必要时暂停仿真），state关闭、确定性Flash SDPA、seed7/init0，Spatial标准上限220步。入口eval_rtc_controlled.py --spatial-screen --rtc-only --suite libero_spatial --q 8 --denoising-steps 5 --attention-backend flash --deterministic-attention。逐任务隔离进程防内存累积，统一父run目录，保存有效/无效与数值/动作来源审计。不称真实20Hz异步，不训练，不自动增加任务次数。
