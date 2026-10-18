@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户授权Spatial十任务成对比较新未融合flash-varlen与native-fused FFN，固定N5/H20/q5/d5/state/seed7/init0，不与旧flash后端混称。scripts/compare_rtc_ffn.py复用配置审计通过的task0/1四条记录，补其余16条，按任务交错模式顺序；每子进程guarded_run/GPU锁，独立run，不改在途推理代码。父run=M1/20261018T160739.023376Z-rtc-ffn-paired-spatial-0dfc5544，服务perceptbudget-rtc-ffn-ten-paired-20261019，日志/tmp/perceptbudget-rtc-ffn-ten-paired-20261019.log。异常停批次，--resume-from父run只续缺项，旧无效尝试保留。初态sim/首帧hash配对核对，超时耗时不是完成时间。启动时已4/20记录，后续状态以summary.json为准；未完成不得报最终成功率。
+
 - 2026-10-18 用户授权融合后端完成一次相同Spatial task0：N5/H20/q5/d5/state/seed7/init0，--native-fused-ffn显式开启、强制preflight与flash-varlen/single rtc-only；默认不变。结果M1/20261018T155540.802683Z-rtc-controlled-d5-q5-state-6ee45566，148步成功14.434秒，29次稳态median473.42/p95482.77/max488.38ms，0断供/0图重建，148步来源审计通过。固定输入完整447.37ms/专家159.08ms，参考raw/VJP差0；建图4.63s+预检9.46s单列。未融合旧task0为195步20.04s，不能把28%任务时间变化都说成计算提速或泛化成功率提高。仍受控d5非真实20Hz，不自动扩测。详见RTC_NATIVE_PROBE.md。
 
 - 2026-10-18 原生FFN试验后用户授权继续融合反传。新增项目侧 rtc_fused_backward.cu/.py，仅Ada/GeGLU输入梯度，构建产物写结果root/build，不改FlashRT。可微expert显式enable_native_fused_ffn，默认关闭。N5固定输入完整RTC专家181.46→159.03ms、context+专家466.46→444.40ms；同后端独立参考误差0，但相对旧后端raw max0.0049215/relL2 0.3741%、VJPnorm max0.0034025，未过1e-4等价gate，不替换默认/不测任务/不称成功率不变。CUDA专项3通过，默认303tests/7skip。详细记录RTC_NATIVE_PROBE.md，后续若继续必须明确数值后端变化。
