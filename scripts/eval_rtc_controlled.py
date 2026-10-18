@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
+    parser.add_argument('--deterministic-attention', action='store_true')
     args = parser.parse_args()
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
@@ -34,7 +35,8 @@ def main():
                   execution_mode='controlled_simulation_delay_not_real_time',
                   candidate_q=[10], pending_arm_gain=1.0,
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
-                  rtc_attention_backend=args.attention_backend)
+                  rtc_attention_backend=args.attention_backend,
+                  rtc_deterministic_attention=args.deterministic_attention)
     config['screen'].update(seed=7, init_state_index=0)
     with (Path(config['output_root']) / '.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # Queue behind the already running SEAM test.
@@ -47,8 +49,12 @@ def main():
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
         os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
+        if args.deterministic_attention:
+            os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         base._patch_egl_cleanup()
         torch, _ = base._check_cuda_and_native(config)
+        if args.deterministic_attention:
+            torch.use_deterministic_algorithms(True)
         import numpy as np
         from perceptbudget.libero_input import load_libero_norm_stats
         from perceptbudget.rtc_rollout import RTCGuidanceAdapter
