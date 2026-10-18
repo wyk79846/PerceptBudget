@@ -89,13 +89,13 @@ def worker(run_dir, task_id):
         _, env_class = base._libero_api()
         env = sync.make_env(env_class, task)
         obs, _ = base._prepare_env_episode(env, task, np)
-        snapshot = base._make_snapshot(obs, stats, False)
+        snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         base._seed_process(7, np, torch)
         base._infer_actions(model, snapshot, task['instruction'], 20, {})
         adapter = SEAMGuidanceAdapter(model, torch, horizon=20, num_steps=10,
                                       strength=0.1, max_window=10, physical_action_dim=7)
         obs, _ = base._prepare_env_episode(env, task, np)
-        snapshot = base._make_snapshot(obs, stats, False)
+        snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         raw_frames_hash = hashlib.sha256(np.concatenate(
             (obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1).tobytes()).hexdigest()
         summary.update(
@@ -131,7 +131,8 @@ def save_progress(run_dir, summary):
     summary['successes'] = sum(x['episode']['status'] == 'success' for x in valid)
     base._write_json_atomic(run_dir / 'summary.json', summary)
     rows = ['# SEAM 异步实际延迟测试', '',
-            'H20 / N10 / K10 / M上限10 / λ0.1 / BF16网络+FP32动作状态 / 无额外state。',
+            'H20 / N10 / K10 / M上限10 / λ0.1 / BF16网络+FP32动作状态 / '
+            + ('启用state。' if summary['settings']['state_enabled'] else '无额外state。'),
             '每10个已执行控制步刷新，旧队列原速继续执行；实际延迟裁掉新块过期前缀。',
             '', f"状态：{summary['status']}；有效任务 {len(valid)}/{summary['expected_tasks']}；成功 {summary['successes']}。",
             '', '| task | 结果 | 步数 | 真实秒 | 断供步 | 并发执行步 |',
@@ -151,6 +152,7 @@ def save_progress(run_dir, summary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task-ids', type=int, nargs='+', default=list(range(10)))
+    parser.add_argument('--state', action='store_true', help='Enable normalized robot state in the FlashRT prompt')
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--worker-task', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -160,7 +162,7 @@ def main():
     if len(set(args.task_ids)) != len(args.task_ids) or any(i not in range(10) for i in args.task_ids):
         parser.error('task ids must be distinct integers 0..9')
     config = load_config(repo_root=ROOT)
-    config.update(H=20, N=10, state_enabled=False, candidate_q=[10],
+    config.update(H=20, N=10, state_enabled=args.state, candidate_q=[10],
                   execution_mode='seam_asynchronous_actual_delay',
                   action_handoff='absolute_step_crop_with_seam_vls',
                   refresh_anchor='request', pending_arm_gain=1.0,
@@ -174,7 +176,7 @@ def main():
                         'init_state_index':0}
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        run_dir = create_run(config, 'M1', 'seam-async-h20-k10', repo_root=ROOT)
+        run_dir = create_run(config, 'M1', 'seam-async-h20-k10' + ('-state' if args.state else ''), repo_root=ROOT)
         print('run_dir='+str(run_dir), flush=True)
         source = run_dir/'source'
         source.mkdir()
