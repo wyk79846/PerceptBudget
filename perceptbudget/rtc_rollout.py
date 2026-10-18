@@ -86,7 +86,8 @@ class RTCGuidanceAdapter:
                 self.pipeline.attn.enc_K[:, :self.expert.context_capacity],
                 self.pipeline.attn.enc_V[:, :self.expert.context_capacity], prefix)
         return {'valid_prefix_length': prefix, 'context_capacity': self.expert.context_capacity,
-                'context_graph_rebuilt': rebuilt,
+                'context_graph_rebuilt': rebuilt and not (self.reference_backend or self.eager_backend),
+                'context_resized': rebuilt,
                 'context_prepare_seconds': time.monotonic()-started}
 
     def estimate_delay_steps(self, control_period_seconds):
