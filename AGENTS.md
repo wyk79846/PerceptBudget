@@ -1,5 +1,7 @@
 # 协作规则
 
+- 当前用户授权：LIBERO Spatial十个不同任务各一次，RTC N5/q8/H20、固定延迟d5（必要时暂停仿真），state关闭、确定性Flash SDPA、seed7/init0，Spatial标准上限220步。入口eval_rtc_controlled.py --spatial-screen --rtc-only --suite libero_spatial --q 8 --denoising-steps 5 --attention-backend flash --deterministic-attention。逐任务隔离进程防内存累积，统一父run目录，保存有效/无效与数值/动作来源审计。不称真实20Hz异步，不训练，不自动增加任务次数。
+
 - N5单任务已完成：run M1/20261018T055233.704749Z-rtc-controlled-d5-q10-86c85680，433步成功、断供0、来源审计及同后端参考核查通过（raw/VJP差0，norm长度5）。42次稳态完整请求median461.51ms/p95464.84/max469.54，较N10同口径632.16ms少27%。但N10成功353步，N5多用80控制步；不只凭推理快宣称动作效率更好。仍受控d5，不是真20Hz部署，不自动扩测。报告M1/RTC_五步去噪同任务测试_20261018.md。
 
 - 当前授权：同一LIBERO-10 task0仅将RTC去噪N10改N5，入口eval_rtc_controlled.py --rtc-only --attention-backend flash --deterministic-attention --denoising-steps 5；H20/q10/d5/state关闭/seed7/init0不变，单次受控任务及实际请求计时，不称真实20Hz异步。全局N仍10，不改FlashRT或模型权重，不训练，不使用子agent。

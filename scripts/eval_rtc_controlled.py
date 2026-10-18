@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,53 @@ from scripts import eval_seam_sync as sync
 from scripts import probe_delay_buffer as probe
 
 
+def spatial_screen(config, args):
+    """Sequential isolated task workers; durable results in one run folder."""
+    run = create_run(config, 'M1', 'rtc-spatial-n5-q8-d5', repo_root=ROOT)
+    print('run_dir='+str(run), flush=True)
+    summary = {'status': 'running', 'expected_tasks': 10, 'tasks': [],
+               'note': 'fixed five simulated delay steps; not real-time async'}
+    def save():
+        valid = [r for r in summary['tasks'] if r.get('status') == 'completed']
+        summary['valid_tasks'] = len(valid)
+        summary['successes'] = sum(r['conditions']['rtc']['status'] == 'success' for r in valid)
+        base._write_json_atomic(run/'summary.json', summary)
+        rows = ['# RTC Spatial 十任务，N5/q8/d5', '', summary['note'], '',
+                f"状态：{summary['status']}；有效{len(valid)}/10；成功{summary['successes']}。", '',
+                '| task | 结果 | 步数 | 请求中位ms | 断供 |', '|---:|---|---:|---:|---:|']
+        for item in summary['tasks']:
+            e = item.get('conditions', {}).get('rtc', {})
+            rows.append('| {} | {} | {} | {} | {} |'.format(
+                item['task_id'], e.get('status', item['status']), e.get('steps', '—'),
+                e.get('steady_inference_ms', {}).get('median', '—'), len(e.get('underflow_steps', []))))
+        (run/'summary.md').write_text('\n'.join(rows)+'\n')
+        base._save_run_status(run, summary['status'])
+    save()
+    for task_id in range(10):
+        directory = run/'tasks'/f'task{task_id:02d}'
+        directory.mkdir(parents=True)
+        command = [config['python_executable'], str(ROOT/'scripts/guarded_run.py'), '--',
+                   config['python_executable'], '-u', str(Path(__file__).resolve()),
+                   '--rtc-only', '--suite', 'libero_spatial', '--task-id', str(task_id),
+                   '--q', str(args.q), '--denoising-steps', str(args.denoising_steps),
+                   '--attention-backend', args.attention_backend, '--worker-run', str(run)]
+        if args.deterministic_attention:
+            command.append('--deterministic-attention')
+        print(f'task={task_id} start', flush=True)
+        with (directory/'worker.log').open('w') as log:
+            completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+        path = directory/'summary.json'
+        item = json.loads(path.read_text()) if path.exists() else {}
+        item['task_id'] = task_id
+        if completed.returncode or item.get('status') != 'completed':
+            item.update(status='invalid', worker_exit_code=completed.returncode)
+        summary['tasks'].append(item)
+        save()
+        print(f"task={task_id} result={item.get('conditions', {}).get('rtc', {}).get('status', item['status'])}", flush=True)
+    summary['status'] = 'completed' if summary['valid_tasks'] == 10 else 'partial_invalid'
+    save()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
@@ -28,20 +76,37 @@ def main():
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
+    parser.add_argument('--q', type=int, choices=(8, 10), default=10)
+    parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
+    parser.add_argument('--task-id', type=int, choices=range(10), default=0)
+    parser.add_argument('--spatial-screen', action='store_true')
+    parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
-    config = load_config(repo_root=ROOT)
+    if args.spatial_screen and (args.worker_run or not args.rtc_only or args.suite != 'libero_spatial'
+                               or args.q != 8 or args.denoising_steps != 5 or args.paper_reference):
+        parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 8 --denoising-steps 5')
+    config = (json.loads((args.worker_run/'run.json').read_text())['config_snapshot']
+              if args.worker_run else load_config(repo_root=ROOT))
     config.update(H=20, N=args.denoising_steps, state_enabled=False, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
-                  candidate_q=[10], pending_arm_gain=1.0,
+                  candidate_q=[args.q], pending_arm_gain=1.0,
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
                   rtc_attention_backend=args.attention_backend,
                   rtc_deterministic_attention=args.deterministic_attention)
-    config['screen'].update(seed=7, init_state_index=0)
+    config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
+                            task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
+                            trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
+    if args.spatial_screen:
+        return spatial_screen(config, args)
     with (Path(config['output_root']) / '.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # Queue behind the already running SEAM test.
-        run = create_run(config, 'M1', 'rtc-controlled-d5-q10', repo_root=ROOT)
+        if args.worker_run:
+            run = args.worker_run/'tasks'/f'task{args.task_id:02d}'
+            base._write_json_atomic(run/'run.json', {'status': 'created', 'config_snapshot': config})
+        else:
+            run = create_run(config, 'M1', f'rtc-controlled-d5-q{args.q}', repo_root=ROOT)
         print('run_dir=' + str(run), flush=True)
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
@@ -61,7 +126,8 @@ def main():
         from perceptbudget.rtc_rollout import RTCGuidanceAdapter
         from flash_rt.subgraphs.pi05.context_action import enable
         stats = load_libero_norm_stats(config['norm_stats_path'])
-        task = sync.get_tasks([0])[0]
+        task = (sync.get_tasks([args.task_id])[0] if args.suite == 'libero_10'
+                else base._load_tasks([args.task_id], ['libero_spatial'])[0])
         model = base._load_and_check_model(config, torch)
         enable(model)
         _, env_class = base._libero_api()
@@ -83,10 +149,10 @@ def main():
                 print(name + ' start', flush=True)
                 with (directory / 'trace.jsonl').open('w') as stream:
                     episode = probe.run_episode(
-                        env, task, 10, model, stats, config, np, torch,
+                        env, task, args.q, model, stats, config, np, torch,
                         directory, stream, rtc_adapter=adapter,
                         condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
-                requests = json.loads((directory / 'q10_requests.json').read_text())
+                requests = json.loads((directory / f'q{args.q}_requests.json').read_text())
                 commits = episode['commits'][1:]
                 assert all(c['commit_step'] - c['observation_step'] == 5 for c in commits)
                 assert not episode['underflow_steps']
@@ -104,6 +170,10 @@ def main():
                     checked += 1
                 episode['executed_actions_audited'] = checked
                 episode['controlled_delay_audit_passed'] = True
+                times = [(r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
+                         for r in requests[1:] if 'rtc_reference_audit' not in r]
+                episode['steady_inference_ms'] = ({'count': len(times), 'median': float(np.median(times)),
+                    'p95': float(np.percentile(times, 95)), 'max': max(times)} if times else {})
                 result['conditions'][name] = episode
                 base._write_json_atomic(run / 'summary.json', result)
                 print(name + ' result=' + episode['status'], flush=True)
