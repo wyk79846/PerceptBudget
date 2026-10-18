@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求重试state RTC：项目侧Flash SDPA适配为有效prefix长度改变时先释放旧图，再按真实长度重建同后端图，不保留多长度图、不忽略padding、不换后端。每种新长度首次独立参考核查，记录valid_prefix_length/context_graph_rebuilt/context_prepare_seconds；重建和参考核查可能显著增加时延，报告不能只报复用图稳态耗时。重测仍N5/q5/d5/H20/state开启/Spatial十任务，invalid立即停批次，旧无效run保留。
+
 - 当前授权：按最近q5的相同Spatial十任务配置，仅开启state，N5/H20/q5/d5、确定性Flash SDPA、seed7/init0/220步不变。入口加--state，沿用归一化8维state进入FlashRT prompt（不是新增连续state投影）。先以task0检查兼容性，数值或有效prefix长度不符则批次明确停止，不静默换后端，不重复启动无效十任务。q5无state对照7/10、稳态median457.18ms/p95469.08ms，0断供。
 
 - 当前授权由q6改为q5：不测q6；在相同Spatial十任务各一次上测试N5/q5/d5，其余沿用q8（H20、state关闭、确定性Flash SDPA、seed7/init0、220步）。q8已完成7/10成功、0断供，191次稳态请求median458.43ms/p95466.27ms，十任务数值/来源审计通过。q5独立run不覆盖q8；仍受控延迟，不是真20Hz部署。

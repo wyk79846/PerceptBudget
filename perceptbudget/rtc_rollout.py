@@ -27,6 +27,7 @@ class RTCGuidanceAdapter:
         self.guidance_enabled = bool(guidance_enabled)
         self.audit_reference = bool(audit_reference)
         self._reference_audited = False
+        self._audited_prefixes = set()
         self.reference_backend = bool(reference_backend)
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
@@ -41,6 +42,34 @@ class RTCGuidanceAdapter:
         torch.cuda.synchronize()
 
         self.capture_seconds = time.monotonic() - capture_started
+
+    def _refresh_context_for_prefix(self, prefix):
+        """Flash SDPA has no padding mask: replace, never retain, length graphs."""
+        started = time.monotonic()
+        rebuilt = self.attention_backend == 'flash' and prefix != self.expert.context_capacity
+        if rebuilt:
+            import gc
+            from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
+            # Release every graph reference before replacing its context buffers.
+            self.torch.cuda.synchronize()
+            self.graph = None
+            gc.collect()
+            self.torch.cuda.empty_cache()
+            self.expert.snapshot_context(fixed_prefix_capacity=False)
+            if self.expert.context_capacity != prefix:
+                raise RuntimeError('new RTC context did not use the actual state prompt length')
+            if not self.reference_backend:
+                sample = self.torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
+                                          dtype=self.torch.float32)
+                self.graph = CapturedRtcChunk(self.expert.step_delta, sample, num_steps=self.num_steps)
+            self._reference_audited = prefix in self._audited_prefixes
+        else:
+            self.expert.refresh_context(
+                self.pipeline.attn.enc_K[:, :self.expert.context_capacity],
+                self.pipeline.attn.enc_V[:, :self.expert.context_capacity], prefix)
+        return {'valid_prefix_length': prefix, 'context_capacity': self.expert.context_capacity,
+                'context_graph_rebuilt': rebuilt,
+                'context_prepare_seconds': time.monotonic()-started}
 
     def estimate_delay_steps(self, control_period_seconds):
         if control_period_seconds <= 0:
@@ -68,11 +97,8 @@ class RTCGuidanceAdapter:
 
         prefix = (int(pl.attn.dec_devpos.item()) if pl._fixed_shape
                   else int(pl.encoder_seq_len))
-        if self.attention_backend == 'flash' and prefix != self.expert.context_capacity:
-            raise RuntimeError('Flash SDPA RTC requires fixed prompt length; use math/fa2-seqused for variable state tokens')
-        self.expert.refresh_context(
-            pl.attn.enc_K[:, :self.expert.context_capacity],
-            pl.attn.enc_V[:, :self.expert.context_capacity], prefix)
+        context_diagnostic = self._refresh_context_for_prefix(prefix)
+        request.setdefault('rtc_guidance', {}).update(context_diagnostic)
 
         expected = (self.horizon - executed, 32)
         if tuple(previous_raw.shape) != expected:
@@ -127,6 +153,7 @@ class RTCGuidanceAdapter:
             if not request['rtc_reference_audit']['passed']:
                 raise RuntimeError(f'RTC paper-reference mismatch: {request["rtc_reference_audit"]}')
             self._reference_audited = True
+            self._audited_prefixes.add(prefix)
             del reference
             torch.cuda.empty_cache()
             self.graph = CapturedRtcChunk(self.expert.step_delta, noise,
