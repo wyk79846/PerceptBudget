@@ -35,7 +35,8 @@ def spatial_screen(config, args):
         old = json.loads((args.resume_from/'summary.json').read_text())
         for item in old['tasks']:
             if item.get('status') == 'completed':
-                reused.append({**item, 'source_task_dir': str(args.resume_from/'tasks'/f"task{item['task_id']:02d}")})
+                reused.append({**item, 'source_task_dir': item.get('source_task_dir') or
+                               str(args.resume_from/'tasks'/f"task{item['task_id']:02d}")})
         config['resume_source'] = str(args.resume_from)
     run = create_run(config, 'M1', f'rtc-spatial-n5-q{args.q}-d5' + ('-state' if args.state else ''), repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
