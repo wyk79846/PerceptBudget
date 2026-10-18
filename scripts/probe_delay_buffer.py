@@ -308,6 +308,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     base._seed_process(7, np, torch)
     period = 1 / hz
     queue, requests, commits, rows, frames, raw_chunks = {}, [], [], [], [], []
+    if config.get('disk_backed_frames'):
+        from perceptbudget.trace_frames import DiskFrames
+        frames = DiskFrames(run_dir / f'q{q}{artifact_tag}_frames_spool.npy', task['max_steps']+1, np)
     future = None
     previous_request_step = 0
     previous_commit_step = 0

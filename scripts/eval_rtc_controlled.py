@@ -123,7 +123,8 @@ def main():
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
                   rtc_attention_backend=args.attention_backend,
                   rtc_deterministic_attention=args.deterministic_attention,
-                  release_rtc_graph_before_artifacts=args.rtc_only and args.state)
+                  release_rtc_graph_before_artifacts=args.rtc_only and args.state,
+                  disk_backed_frames=args.rtc_only and args.state)
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -143,6 +144,9 @@ def main():
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
+        frame_source = run/'source/perceptbudget/trace_frames.py'
+        frame_source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT/'perceptbudget/trace_frames.py', frame_source)
         os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
         if args.deterministic_attention:
             os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
