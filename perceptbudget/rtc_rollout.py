@@ -93,7 +93,13 @@ class RTCGuidanceAdapter:
         torch.cuda.synchronize()
 
         if self.audit_reference and self.guidance_enabled and not self._reference_audited:
+            import gc
             from perceptbudget.rtc_guidance import paper_reference
+            from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
+            # CUDA graph's private pool must not coexist with a full eager
+            # backward workspace on a 16 GiB shared-memory device.
+            self.graph = None
+            gc.collect()
             torch.cuda.empty_cache()
             reference, ref_norms = paper_reference(
                 self.expert.step_delta, noise, torch.as_tensor(previous_raw, device=device),
@@ -110,6 +116,8 @@ class RTCGuidanceAdapter:
             self._reference_audited = True
             del reference
             torch.cuda.empty_cache()
+            self.graph = CapturedRtcChunk(self.expert.step_delta, noise,
+                                          num_steps=self.num_steps)
 
         raw_actions = raw.cpu().numpy().astype(np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, self.pipe.norm_stats)[:, :7]

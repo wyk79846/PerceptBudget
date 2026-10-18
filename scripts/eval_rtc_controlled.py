@@ -6,6 +6,7 @@ Both conditions use the identical differentiable expert and graph, differing onl
 in whether the RTC mask is enabled. No weight updates or FlashRT source changes.
 """
 import fcntl
+import argparse
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,9 @@ from scripts import probe_delay_buffer as probe
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
+    args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=10, state_enabled=False, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
@@ -57,7 +61,8 @@ def main():
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=10,
                                          attention_backend='math', audit_reference=True)
-            for name, guided in (('unguided', False), ('rtc', True)):
+            conditions = [('rtc', True)] if args.rtc_only else [('unguided', False), ('rtc', True)]
+            for name, guided in conditions:
                 adapter.guidance_enabled = guided
                 directory = run / name
                 directory.mkdir()
@@ -88,10 +93,11 @@ def main():
                 result['conditions'][name] = episode
                 base._write_json_atomic(run / 'summary.json', result)
                 print(name + ' result=' + episode['status'], flush=True)
-            a, b = result['conditions']['unguided'], result['conditions']['rtc']
-            assert a['initial_sim_state_sha256'] == b['initial_sim_state_sha256']
-            assert a['initial_frames_sha256'] == b['initial_frames_sha256']
-            result['initial_conditions_match'] = True
+            if not args.rtc_only:
+                a, b = result['conditions']['unguided'], result['conditions']['rtc']
+                assert a['initial_sim_state_sha256'] == b['initial_sim_state_sha256']
+                assert a['initial_frames_sha256'] == b['initial_frames_sha256']
+                result['initial_conditions_match'] = True
             result['status'] = 'completed'
         finally:
             base._write_json_atomic(run / 'summary.json', result)
