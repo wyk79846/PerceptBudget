@@ -11,7 +11,7 @@ import time
 class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
-                 attention_backend='math', guidance_enabled=True):
+                 attention_backend='math', guidance_enabled=True, audit_reference=False):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -24,6 +24,8 @@ class RTCGuidanceAdapter:
         self.latency_estimate_seconds = float(latency_prior_seconds)
         self.attention_backend = attention_backend
         self.guidance_enabled = bool(guidance_enabled)
+        self.audit_reference = bool(audit_reference)
+        self._reference_audited = False
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
         self.expert = DifferentiableExpert(
@@ -35,6 +37,7 @@ class RTCGuidanceAdapter:
         self.graph = CapturedRtcChunk(self.expert.step_delta, sample,
                                       num_steps=self.num_steps)
         torch.cuda.synchronize()
+
         self.capture_seconds = time.monotonic() - capture_started
 
     def estimate_delay_steps(self, control_period_seconds):
@@ -88,6 +91,22 @@ class RTCGuidanceAdapter:
         vjp_norms = vjp_norms.detach().clone()
         error_norms = error_norms.detach().clone()
         torch.cuda.synchronize()
+
+        if self.audit_reference and self.guidance_enabled and not self._reference_audited:
+            from perceptbudget.rtc_guidance import paper_reference
+            reference, ref_norms = paper_reference(
+                self.expert.step_delta, noise, torch.as_tensor(previous_raw, device=device),
+                delay=delay, executed=executed, num_steps=self.num_steps)
+            difference = float((raw-reference).abs().max())
+            norm_difference = float((vjp_norms-torch.tensor(ref_norms, device=device)).abs().max())
+            request['rtc_reference_audit'] = {
+                'raw_max_absolute_error': difference,
+                'per_step_vjp_norm_max_error': norm_difference,
+                'passed': difference < 1e-4 and norm_difference < 1e-4,
+                'reference': 'independent decreasing-time equations and functional VJP'}
+            if not request['rtc_reference_audit']['passed']:
+                raise RuntimeError(f'RTC paper-reference mismatch: {request["rtc_reference_audit"]}')
+            self._reference_audited = True
 
         raw_actions = raw.cpu().numpy().astype(np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, self.pipe.norm_stats)[:, :7]

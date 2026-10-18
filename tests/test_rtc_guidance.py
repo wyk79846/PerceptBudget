@@ -4,6 +4,20 @@ from perceptbudget.rtc_guidance import guidance_scale, soft_mask
 
 
 class RTCGuidanceTest(unittest.TestCase):
+    def test_independent_paper_reference_matches_full_jacobian(self):
+        import torch
+        from perceptbudget.rtc_guidance import guided_sample, paper_reference
+        torch.manual_seed(17)
+        noise = torch.randn(20, 32)
+        previous = torch.randn(10, 32)
+        # Cross-row coupling ensures this checks a real VJP, not just identity.
+        def step(x, k):
+            return (-.3*x+.1*x.roll(1, 0)+.01*k)/10
+        a, records = guided_sample(step, noise, previous, delay=5, executed=10)
+        b, norms = paper_reference(step, noise, previous, delay=5, executed=10)
+        torch.testing.assert_close(a, b, atol=1e-6, rtol=1e-6)
+        torch.testing.assert_close(torch.tensor(norms), torch.tensor([r['vjp_norm'] for r in records]))
+
     def test_paper_mask_three_regions(self):
         w = soft_mask(20, 7, 8)
         self.assertEqual(w[:7], [1.]*7)

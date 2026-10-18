@@ -56,7 +56,7 @@ def main():
             base._infer_actions(model, base._make_snapshot(obs, stats, False),
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=10,
-                                         attention_backend='math')
+                                         attention_backend='math', audit_reference=True)
             for name, guided in (('unguided', False), ('rtc', True)):
                 adapter.guidance_enabled = guided
                 directory = run / name

@@ -63,3 +63,39 @@ def guided_sample(step_delta, noise, previous, *, delay, executed, num_steps=10,
                             'weighted_error_norm': float(error.norm())})
         x = next_x.detach()
     return x, diagnostics
+
+
+def paper_reference(step_delta, noise, previous, *, delay, executed, num_steps=10, beta=5.):
+    """Independent, slow Eq.2-5 reference using functional VJP.
+
+    Express the solver in the native decreasing-time convention (t=1-tau),
+    undo the frontend's folded Euler scale, and avoid the production helpers.
+    Intended as a correctness oracle, not an inference backend.
+    """
+    import torch
+    h = noise.shape[0]
+    if not 0 <= delay <= executed <= h-delay or previous.shape != (h-executed, 32):
+        raise ValueError('invalid RTC overlap')
+    target = torch.zeros_like(noise, dtype=torch.float32)
+    target[:h-executed] = previous.detach().float()
+    i = torch.arange(h, device=noise.device, dtype=torch.float32)
+    c = (h-executed-i)/(h-executed-delay+1)
+    weight = torch.where(i < delay, torch.ones_like(i),
+                        torch.where(i < h-executed, c*torch.expm1(c)/(math.e-1),
+                                    torch.zeros_like(i)))[:, None]
+    x = noise.detach().float()
+    records = []
+    for k in range(num_steps):
+        t = 1-k/num_steps
+        def clean(a):
+            velocity_native = -num_steps*step_delta(a, k).float()
+            return a-t*velocity_native
+        with torch.enable_grad():
+            estimate = clean(x)
+            residual = ((target-estimate)*weight).detach()
+            _, g = torch.autograd.functional.vjp(clean, x, v=residual)
+            coeff = beta if k == 0 else min(beta, (t*t+(1-t)**2)/(t*(1-t)))
+            delta = step_delta(x, k).float()
+            x = (x+delta+coeff/num_steps*g).detach()
+        records.append(float(g.norm()))
+    return x, records
