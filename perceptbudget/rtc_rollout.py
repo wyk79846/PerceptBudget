@@ -12,7 +12,7 @@ class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
                  attention_backend='math', guidance_enabled=True, audit_reference=False,
-                 reference_backend=False):
+                 reference_backend=False, eager_backend=False):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -29,6 +29,7 @@ class RTCGuidanceAdapter:
         self._reference_audited = False
         self._audited_prefixes = set()
         self.reference_backend = bool(reference_backend)
+        self.eager_backend = bool(eager_backend)
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
         self.expert = DifferentiableExpert(
@@ -37,7 +38,7 @@ class RTCGuidanceAdapter:
             self.pipe, attention_backend=attention_backend).snapshot_context(
                 fixed_prefix_capacity=attention_backend != 'flash')
         capture_started = time.monotonic()
-        self.graph = (None if self.reference_backend else CapturedRtcChunk(
+        self.graph = (None if self.reference_backend or self.eager_backend else CapturedRtcChunk(
             self.expert.step_delta, sample, num_steps=self.num_steps))
         torch.cuda.synchronize()
 
@@ -75,7 +76,7 @@ class RTCGuidanceAdapter:
             self.expert.snapshot_context(fixed_prefix_capacity=False)
             if self.expert.context_capacity != prefix:
                 raise RuntimeError('new RTC context did not use the actual state prompt length')
-            if not self.reference_backend:
+            if not self.reference_backend and not self.eager_backend:
                 sample = self.torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                                           dtype=self.torch.float32)
                 self.graph = CapturedRtcChunk(self.expert.step_delta, sample, num_steps=self.num_steps)
@@ -140,6 +141,15 @@ class RTCGuidanceAdapter:
                 delay=delay, executed=executed, num_steps=self.num_steps)
             vjp_norms = torch.tensor(norms, device=device)
             error_norms = torch.empty(0, device=device)
+        elif self.eager_backend:
+            from perceptbudget.rtc_guidance import guided_sample
+            if not self.guidance_enabled:
+                raise ValueError('eager validation path requires RTC guidance')
+            raw, records = guided_sample(
+                self.expert.step_delta, noise, torch.as_tensor(previous_raw, device=device),
+                delay=delay, executed=executed, num_steps=self.num_steps)
+            vjp_norms = torch.tensor([r['vjp_norm'] for r in records], device=device)
+            error_norms = torch.tensor([r['weighted_error_norm'] for r in records], device=device)
         else:
             raw, vjp_norms, error_norms = self.graph.replay(
                 noise, target, mask, beta=5.)
@@ -173,8 +183,9 @@ class RTCGuidanceAdapter:
             self._audited_prefixes.add(prefix)
             del reference
             torch.cuda.empty_cache()
-            self.graph = CapturedRtcChunk(self.expert.step_delta, noise,
-                                          num_steps=self.num_steps)
+            if not self.eager_backend:
+                self.graph = CapturedRtcChunk(self.expert.step_delta, noise,
+                                              num_steps=self.num_steps)
 
         raw_actions = raw.cpu().numpy().astype(np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, self.pipe.norm_stats)[:, :7]
@@ -185,7 +196,8 @@ class RTCGuidanceAdapter:
             'old_target_shape': list(previous_raw.shape),
             'beta': 5.0,
             'guidance_enabled': self.guidance_enabled,
-            'solver_backend': 'paper_reference_eager' if self.reference_backend else 'captured_graph',
+            'solver_backend': ('paper_reference_eager' if self.reference_backend else
+                               'eager_single_forward' if self.eager_backend else 'captured_graph'),
             'attention_backend': self.attention_backend,
             'vjp_norms': vjp_norms.cpu().tolist(),
             'weighted_error_norms': error_norms.cpu().tolist(),

@@ -1,5 +1,7 @@
 # 协作规则
 
+- 磁盘帧补测task4仍在164步后触发内存保护，不能归因于保存期或宣布内存已修复。获用户“继续”授权后，同state测试可选--eager-rtc：不创建RTC CUDA图，沿用同一确定性Flash SDPA及已核对RTC公式，每步仅一次前向+VJP。续测4–9，前4项保留原图版本有效结果；resume摘要显式标注prior/current solver backend，不能将混合执行结果当作全图快版性能或同质完整性能基准。先验证task4数值和内存，失败立即停，不关闭768MiB保护。
+
 - 最新state续测task0–3均有效成功；task4在第219步后、压缩前触发739.5MiB保护，说明只在任务后释放图不足。state单回合改用磁盘映射保存原始帧，定期flush/回收映射页，npz保留相同像素/格式且不再将整段帧复制叠入RAM；不改推理或控制。新run通过--resume-from复用前4个有效记录、续测4–9，旧task4无效尝试保留，768MiB保护不变。
 
 - 最新state批次在task1完整220步后、结果落盘前触发内存保护。修正只在executor结束后、CPU帧数组压缩之前释放已无用途的RTC CUDA图，记录释放前后MemAvailable/torch allocated/reserved，保留768MiB保护。补测用--resume-from旧批次，仅复用有效task0成功，旧task1无效尝试保留；新run明确记录source_task_dir与版本修订，续测task1–9，不改变推理/动作参数。

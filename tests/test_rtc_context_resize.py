@@ -33,6 +33,7 @@ class ContextResizeTest(unittest.TestCase):
         adapter.graph = object()
         adapter.horizon, adapter.num_steps = 20, 5
         adapter.reference_backend = False
+        adapter.eager_backend = False
         adapter._audited_prefixes = set()
         adapter._reference_audited = True
         return adapter

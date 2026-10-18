@@ -44,7 +44,9 @@ def spatial_screen(config, args):
                'note': 'fixed five simulated delay steps; not real-time async'}
     if args.resume_from:
         summary.update(resume_source=str(args.resume_from), reused_task_ids=[r['task_id'] for r in reused],
-                       amendment='Only post-episode graph workspace release changed; completed source task preserved, invalid attempt excluded.')
+                       prior_solver_backend=previous_config.get('rtc_solver_backend'),
+                       current_solver_backend=config['rtc_solver_backend'],
+                       amendment='Completed source tasks preserved; invalid attempts excluded. Recording/workspace/solver execution changes are explicit in config and source; RTC equations, attention backend and action timing unchanged.')
     def save():
         valid = [r for r in summary['tasks'] if r.get('status') == 'completed']
         summary['valid_tasks'] = len(valid)
@@ -75,6 +77,8 @@ def spatial_screen(config, args):
             command.append('--deterministic-attention')
         if args.state:
             command.append('--state')
+        if args.eager_rtc:
+            command.append('--eager-rtc')
         print(f'task={task_id} start', flush=True)
         with (directory/'worker.log').open('w') as log:
             completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -101,6 +105,7 @@ def main():
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
     parser.add_argument('--state', action='store_true', help='Enable normalized robot state in the FlashRT prompt')
+    parser.add_argument('--eager-rtc', action='store_true', help='Validate same RTC equations without CUDA graph workspace/capture')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
@@ -113,6 +118,8 @@ def main():
         parser.error('--resume-from is only valid for a screen parent')
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
+    if args.eager_rtc and (args.paper_reference or not args.rtc_only):
+        parser.error('--eager-rtc requires --rtc-only and cannot combine with --paper-reference')
     if args.spatial_screen and (args.worker_run or not args.rtc_only or args.suite != 'libero_spatial'
                                or args.q not in (5, 8) or args.denoising_steps != 5 or args.paper_reference):
         parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 5/8 --denoising-steps 5')
@@ -121,7 +128,8 @@ def main():
     config.update(H=20, N=args.denoising_steps, state_enabled=args.state, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
                   candidate_q=[args.q], pending_arm_gain=1.0,
-                  rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
+                  rtc_solver_backend=('paper_reference_eager' if args.paper_reference else
+                                      'eager_single_forward' if args.eager_rtc else 'captured_graph'),
                   rtc_attention_backend=args.attention_backend,
                   rtc_deterministic_attention=args.deterministic_attention,
                   release_rtc_graph_before_artifacts=args.rtc_only and args.state,
@@ -174,7 +182,7 @@ def main():
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=args.denoising_steps,
                                          attention_backend=args.attention_backend, audit_reference=True,
-                                         reference_backend=args.paper_reference)
+                                         reference_backend=args.paper_reference, eager_backend=args.eager_rtc)
             conditions = [('rtc', True)] if args.rtc_only else [('unguided', False), ('rtc', True)]
             for name, guided in conditions:
                 adapter.guidance_enabled = guided
