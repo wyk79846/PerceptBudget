@@ -27,11 +27,12 @@ def main():
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
+    parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     args = parser.parse_args()
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
     config = load_config(repo_root=ROOT)
-    config.update(H=20, N=10, state_enabled=False, controlled_delay_steps=5,
+    config.update(H=20, N=args.denoising_steps, state_enabled=False, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
                   candidate_q=[10], pending_arm_gain=1.0,
                   rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph',
@@ -71,7 +72,7 @@ def main():
             obs, _ = base._prepare_env_episode(env, task, np)
             base._infer_actions(model, base._make_snapshot(obs, stats, False),
                                 task['instruction'], 20, {})
-            adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=10,
+            adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=args.denoising_steps,
                                          attention_backend=args.attention_backend, audit_reference=True,
                                          reference_backend=args.paper_reference)
             conditions = [('rtc', True)] if args.rtc_only else [('unguided', False), ('rtc', True)]

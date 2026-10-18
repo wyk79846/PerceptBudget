@@ -1,5 +1,7 @@
 # 协作规则
 
+- 当前授权：同一LIBERO-10 task0仅将RTC去噪N10改N5，入口eval_rtc_controlled.py --rtc-only --attention-backend flash --deterministic-attention --denoising-steps 5；H20/q10/d5/state关闭/seed7/init0不变，单次受控任务及实际请求计时，不称真实20Hz异步。全局N仍10，不改FlashRT或模型权重，不训练，不使用子agent。
+
 - 2026-10-18 RTC优化路径修正复测完成：FlashRT c678efe修正图内速度重建顺序，bea4db9补验证说明。math与确定性Flash SDPA各自同输入图/参考raw最大差0；后者5次重放差0，专家346.92ms、context+图605.29ms，任务内完整请求稳态632.16ms。`eval_rtc_controlled.py --rtc-only --attention-backend flash --deterministic-attention` 同task0/d5/q10在353步成功，断供0、来源审计通过；math本轮仍520步超时（bootstrap相对历史成功raw差.0078125）。默认非确定性Flash SDPA未过严格核对，不省略确定性选项宣称已验证。不称实际20Hz部署或全局成功率恢复。报告 M1/RTC_优化路径修正与复测_20261018.md；290项全套测试通过（3默认skip），15项RTC专项设备侧全部通过。不再自动扩测。
 
 - 2026-10-18 用户授权修正优化RTC路径：保留参考版速度重建/反传顺序、统一FP32设备软掩码与系数舍入；先同输入数值gate，再测Flash SDPA耗时与同一受控任务。只改可选RTC，不改普通推理/SEAM/模型权重/全局默认后端，不训练，不使用子agent。Flash SDPA固定有效prompt长度（state关闭），不静默忽略padding。
