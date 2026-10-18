@@ -109,13 +109,22 @@ def main():
             saved_old = json.loads((OLD_RUN/'rtc/q10_requests.json').read_text())
             saved_new = json.loads((NEW_RUN/'rtc/q10_requests.json').read_text())
             result['bootstrap_max_difference'] = float(np.max(np.abs(old.cpu().numpy()-np.asarray(saved_old[0]['actions_raw']))))
-            if result['bootstrap_max_difference'] != 0:
-                raise RuntimeError('bootstrap does not match saved episode')
+            # Native autotuning can change rounding across model processes.
+            # Replay the archived executed commands and raw target, rather
+            # than letting that unrelated variation alter the test scene.
+            actions = np.asarray(saved_old[0]['actions'], dtype=np.float32)
+            old = torch.tensor(saved_old[0]['actions_raw'], device='cuda', dtype=torch.float32)
             for action in actions[:10]:
                 obs, _, _, _ = env.step(action)
             result['request_state_max_difference'] = float(np.max(np.abs(raw_libero_state(obs)-np.asarray(saved_old[1]['observation_raw_state']))))
             if result['request_state_max_difference'] != 0:
                 raise RuntimeError('first guided observation does not match saved episode')
+            with np.load(OLD_RUN/'rtc/q10_frames.npz') as archive:
+                saved_frame = archive['frames'][10]
+            actual_frame = np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1)
+            result['request_frames_max_difference'] = int(np.max(np.abs(actual_frame.astype(int)-saved_frame.astype(int))))
+            if result['request_frames_max_difference']:
+                raise RuntimeError('first guided images do not match saved episode')
             snapshot = base._make_snapshot(obs, stats, False)
             with torch.cuda.stream(pipe._graph_torch_stream):
                 model.set_prompt(task['instruction'], state=None)
