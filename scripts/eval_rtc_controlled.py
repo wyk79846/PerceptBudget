@@ -24,11 +24,15 @@ from scripts import probe_delay_buffer as probe
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
+    parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     args = parser.parse_args()
+    if args.paper_reference and not args.rtc_only:
+        parser.error('--paper-reference currently requires --rtc-only')
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=10, state_enabled=False, controlled_delay_steps=5,
                   execution_mode='controlled_simulation_delay_not_real_time',
-                  candidate_q=[10], pending_arm_gain=1.0)
+                  candidate_q=[10], pending_arm_gain=1.0,
+                  rtc_solver_backend='paper_reference_eager' if args.paper_reference else 'captured_graph')
     config['screen'].update(seed=7, init_state_index=0)
     with (Path(config['output_root']) / '.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # Queue behind the already running SEAM test.
@@ -60,7 +64,8 @@ def main():
             base._infer_actions(model, base._make_snapshot(obs, stats, False),
                                 task['instruction'], 20, {})
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=10,
-                                         attention_backend='math', audit_reference=True)
+                                         attention_backend='math', audit_reference=True,
+                                         reference_backend=args.paper_reference)
             conditions = [('rtc', True)] if args.rtc_only else [('unguided', False), ('rtc', True)]
             for name, guided in conditions:
                 adapter.guidance_enabled = guided
@@ -99,6 +104,9 @@ def main():
                 assert a['initial_frames_sha256'] == b['initial_frames_sha256']
                 result['initial_conditions_match'] = True
             result['status'] = 'completed'
+        except BaseException as exc:
+            result.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
+            raise
         finally:
             base._write_json_atomic(run / 'summary.json', result)
             base._save_run_status(run, result['status'])

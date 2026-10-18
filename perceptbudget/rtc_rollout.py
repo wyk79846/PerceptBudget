@@ -11,7 +11,8 @@ import time
 class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
-                 attention_backend='math', guidance_enabled=True, audit_reference=False):
+                 attention_backend='math', guidance_enabled=True, audit_reference=False,
+                 reference_backend=False):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -26,6 +27,7 @@ class RTCGuidanceAdapter:
         self.guidance_enabled = bool(guidance_enabled)
         self.audit_reference = bool(audit_reference)
         self._reference_audited = False
+        self.reference_backend = bool(reference_backend)
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
         self.expert = DifferentiableExpert(
@@ -34,8 +36,8 @@ class RTCGuidanceAdapter:
             self.pipe, attention_backend=attention_backend).snapshot_context(
                 fixed_prefix_capacity=True)
         capture_started = time.monotonic()
-        self.graph = CapturedRtcChunk(self.expert.step_delta, sample,
-                                      num_steps=self.num_steps)
+        self.graph = (None if self.reference_backend else CapturedRtcChunk(
+            self.expert.step_delta, sample, num_steps=self.num_steps))
         torch.cuda.synchronize()
 
         self.capture_seconds = time.monotonic() - capture_started
@@ -85,14 +87,24 @@ class RTCGuidanceAdapter:
                             device=device, dtype=torch.float32)[:, None]
         if not self.guidance_enabled:
             mask.zero_()
-        raw, vjp_norms, error_norms = self.graph.replay(
-            noise, target, mask, beta=5.)
+        if self.reference_backend:
+            if not self.guidance_enabled:
+                raise ValueError('paper-reference backend requires guidance')
+            from perceptbudget.rtc_guidance import paper_reference
+            raw, norms = paper_reference(
+                self.expert.step_delta, noise, torch.as_tensor(previous_raw, device=device),
+                delay=delay, executed=executed, num_steps=self.num_steps)
+            vjp_norms = torch.tensor(norms, device=device)
+            error_norms = torch.empty(0, device=device)
+        else:
+            raw, vjp_norms, error_norms = self.graph.replay(
+                noise, target, mask, beta=5.)
         raw = raw.detach().clone()
         vjp_norms = vjp_norms.detach().clone()
         error_norms = error_norms.detach().clone()
         torch.cuda.synchronize()
 
-        if self.audit_reference and self.guidance_enabled and not self._reference_audited:
+        if self.audit_reference and not self.reference_backend and self.guidance_enabled and not self._reference_audited:
             import gc
             from perceptbudget.rtc_guidance import paper_reference
             from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
@@ -128,6 +140,7 @@ class RTCGuidanceAdapter:
             'old_target_shape': list(previous_raw.shape),
             'beta': 5.0,
             'guidance_enabled': self.guidance_enabled,
+            'solver_backend': 'paper_reference_eager' if self.reference_backend else 'captured_graph',
             'attention_backend': self.attention_backend,
             'vjp_norms': vjp_norms.cpu().tolist(),
             'weighted_error_norms': error_norms.cpu().tolist(),
