@@ -72,9 +72,13 @@ def compare(a, b, np):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--attention-backend', choices=('math', 'flash'), default='math')
+    parser.add_argument('--deterministic-attention', action='store_true')
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
-    config.update(H=20, N=10, state_enabled=False, rtc_attention_backend=args.attention_backend)
+    config.update(H=20, N=10, state_enabled=False, rtc_attention_backend=args.attention_backend,
+                  rtc_deterministic_attention=args.deterministic_attention)
+    if args.deterministic_attention:
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         root = create_run(config, 'M1', 'rtc-difference-isolation', repo_root=ROOT)
@@ -87,6 +91,8 @@ def main():
         os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl')
         base._patch_egl_cleanup()
         torch, _ = base._check_cuda_and_native(config)
+        if args.deterministic_attention:
+            torch.use_deterministic_algorithms(True)
         import numpy as np
         from perceptbudget.libero_input import load_libero_norm_stats, raw_libero_state
         from perceptbudget.rtc_expert import DifferentiableExpert
@@ -154,6 +160,9 @@ def main():
             graph = CapturedRtcChunk(expert.step_delta, noise, num_steps=10)
             captured = graph.replay(noise, target, mask_new)[0].detach().cpu().numpy().copy()
             torch.cuda.synchronize()
+            result['same_input_replay_max_differences'] = [float(np.max(np.abs(
+                graph.replay(noise, target, mask_new)[0].detach().cpu().numpy()-captured)))
+                for _ in range(5)]
             result['attention_backend'] = args.attention_backend
             result['expert_graph_timing'] = timed(torch, lambda: graph.replay(noise, target, mask_new))
             def fresh_context():
