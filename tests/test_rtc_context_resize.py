@@ -2,12 +2,26 @@
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 
 from perceptbudget.rtc_rollout import RTCGuidanceAdapter
 
 
 class ContextResizeTest(unittest.TestCase):
+    def test_release_drops_graph_and_records_memory_without_changing_context(self):
+        adapter = self.make_adapter()
+        expert = adapter.expert
+        adapter.torch.cuda.memory_allocated.side_effect = [100, 10]
+        adapter.torch.cuda.memory_reserved.side_effect = [200, 20]
+        with patch('builtins.open', mock_open(read_data='MemAvailable: 1024 kB\n')):
+            result = adapter.release_graph()
+        self.assertIsNone(adapter.graph)
+        self.assertIs(adapter.expert, expert)
+        self.assertEqual(result['before']['cuda_allocated_bytes'], 100)
+        self.assertEqual(result['after']['cuda_allocated_bytes'], 10)
+        adapter.torch.cuda.synchronize.assert_called_once()
+        adapter.torch.cuda.empty_cache.assert_called_once()
+
     def make_adapter(self):
         adapter = RTCGuidanceAdapter.__new__(RTCGuidanceAdapter)
         adapter.attention_backend = 'flash'

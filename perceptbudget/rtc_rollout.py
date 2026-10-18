@@ -47,8 +47,9 @@ class RTCGuidanceAdapter:
         """Drop inference-only workspaces before CPU trajectory compression."""
         import gc
         def memory():
-            available = next(int(line.split()[1])*1024 for line in
-                             open('/proc/meminfo') if line.startswith('MemAvailable:'))
+            with open('/proc/meminfo') as stream:
+                available = next(int(line.split()[1])*1024 for line in stream
+                                 if line.startswith('MemAvailable:'))
             return {'available_ram_bytes': available,
                     'cuda_allocated_bytes': self.torch.cuda.memory_allocated(),
                     'cuda_reserved_bytes': self.torch.cuda.memory_reserved()}
