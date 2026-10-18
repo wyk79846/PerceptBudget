@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,10 +103,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
-    parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
+    parser.add_argument('--attention-backend', choices=('math', 'flash', 'flash-varlen', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
     parser.add_argument('--state', action='store_true', help='Enable normalized robot state in the FlashRT prompt')
     parser.add_argument('--eager-rtc', action='store_true', help='Validate same RTC equations without CUDA graph workspace/capture')
+    parser.add_argument('--preflight-rtc', action='store_true', help='Validate and time RTC before the task; keep live task timing separate')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
@@ -120,6 +122,8 @@ def main():
         parser.error('--paper-reference currently requires --rtc-only')
     if args.eager_rtc and (args.paper_reference or not args.rtc_only):
         parser.error('--eager-rtc requires --rtc-only and cannot combine with --paper-reference')
+    if args.preflight_rtc and (not args.rtc_only or args.eager_rtc or args.paper_reference or args.spatial_screen):
+        parser.error('--preflight-rtc is for a single captured-RTC task')
     if args.spatial_screen and (args.worker_run or not args.rtc_only or args.suite != 'libero_spatial'
                                or args.q not in (5, 8) or args.denoising_steps != 5 or args.paper_reference):
         parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 5/8 --denoising-steps 5')
@@ -133,7 +137,8 @@ def main():
                   rtc_attention_backend=args.attention_backend,
                   rtc_deterministic_attention=args.deterministic_attention,
                   release_rtc_graph_before_artifacts=args.rtc_only and args.state,
-                  disk_backed_frames=args.rtc_only and args.state)
+                  disk_backed_frames=args.rtc_only and args.state,
+                  rtc_validation_before_task=args.preflight_rtc)
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -183,6 +188,26 @@ def main():
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=args.denoising_steps,
                                          attention_backend=args.attention_backend, audit_reference=True,
                                          reference_backend=args.paper_reference, eager_backend=args.eager_rtc)
+            result['initial_graph_capture_seconds'] = adapter.capture_seconds
+            if args.preflight_rtc:
+                from scripts.probe_rtc_step import timed
+                started = time.monotonic()
+                snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
+                previous = model._pipe._noise_out.float().cpu().numpy().copy()[args.q:]
+                check = {}
+                adapter.predict(snapshot, task['instruction'], previous,
+                                delay=5, executed=args.q, request=check)
+                if not check.get('rtc_reference_audit', {}).get('passed'):
+                    raise RuntimeError('preflight independent RTC reference gate did not pass')
+                result['preflight_reference_audit'] = check['rtc_reference_audit']
+                def inference():
+                    return adapter.predict(snapshot, task['instruction'], previous,
+                                           delay=5, executed=args.q, request={})
+                result['preflight_full_request_warm'] = timed(torch, inference)
+                result['preflight_expert_graph_warm'] = timed(torch, adapter.graph.graph.replay)
+                result['preflight_seconds'] = time.monotonic()-started
+                base._write_json_atomic(run/'summary.json', result)
+                print('preflight='+json.dumps({k: v for k, v in result.items() if k.startswith('preflight')}), flush=True)
             conditions = [('rtc', True)] if args.rtc_only else [('unguided', False), ('rtc', True)]
             for name, guided in conditions:
                 adapter.guidance_enabled = guided

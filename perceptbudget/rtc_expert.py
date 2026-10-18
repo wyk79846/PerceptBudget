@@ -25,6 +25,36 @@ from torch.nn import functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
+class _TorchVarlenGqaAttention(torch.autograd.Function):
+    """Torch FlashAttention forward/backward with device-side valid lengths.
+
+    Put action KV first, followed by the valid frozen context. Physical buffer
+    shapes remain fixed; cum_k excludes trailing padding without a custom mask.
+    Only first-order input VJP is required by RTC; weights remain frozen.
+    """
+    @staticmethod
+    def forward(ctx, q, action_k, action_v, context_k, context_v, cum_q, cum_k):
+        query = q.squeeze(0).transpose(0, 1).contiguous()
+        key = torch.cat((action_k, context_k), 0).contiguous()
+        value = torch.cat((action_v, context_v), 0).contiguous()
+        h, capacity = query.shape[0], key.shape[0]
+        out, lse, rng, unused, _ = torch.ops.aten._flash_attention_forward(
+            query, key, value, cum_q, cum_k, h, capacity, 0., False, False,
+            scale=query.shape[-1]**-.5)
+        ctx.save_for_backward(query, key, value, out, lse, cum_q, cum_k, rng, unused)
+        return out.transpose(0, 1).unsqueeze(0)
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        q, key, value, out, lse, cum_q, cum_k, rng, unused = ctx.saved_tensors
+        h = q.shape[0]
+        dq, dk, dv = torch.ops.aten._flash_attention_backward(
+            grad_out.squeeze(0).transpose(0, 1).contiguous(), q, key, value,
+            out, lse, cum_q, cum_k, h, key.shape[0], 0., False, rng, unused,
+            scale=q.shape[-1]**-.5)
+        return dq.transpose(0, 1).unsqueeze(0), dk[:h], dv[:h], None, None, None, None
+
+
 class _FlashRtSequsedGqaAttention(torch.autograd.Function):
     """FlashRT FA2 forward with an exact, query-side/action-side VJP.
 
@@ -182,8 +212,11 @@ class DifferentiableExpert:
             'math': SDPBackend.MATH,
             'flash': SDPBackend.FLASH_ATTENTION,
         }
-        if name not in backends and name != 'fa2-seqused':
-            raise ValueError("attention backend must be math, flash, or fa2-seqused")
+        if name not in backends and name not in ('fa2-seqused', 'flash-varlen'):
+            raise ValueError("attention backend must be math, flash, flash-varlen, or fa2-seqused")
+        if name == 'flash-varlen' and not all(hasattr(torch.ops.aten, op) for op in
+                                             ('_flash_attention_forward', '_flash_attention_backward')):
+            raise RuntimeError('installed Torch lacks varlen FlashAttention forward/backward')
         self.attention_backend_name = name
         self.attention_backend = backends.get(name)
         if name == 'fa2-seqused':
@@ -242,6 +275,8 @@ class DifferentiableExpert:
                 'value': values[:, :capacity].detach().clone(),
                 'seqused_k': torch.full(
                     (1,), prefix + h, device=self.device, dtype=torch.int32),
+                'cum_q': torch.tensor([0, h], device=self.device, dtype=torch.int32),
+                'cum_k': torch.tensor([0, prefix+h], device=self.device, dtype=torch.int32),
                 'rope': self._download_bf16('decoder_rope_weights', (h, 256)),
                 'attn': self._download_bf16('decoder_style_attn', (n, 18, h, 3072)),
                 'ffn': self._download_bf16('decoder_style_ffn', (n, 18, h, 3072)),
@@ -291,6 +326,7 @@ class DifferentiableExpert:
                 mask[..., :prefix] = True
                 mask[..., capacity:] = True
             self._context['seqused_k'].fill_(prefix + self.chunk_size)
+            self._context['cum_k'][1].fill_(prefix + self.chunk_size)
         self.prefix_length = prefix
 
     @staticmethod
@@ -357,7 +393,10 @@ class DifferentiableExpert:
             k = self._rope(qkv[:, 2048:2304].reshape(self.chunk_size, 1, 256), ctx['rope'])
             v = qkv[:, 2304:].reshape(self.chunk_size, 1, 256)
             q = q.transpose(0, 1).unsqueeze(0)
-            if self.attention_backend_name == 'fa2-seqused':
+            if self.attention_backend_name == 'flash-varlen':
+                attended = _TorchVarlenGqaAttention.apply(
+                    q, k, v, ctx['key'][i], ctx['value'][i], ctx['cum_q'], ctx['cum_k'])
+            elif self.attention_backend_name == 'fa2-seqused':
                 # The suffix is bidirectional; moving it before the context
                 # preserves the exact attention set while making valid keys a
                 # contiguous prefix for the device-side seqused mask.

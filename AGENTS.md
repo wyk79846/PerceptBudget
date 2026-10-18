@@ -1,5 +1,7 @@
 # 协作规则
 
+- 当前用户授权压缩带state RTC耗时：新增可选flash-varlen项目侧后端，用Torch已有FlashAttention变长前向/反向及GPU累计长度，让单一固定容量CUDA图排除padding、适配state有效长度，不改变RTC公式或checkpoint，不改FlashRT源码。先GPU小张量前向/VJP/同图变长重放验证，再真实模型独立参考gate及计时，最后仅同一个Spatial task0验证。N5/q5/d5/state/确定性保持，不冒充真实20Hz异步。preflight-rtc将一次性核查计时单列，任务计时不混入核查；报告仍需说明受控等待及后端数值可能不同。
+
 - 磁盘帧补测task4仍在164步后触发内存保护，不能归因于保存期或宣布内存已修复。获用户“继续”授权后，同state测试可选--eager-rtc：不创建RTC CUDA图，沿用同一确定性Flash SDPA及已核对RTC公式，每步仅一次前向+VJP。续测4–9，前4项保留原图版本有效结果；resume摘要显式标注prior/current solver backend，不能将混合执行结果当作全图快版性能或同质完整性能基准。先验证task4数值和内存，失败立即停，不关闭768MiB保护。
 
 - 最新state续测task0–3均有效成功；task4在第219步后、压缩前触发739.5MiB保护，说明只在任务后释放图不足。state单回合改用磁盘映射保存原始帧，定期flush/回收映射页，npz保留相同像素/格式且不再将整段帧复制叠入RAM；不改推理或控制。新run通过--resume-from复用前4个有效记录、续测4–9，旧task4无效尝试保留，768MiB保护不变。
