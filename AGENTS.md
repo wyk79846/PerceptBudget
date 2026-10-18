@@ -1,5 +1,7 @@
 # 协作规则
 
+- N5单任务已完成：run M1/20261018T055233.704749Z-rtc-controlled-d5-q10-86c85680，433步成功、断供0、来源审计及同后端参考核查通过（raw/VJP差0，norm长度5）。42次稳态完整请求median461.51ms/p95464.84/max469.54，较N10同口径632.16ms少27%。但N10成功353步，N5多用80控制步；不只凭推理快宣称动作效率更好。仍受控d5，不是真20Hz部署，不自动扩测。报告M1/RTC_五步去噪同任务测试_20261018.md。
+
 - 当前授权：同一LIBERO-10 task0仅将RTC去噪N10改N5，入口eval_rtc_controlled.py --rtc-only --attention-backend flash --deterministic-attention --denoising-steps 5；H20/q10/d5/state关闭/seed7/init0不变，单次受控任务及实际请求计时，不称真实20Hz异步。全局N仍10，不改FlashRT或模型权重，不训练，不使用子agent。
 
 - 2026-10-18 RTC优化路径修正复测完成：FlashRT c678efe修正图内速度重建顺序，bea4db9补验证说明。math与确定性Flash SDPA各自同输入图/参考raw最大差0；后者5次重放差0，专家346.92ms、context+图605.29ms，任务内完整请求稳态632.16ms。`eval_rtc_controlled.py --rtc-only --attention-backend flash --deterministic-attention` 同task0/d5/q10在353步成功，断供0、来源审计通过；math本轮仍520步超时（bootstrap相对历史成功raw差.0078125）。默认非确定性Flash SDPA未过严格核对，不省略确定性选项宣称已验证。不称实际20Hz部署或全局成功率恢复。报告 M1/RTC_优化路径修正与复测_20261018.md；290项全套测试通过（3默认skip），15项RTC专项设备侧全部通过。不再自动扩测。
