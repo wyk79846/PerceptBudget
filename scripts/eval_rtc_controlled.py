@@ -24,7 +24,7 @@ from scripts import probe_delay_buffer as probe
 
 def spatial_screen(config, args):
     """Sequential isolated task workers; durable results in one run folder."""
-    run = create_run(config, 'M1', 'rtc-spatial-n5-q8-d5', repo_root=ROOT)
+    run = create_run(config, 'M1', f'rtc-spatial-n5-q{args.q}-d5', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = {'status': 'running', 'expected_tasks': 10, 'tasks': [],
                'note': 'fixed five simulated delay steps; not real-time async'}
@@ -33,7 +33,7 @@ def spatial_screen(config, args):
         summary['valid_tasks'] = len(valid)
         summary['successes'] = sum(r['conditions']['rtc']['status'] == 'success' for r in valid)
         base._write_json_atomic(run/'summary.json', summary)
-        rows = ['# RTC Spatial 十任务，N5/q8/d5', '', summary['note'], '',
+        rows = [f'# RTC Spatial 十任务，N5/q{args.q}/d5', '', summary['note'], '',
                 f"状态：{summary['status']}；有效{len(valid)}/10；成功{summary['successes']}。", '',
                 '| task | 结果 | 步数 | 请求中位ms | 断供 |', '|---:|---|---:|---:|---:|']
         for item in summary['tasks']:
@@ -76,7 +76,7 @@ def main():
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'fa2-seqused'), default='math')
     parser.add_argument('--deterministic-attention', action='store_true')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
-    parser.add_argument('--q', type=int, choices=(8, 10), default=10)
+    parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--spatial-screen', action='store_true')
@@ -85,8 +85,8 @@ def main():
     if args.paper_reference and not args.rtc_only:
         parser.error('--paper-reference currently requires --rtc-only')
     if args.spatial_screen and (args.worker_run or not args.rtc_only or args.suite != 'libero_spatial'
-                               or args.q != 8 or args.denoising_steps != 5 or args.paper_reference):
-        parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 8 --denoising-steps 5')
+                               or args.q not in (5, 8) or args.denoising_steps != 5 or args.paper_reference):
+        parser.error('spatial screen requires --rtc-only --suite libero_spatial --q 5/8 --denoising-steps 5')
     config = (json.loads((args.worker_run/'run.json').read_text())['config_snapshot']
               if args.worker_run else load_config(repo_root=ROOT))
     config.update(H=20, N=args.denoising_steps, state_enabled=False, controlled_delay_steps=5,
