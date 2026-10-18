@@ -94,6 +94,7 @@ class RTCGuidanceAdapter:
 
         if self.audit_reference and self.guidance_enabled and not self._reference_audited:
             from perceptbudget.rtc_guidance import paper_reference
+            torch.cuda.empty_cache()
             reference, ref_norms = paper_reference(
                 self.expert.step_delta, noise, torch.as_tensor(previous_raw, device=device),
                 delay=delay, executed=executed, num_steps=self.num_steps)
@@ -107,6 +108,8 @@ class RTCGuidanceAdapter:
             if not request['rtc_reference_audit']['passed']:
                 raise RuntimeError(f'RTC paper-reference mismatch: {request["rtc_reference_audit"]}')
             self._reference_audited = True
+            del reference
+            torch.cuda.empty_cache()
 
         raw_actions = raw.cpu().numpy().astype(np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, self.pipe.norm_stats)[:, :7]

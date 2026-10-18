@@ -90,11 +90,15 @@ def paper_reference(step_delta, noise, previous, *, delay, executed, num_steps=1
         def clean(a):
             velocity_native = -num_steps*step_delta(a, k).float()
             return a-t*velocity_native
-        with torch.enable_grad():
+        # The residual is detached in Eq.2. Do not retain a second complete
+        # expert autograd graph just to construct it on shared-memory Jetson.
+        with torch.no_grad():
             estimate = clean(x)
             residual = ((target-estimate)*weight).detach()
+        with torch.enable_grad():
             _, g = torch.autograd.functional.vjp(clean, x, v=residual)
-            coeff = beta if k == 0 else min(beta, (t*t+(1-t)**2)/(t*(1-t)))
+        coeff = beta if k == 0 else min(beta, (t*t+(1-t)**2)/(t*(1-t)))
+        with torch.no_grad():
             delta = step_delta(x, k).float()
             x = (x+delta+coeff/num_steps*g).detach()
         records.append(float(g.norm()))
