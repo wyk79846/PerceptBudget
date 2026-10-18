@@ -1,5 +1,7 @@
 # 协作规则
 
+- 当前另获授权：SEAM结束后做 RTC 单任务受控延迟对照，不追求实时速度。入口 scripts/eval_rtc_controlled.py，LIBERO-10 task0，各一次无引导/真实VJP引导，同一math专家、H20/N10/q10/d5/state关闭。仿真执行5步后等待结果、禁止提前提交；延迟不再取墙钟估计，不称实时异步成功率。失败后需核查论文2506.07339v2，单次失败本身不是实现错误的证据。
+
 - 2026-10-18 用户要求不再使用子agent，后续由主agent直接实施与核查。
 - 当前授权：仅给正式异步 SEAM 4/10 配置开启 state，重测相同 LIBERO-10 十任务各一次。H20/N10/K10/M10/λ0.1、seed7/init0/520步与衔接不变；使用 eval_seam_async.py --state，不改 FlashRT 或全局默认配置，不训练。
 

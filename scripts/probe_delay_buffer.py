@@ -376,7 +376,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             periods = [b['action_end_monotonic'] - a['action_end_monotonic']
                        for a, b in zip(recent_rows, recent_rows[1:])]
             period_estimate = float(np.median(periods)) if periods else period
-            delay = rtc_adapter.estimate_delay_steps(period_estimate)
+            delay = config.get('controlled_delay_steps', rtc_adapter.estimate_delay_steps(period_estimate))
             if not (delay <= executed <= config['H'] - delay):
                 raise RuntimeError(f'RTC infeasible before inference: d={delay}, '
                                    f's={executed}, H={config["H"]}')
@@ -457,6 +457,14 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
 
     def harvest(step, completed_row=None):
         nonlocal future, current_request, previous_commit_step, active_pause
+        controlled = config.get('controlled_delay_steps')
+        if future is not None and controlled is not None and current_request['observation_step'] > 0:
+            target_step = current_request['observation_step'] + controlled
+            if step < target_step:
+                return
+            wait_started = time.monotonic()
+            future.result()  # Controlled simulator experiment, NOT real-time execution.
+            current_request['controlled_wait_seconds'] = time.monotonic() - wait_started
         if future is None or not future.done():
             return
         ready_actions = future.result()

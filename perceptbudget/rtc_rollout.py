@@ -11,7 +11,7 @@ import time
 class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
-                 attention_backend='math'):
+                 attention_backend='math', guidance_enabled=True):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -23,6 +23,7 @@ class RTCGuidanceAdapter:
         self.num_steps = int(num_steps)
         self.latency_estimate_seconds = float(latency_prior_seconds)
         self.attention_backend = attention_backend
+        self.guidance_enabled = bool(guidance_enabled)
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
         self.expert = DifferentiableExpert(
@@ -79,6 +80,8 @@ class RTCGuidanceAdapter:
             np.asarray(previous_raw, dtype=np.float32), device=device))
         mask = torch.tensor(soft_mask(self.horizon, delay, executed),
                             device=device, dtype=torch.float32)[:, None]
+        if not self.guidance_enabled:
+            mask.zero_()
         raw, vjp_norms, error_norms = self.graph.replay(
             noise, target, mask, beta=5.)
         raw = raw.detach().clone()
@@ -94,6 +97,7 @@ class RTCGuidanceAdapter:
             'executed_steps': int(executed),
             'old_target_shape': list(previous_raw.shape),
             'beta': 5.0,
+            'guidance_enabled': self.guidance_enabled,
             'attention_backend': self.attention_backend,
             'vjp_norms': vjp_norms.cpu().tolist(),
             'weighted_error_norms': error_norms.cpu().tolist(),
