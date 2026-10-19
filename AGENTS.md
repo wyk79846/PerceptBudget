@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户批准先正确性对照不批测成功率。新增audit_env_replay.py，同原task0的176步动作执行原/优化/原：da5a45be两次原state逐位同、176帧同；优化state最大差4.5633/control2.7791、仅59帧同，零基59开始>1e-6，三次均成功。确定forward复用不满足运动轨迹等价，仍默认关闭，不能用其2/10评价RTC；无优化4/10仍需查。作者仓库只读下载任务产出/rtc-author-reference，9296f31d，JAX无安装；audit_rtc_author_mask执行作者原函数AST+NumPy1557例差4.44e-16，仅Eq5。官方π0.5专家/VJP独立验证尚未完成，不称已复现、不自动批测。详见RTC_CORRECTNESS_AUDIT.md。
+
 - 2026-10-19 仿真优化版RTC十项已完成：父run=M1/20261019T065322.242512Z-rtc-async-ten-envopt-2e3da771；有效10/10，2/10成功(task5/7)，其余220步超时，全0断供/无异常退出。task5 136步8.673s、task7 133步8.581s，成功平均8.627s。控制16.07–18.31Hz；257次请求合并推理中位425.20ms。skip50725=2029步×25，来源2029步逐位核查、gain1、实际裁切索引与actualdelay一致；历史队列257次核查通过；实际延迟248项中同124/高估117/低估7，不能把生成约束偏差称执行跳错。旧无优化十任务4/10；尚无移动/接触的仿真优化等价、跨启动选核控制，不把下降单归Hz，不替换默认，不自动扩测。结果summary.md/audit.md；运行中记载已由本条完成状态取代。
 
 - 2026-10-19 用户“再测十次”按刚才17.7Hz仿真优化版理解并已说明：388529d扩展eval_rtc_async_screen.py --reuse-control-forward，Spatial0–9全新各一次，不复用旧数据；H20/N5/state/80/s_min5/队列max10不变，每项skip>0与模式隔离强制审计，记录延迟估计偏差数。服务perceptbudget-rtc-envopt-ten-20261019；日志/tmp/perceptbudget-rtc-envopt-ten-20261019.log；父run=M1/20261019T065322.242512Z-rtc-async-ten-envopt-2e3da771。guarded_run保护不变，异常停批次，可resume。运行中不改推理/控制代码，不预报最终成功率，不冒充稳定20Hz，不自动替换默认。
