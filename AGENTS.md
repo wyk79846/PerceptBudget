@@ -1,5 +1,7 @@
 # 协作规则
 
+- 首次分歧已做同观测端到端回放04b20286：第20帧腕部单个像素RGB114→115（非3个像素），两张画面各自原始eager/普通图/缓存图raw与历史raw均逐值同；五步缓存图VJP等差0。相同观测有效KV及重复输出均逐值同。首次action25差.0008505，state26分歧；故本次首次预测分歧由画面输入差异触发，不是时间缓存算错。渲染端为何跨run差1级未定位，不声称具体GPU舍入因果。初轮b3008cca对全KV容量含未写尾部测repeat=false不代表有效KV不确定；v2只克隆有效范围且同步拷贝，repeat=true。只新增离线诊断script，不改推理/FlashRT/任务设置。详见RTC_SOURCE_ACCELERATION.md“首次差异原因复查”。
+
 - 最新保真加速：可选--source-packed-conditioning需source-step bank，39个原始FP32纯时间层打包预计算，图外逐step上传live buffer（图内禁止覆盖step0）；慢fallback每步也显式select。da9c81a0三固定KV/噪声case五步raw/VJP全0，专家215–231→182–199ms。同Spatial2 5384eecc成功124步/14.589s/完整median551.49ms，上一图bf2821fc123步/15.232s/583.21ms；不是逐值同轨迹：frame20先3通道差1级，request4首次raw差.0029175但noise/previous/state同，control26才分歧，尚无相同完整观测双后端重放，勿断言纯渲染原因。24轮目标/124步来源裁切审计通过，0断供/fallback/内存保护；setup8.56秒另计。受控d5非真实20Hz/十任务。当前全套338passed9skipped178subtests，新增CLI guard另测通过。未动FlashRT/功耗/精度/attention，默认慢参考和图不缓存路径仍可选。详见RTC_SOURCE_ACCELERATION.md顶部；以下为历史上下文。
 
 - 新单步图Spatial2 bf2821fc完成123步success/15.232s、完整median583.21ms vs本轮慢参考e6373b1a123步/43.585s/1815.74ms。25份raw/noise/previous逐值同，控制action及before场景全同；124帧仅一通道差1级，不能称images bitexact。24轮目标/123步来源裁切审计通过，0断供/重建/fallback/RAM保护。预建566/567/568花8.81秒另计；非真实异步/非十任务成功率。CLI --source-step-profile从匹配慢批次按task准备≤8长度，只shape预热；未见长度fallback慢参考。修正release日志cuda_graph_used包含step bank（已完成run旧字段false勿误判，真实requestbackend为stepgraph）。335tests已通过，新增profile测试已单测通过。详见RTC_SOURCE_ACCELERATION.md，不整套切回旧varlen路径，不自动宣称7/10赋给新候选。
