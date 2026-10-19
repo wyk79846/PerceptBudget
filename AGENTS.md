@@ -1,5 +1,7 @@
 # 协作规则
 
+- LIBERO-10 task0慢参考e8972221已完成347步success（仿真17.35s/真实125.804s/完整median1819.13ms），0断供/异常/RAM保护触发；配置H25N5q5d5state80/原attention/author_order/无图不变。任务汤罐+番茄酱放篮子，520上限。handoff_audit通过69轮实际target、347步来源/gain1/裁切，有actualdelay的340步旧动作一致；末次成功后完成未提交，actualdelay=None不算断供或伪造延迟。仅单次受控长任务成功，非真实异步/总体成功率/加速路径结果；不扩测或恢复加速。详见RTC_CORRECTNESS_RECHECK.md第5节。
+
 - 用户要求再测LIBERO10长任务：明确按libero_10 suite task0各一次（不是十个Spatial任务），沿用源顺序慢参考H25/N5/q5/d5/state80，无varlen/图。eval_rtc_openpi新增suite选择，复用现有eval_seam_sync.get_tasks的libero_10 loader和520步上限，不套Spatial220；记录suite/taskname/maxsteps与loader源码快照。用户本轮授权agent执行；保留768MiB保护/原功耗/重复native expert释放，仅一个任务。
 
 - 慢参考单次dde7d722已完成：Spatial0/H25N5q5d5/state80/原始attention/无图/author_order，220步timeout、80.990秒/完整median1842.92ms、0断供/无RAM保护触发，闭合70步/碗maxlift20.18cm，非真实异步。实际noise/previous保存，handoff_audit通过43个真实目标、215步pending旧动作、220步来源/gain1/裁切。9ea52871三组GPU sourcebody/Torchbridge逐步差全0；旧87dd5652 raw差.002391/.001569/1.19e-7；未证明失败因果、不称JAX/XLA/全encoder/所有输入等价。详见RTC_CORRECTNESS_RECHECK.md。默认/加速不替换，不扩测任务，未装LeRobot依赖。
