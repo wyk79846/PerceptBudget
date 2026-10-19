@@ -1,5 +1,7 @@
 # 协作规则
 
+- 最新用户授权由agent建立慢速正确性参考，不再扩测/调参/加速：新增rtc_author_source.py执行作者原函数体，窄Torch适配vmap/scan/vjp（非JAX/XLA验证、共享同原始expert/KV），audit_rtc_author_source。旧87dd5652原始expert H25三case有一例raw .00156857（末步VJP差.00184537）；显式author_order候选按源tensor标量/clean乘法顺序/未化简gain/累加tau，9ea52871三case每步input/velocity/clean/error/VJP/output/mask/raw差全0，冻结原始权重，无varlen/图。默认旧路径不自动换；--author-order-reference仅受控d5禁加速/actual，必须新GPU gate/作者SHA一致，完整保存noise/previous_raw。历史29152932离线oldtail/裁切/来源220步通过但目标输入未存，不能当完整端到端证明。下一步仅一个Spatial0慢参考任务并审计实际输入，不称官方完整复现/失败根因已定。
+
 - 用户要求尝试调用LeRobot。本地clean checkout146d8474932c8b566717eb2738ba459337ab71c4，完整RTCProcessor导入缺draccus，未安装/改环境/未启动GPU。新增audit_lerobot_rtc.py仅AST原class body（配置/enum/processor）CPU执行，非完整LeRobot策略或任务。af77fcf4 toy v=2x/time=.6，源码先计算v再requires_grad，捕获velocity输入requires_grad=false，correction=.2而完整VJP应-.04；不改源码，不据此断言用户异地版本相同或当前RTC已正确。完整policy验证仍待依赖与兼容性检查，不能把source-class小测当LeRobot任务复现。
 
 - 用户授权修正RTC延迟历史：Algorithm1的A_init bootstrap不入Q，Q仍初始化[d_init]；DelayQueue.observe显式observation_step=0跳过，不把正常后台0步延迟一并过滤。harvest记录bootstrap排除原因和delay_queue_observed=false。新增初始保守值保留到正确10个样本后淘汰的回归测试。用户自行重跑H25/N5/q5/state80真实异步+释放重复native expert，agent不启动GPU，不改变attention/精度/H/N或宣称数值等价。

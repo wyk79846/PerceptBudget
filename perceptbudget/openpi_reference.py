@@ -162,7 +162,7 @@ class _MaskConstantTorch:
         return self.torch.tensor(data, *args, **kwargs)
 
 
-def sample_original_rtc(expert, noise, previous, delay, executed, beta=5.):
+def sample_original_rtc(expert, noise, previous, delay, executed, beta=5., *, trace=None, author_order=False):
     """Author's training-free Euler/VJP algorithm in the original flow time.
 
     OpenPI v decreases time 1->0; author's velocity is its negative. The old
@@ -186,20 +186,37 @@ def sample_original_rtc(expert, noise, previous, delay, executed, beta=5.):
     target[:len(previous)] = previous.detach().float()
     i = torch.arange(horizon, device=x.device, dtype=torch.float32)
     end = horizon-executed
-    weights = ((delay-1-i)/(end-delay+1)+1).clamp(0, 1)
+    if author_order:
+        start=torch.minimum(torch.tensor(delay,device=x.device),torch.tensor(end,device=x.device))
+        weights = ((start-1-i)/(end-start+1)+1).clamp(0,1)
+        author_tau=torch.tensor(0.,device=x.device,dtype=torch.float32)
+    else:
+        weights = ((delay-1-i)/(end-delay+1)+1).clamp(0, 1)
     weights = torch.where(i >= end, 0, weights*torch.expm1(weights)/(math.e-1))[:, None]
     records = []
     for step in range(steps):
-        tau = step/steps
+        tau = author_tau if author_order else step/steps
         with torch.enable_grad():
             x = x.detach().requires_grad_(True)
+            input_x = x
             velocity = -expert.velocity(x, step)
-            clean = x+(1-tau)*velocity
+            clean = x+velocity*(1-tau) if author_order else x+(1-tau)*velocity
             residual = ((target-clean)*weights).detach()
             correction, = torch.autograd.grad(clean, x, grad_outputs=residual)
-            gain = beta if step == 0 else min(beta, (tau*tau+(1-tau)**2)/(tau*(1-tau)))
+            if author_order:
+                inv_r2=(tau**2+(1-tau)**2)/((1-tau)**2)
+                c=torch.nan_to_num((1-tau)/tau,posinf=beta)
+                gain=torch.minimum(c*inv_r2,torch.tensor(beta,device=x.device))
+            else:
+                gain = beta if step == 0 else min(beta, (tau*tau+(1-tau)**2)/(tau*(1-tau)))
             x = (x+(1/steps)*(velocity+gain*correction)).detach()
+        if trace is not None:
+            trace.append(dict(input=input_x.detach().clone(),velocity=-velocity.detach().clone(),
+                clean=clean.detach().clone(),error=residual.detach().clone(),vjp=correction.detach().clone(),
+                output=x.detach().clone(),weights=weights.detach().clone()))
         if not torch.isfinite(x).all():
             raise RuntimeError('nonfinite original RTC sample')
         records.append(float(correction.norm()))
+        if author_order:
+            author_tau=author_tau+1/steps
     return x, records

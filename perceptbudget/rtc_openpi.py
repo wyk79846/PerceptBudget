@@ -91,7 +91,13 @@ class OriginalOpenPiRTCAdapter:
             raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
             norms = corrections.norm(dim=(1,2)).cpu().tolist()
         else:
-            raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed)
+            raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed,
+                author_order=self.config.get('rtc_author_order',False))
+        if self.config.get('rtc_audit_inputs'):
+            request['rtc_solver_inputs']=dict(noise=noise.detach().cpu().tolist(),
+                previous_raw=None if previous is None else previous.detach().cpu().tolist(),
+                delay=delay,executed=executed,
+                solver='author_source_order' if self.config.get('rtc_author_order') else 'legacy')
         raw_actions = raw.cpu().numpy().copy()
         if not np.isfinite(raw_actions).all() or not np.isfinite(norms).all():
             raise RuntimeError('nonfinite original OpenPI RTC output or VJP')
@@ -105,6 +111,7 @@ class OriginalOpenPiRTCAdapter:
             variable_length_fallback=self.graph is not None and not use_graph,
             attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',
             state_in_prompt=snapshot.get('state') is not None))
+        request['rtc_guidance']['author_source_order']=self.config.get('rtc_author_order',False)
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['inference_ended_monotonic'] = time.monotonic()
         self.latency_estimate_seconds = request['inference_ended_monotonic']-request['inference_started_monotonic']

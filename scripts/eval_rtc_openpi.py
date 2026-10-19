@@ -204,12 +204,15 @@ def main():
     parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
+    parser.add_argument('--author-order-reference',action='store_true',help='Slow original attention/expert and author-source operation order; controlled audit only')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
-    if args.horizon != 20 and not args.actual_delay:
+    if args.author_order_reference and (not args.controlled_delay_five or args.cuda_graph or args.experimental_varlen or args.actual_delay or args.verify_only):
+        parser.error('--author-order-reference requires controlled-delay-five and forbids acceleration/actual-delay/verify')
+    if args.horizon != 20 and not (args.actual_delay or args.author_order_reference):
         parser.error('non-default horizon requires explicit --actual-delay experiment')
     if args.actual_delay and (args.controlled_delay_five or args.timing_only or args.verify_only):
         parser.error('--actual-delay cannot combine with controlled delay, timing-only or verify-only')
@@ -239,6 +242,7 @@ def main():
         config.update(controlled_delay_steps=5,rtc_paper_schedule=False,
                       execution_mode='original_expert_controlled_delay_quality_only')
     config['experimental_original_varlen']=args.experimental_varlen
+    config.update(rtc_author_order=args.author_order_reference,rtc_audit_inputs=args.author_order_reference)
     config['release_unused_native_expert']=args.release_unused_native_expert
     config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
@@ -253,7 +257,7 @@ def main():
                      'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
                      'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
-                     'perceptbudget/rtc_schedule.py'):
+                     'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)
@@ -265,6 +269,13 @@ def main():
                 gate = json.loads((args.verified_run/'summary.json').read_text())
                 if not gate.get('passed'):
                     raise RuntimeError('reference gate not passed')
+                if args.author_order_reference:
+                    import hashlib
+                    source=Path(config['output_root'])/'rtc-author-reference/src/model.py'
+                    if not gate.get('author_order') or not gate.get('weights_frozen') or gate.get('device')!='cuda':
+                        raise RuntimeError('author-order reference requires passed frozen-original GPU source-order gate')
+                    if hashlib.sha256(source.read_bytes()).hexdigest()!=gate.get('author_source_sha256'):
+                        raise RuntimeError('author source changed since source-order gate')
                 gate_config = json.loads((args.verified_run/'run.json').read_text())['config_snapshot']
                 for key in ('N','model_path','openpi_root','checkpoint_path'):
                     if config.get(key) != gate_config.get(key):
