@@ -206,11 +206,11 @@ def main():
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
-    parser.add_argument('--horizon',type=int,choices=(20,50),default=20,
+    parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
     if args.horizon != 20 and not args.actual_delay:
-        parser.error('--horizon 50 currently requires explicit --actual-delay experiment')
+        parser.error('non-default horizon requires explicit --actual-delay experiment')
     if args.actual_delay and (args.controlled_delay_five or args.timing_only or args.verify_only):
         parser.error('--actual-delay cannot combine with controlled delay, timing-only or verify-only')
     if args.actual_delay and not (args.experimental_varlen and args.cuda_graph):
@@ -269,10 +269,10 @@ def main():
                     if config.get(key) != gate_config.get(key):
                         raise RuntimeError('reference gate config mismatch: '+key)
                 if config['H'] != gate_config.get('H'):
-                    if not (args.actual_delay and args.experimental_varlen and config['H']==50 and gate_config.get('H')==20):
+                    if not (args.actual_delay and args.experimental_varlen and config['H'] in (25,50) and gate_config.get('H')==20):
                         raise RuntimeError('reference gate config mismatch: H')
-                    config['reference_horizon_transfer']=dict(reference_H=20,experiment_H=50,
-                        limitation='source/checkpoint provenance only; independent H50 numerical parity not established')
+                    config['reference_horizon_transfer']=dict(reference_H=20,experiment_H=config['H'],
+                        limitation='source/checkpoint provenance only; independent numerical parity at changed horizon not established')
                 config['verified_reference_run'] = str(args.verified_run.resolve())
                 result = rollout(config, run, gate, args.task_id)
             print(json.dumps(result), flush=True)

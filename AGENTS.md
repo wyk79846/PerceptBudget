@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求H25：入口--horizon增加25，非默认H仍只允许显式actual-delay实验，reference_horizon_transfer记录真实H，不冒充H20独立参考覆盖25。保持释放重复native expert、N5/q5/state80/Spatial0/原功耗/768MiB保护，用户启动GPU，agent仅给命令和分析。默认H20不改。
+
 - 用户将自行重试H50内存清理：新增rtc_memory.py和显式--release-unused-native-expert，仅预热完成的fixed BF16管线，sync后删除_ckpt_bf16 decoder_*重复权重/对应指针，保留encoder/vision/context graph/KV/冻结原专家；进程不可逆context-only，禁native infer/infer_batch/rebuild及full/decoder图replay。保留native图handle而不手动destroy避免共享所有权风险，不称释放全部图内存。每阶段memory.jsonl与native_expert_release.json记录预计释放权重bytes与实测内存；episode reset前gc/empty_cache。CPU guard/保留测试通过，未在GPU验证、不代用户启动，768MiB保护不变。代码只在主项目，不改FlashRT/精度/权重计算/H/N。
 
 - 用户授权H50实验：eval_rtc_openpi --horizon 50仅显式actual-delay，默认H20不变；native warm和余量检查均用config H。沿用H20参考门禁只确认同checkpoint/源码/N，H50迁移单独记录reference_horizon_transfer，不冒称H50独立数值验收；live graph仍核对同后端。保持N5/q5/state80/原功耗/真实异步/768MiB保护，给用户命令，不代启动GPU。
