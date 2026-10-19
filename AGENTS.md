@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户强调核对算法并实现正确pi05异步。新增audit_openpi_expert.py隔离加载OpenPI原始Gemma源码+原始checkpoint专家，FP32动作/time投影、norm调制FP32、其余BF16；不安装/改transformers。录制prefix KV先逆FlashRT RoPE交错排列。独立参考run4bfa20b7最终raw相对融合已录1.630%/max.019086；同每步输入/残差且18层KV逐位门禁通过的cb3b3e95，速度场差.43–.69%，clean-VJP差13–52%，关闭融合仍近似同差。恢复底层速度VJP差.45–.73%，相减放大不能直接判反传公式错误，仍未等价通过/未定位首层差异或失败因果。新增Algorithm1时间线独立测试通过（非完整竞态/20Hz证明），308pass/9skip+178subtests。详见RTC_CORRECTNESS_AUDIT.md；不批测、不启用仿真优化、不称393ms版本正确性验收。作者JAX全模型未跑；已跑OpenPI专家但encoder未独立验证。
+
 - 2026-10-19 用户批准先正确性对照不批测成功率。新增audit_env_replay.py，同原task0的176步动作执行原/优化/原：da5a45be两次原state逐位同、176帧同；优化state最大差4.5633/control2.7791、仅59帧同，零基59开始>1e-6，三次均成功。确定forward复用不满足运动轨迹等价，仍默认关闭，不能用其2/10评价RTC；无优化4/10仍需查。作者仓库只读下载任务产出/rtc-author-reference，9296f31d，JAX无安装；audit_rtc_author_mask执行作者原函数AST+NumPy1557例差4.44e-16，仅Eq5。官方π0.5专家/VJP独立验证尚未完成，不称已复现、不自动批测。详见RTC_CORRECTNESS_AUDIT.md。
 
 - 2026-10-19 仿真优化版RTC十项已完成：父run=M1/20261019T065322.242512Z-rtc-async-ten-envopt-2e3da771；有效10/10，2/10成功(task5/7)，其余220步超时，全0断供/无异常退出。task5 136步8.673s、task7 133步8.581s，成功平均8.627s。控制16.07–18.31Hz；257次请求合并推理中位425.20ms。skip50725=2029步×25，来源2029步逐位核查、gain1、实际裁切索引与actualdelay一致；历史队列257次核查通过；实际延迟248项中同124/高估117/低估7，不能把生成约束偏差称执行跳错。旧无优化十任务4/10；尚无移动/接触的仿真优化等价、跨启动选核控制，不把下降单归Hz，不替换默认，不自动扩测。结果summary.md/audit.md；运行中记载已由本条完成状态取代。
