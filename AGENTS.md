@@ -1,5 +1,9 @@
 # 协作规则
 
+- 2026-10-19 仿真优化版RTC十项已完成：父run=M1/20261019T065322.242512Z-rtc-async-ten-envopt-2e3da771；有效10/10，2/10成功(task5/7)，其余220步超时，全0断供/无异常退出。task5 136步8.673s、task7 133步8.581s，成功平均8.627s。控制16.07–18.31Hz；257次请求合并推理中位425.20ms。skip50725=2029步×25，来源2029步逐位核查、gain1、实际裁切索引与actualdelay一致；历史队列257次核查通过；实际延迟248项中同124/高估117/低估7，不能把生成约束偏差称执行跳错。旧无优化十任务4/10；尚无移动/接触的仿真优化等价、跨启动选核控制，不把下降单归Hz，不替换默认，不自动扩测。结果summary.md/audit.md；运行中记载已由本条完成状态取代。
+
+- 2026-10-19 用户“再测十次”按刚才17.7Hz仿真优化版理解并已说明：388529d扩展eval_rtc_async_screen.py --reuse-control-forward，Spatial0–9全新各一次，不复用旧数据；H20/N5/state/80/s_min5/队列max10不变，每项skip>0与模式隔离强制审计，记录延迟估计偏差数。服务perceptbudget-rtc-envopt-ten-20261019；日志/tmp/perceptbudget-rtc-envopt-ten-20261019.log；父run=M1/20261019T065322.242512Z-rtc-async-ten-envopt-2e3da771。guarded_run保护不变，异常停批次，可resume。运行中不改推理/控制代码，不预报最终成功率，不冒充稳定20Hz，不自动替换默认。
+
 - 2026-10-19 用户让测优化后实际Hz，单Spatial0 RTC真实异步保持H20/N5/state/80/s_min5/融合快版。03f1a43首次在reset前安装forward复用，reset重建sim导致skip0，c79832f6成功184步13.239s/14.23Hz，不算优化证据。f04cb11改为run_episode重置后安装且强制skip>0；665404de实测220步超时12.712s、17.73Hz、env.step50.84ms/tick56.32ms、skip5500、0断供、推理中位424.84ms，预检/来源审计通过。旧十任务task0为成功176步12.735s/14.15Hz，不能用失败wall秒说完成提速。优化默认关闭、仅进程内不改依赖/FlashRT。307pass/9skip+178subtests。尚无移动接触逐步等价/因果定位，不自动扩测或替换默认。完整analysis.md在M1/20261019T064817.114511Z-rtc-paper-schedule-q5-state-665404de。
 
 - 2026-10-19 用户问为何env.step慢及能否改进。新增仅诊断scripts/probe_env_step.py，无模型，Spatial0固定动作各30步，保持2ms物理步长/25子步/两路256图像。M1/20261019T064241.131452Z-env-step-profile-7cfd838b：默认55.139ms，BLAS8→1仅54.976ms；主要forward21.50/physics11.66/controller9.39/dispatch5.43/cameras4.72ms。发现外层forward和controller.update每子步各一次；进程内试跳过控制器内forward后44.637ms，省10.50ms，逐步state最大6.63e-15/ctrl2.78e-17/双路图像全一致。仅固定动作短探针，未改正式runner/依赖/FlashRT，不能保证移动接触等价或并行20Hz；还需外部约6ms及资源争用。原始结果和analysis.md已落盘。首探针25444746缺threadpoolctl建环境前invalid保留，后不安装依赖而用加载OpenBLAS接口；中间bf499175仅默认/单线程。没有自动重测成功率或提升正式默认。
