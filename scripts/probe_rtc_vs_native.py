@@ -16,10 +16,12 @@ from perceptbudget.experiment import create_run, load_config
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--optimized',action='store_true')
+    parser.add_argument('--gemm-policy',choices=('autotune','heuristic-first'),default='autotune')
     parser.add_argument('--state-prompt-capacity',type=int,choices=(64,80,96,200))
     args=parser.parse_args()
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=5, state_enabled=True)
+    config['native_gemm_policy']=args.gemm_policy
     if args.state_prompt_capacity is not None: config['state_prompt_capacity']=args.state_prompt_capacity
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'])
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
@@ -48,6 +50,8 @@ def main():
                 return base._infer_actions(model, snap, task['instruction'], 20, {})
             native()
             result = {'scope': 'same-input inference only; no async rollout', 'H':20, 'N':5,
+                      'native_gemm_policy':args.gemm_policy,
+                      'state_prompt_capacity':config.get('state_prompt_capacity'),
                       'state':True, 'native_full':timed(torch, native)}
             pipe, pl = model._pipe, model._pipe.pipeline
             def context():

@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户同意先稳定选核/80容量再优化。新增项目侧可选native_gemm_policy=heuristic-first，仅代理autotune候选数1，不改FlashRT，默认autotune保留。80a/80b固定fixture独立进程所有追踪阶段逐位一致、padding检查通过；但首候选完整RTC477.01ms/普通392.48ms，不能作为加速默认。同80自动选核固定输入完整RTC392.87ms(390.34–394.47)/普通304.33ms，context259.97/专家122.79。不是任务/真实20Hz结果、不是自动选核跨进程一致性证明。要保留最快算法并固定需原生导入导出接口，尚未实现。CPU304pass/9skip另178subtests。未训练/未扩测任务/未继续改编码器。详见RTC_CAPACITY_DIAGNOSIS.md后续记录。
+
 - 2026-10-19 用户确认文字/state容量选80：config.json新增state_prompt_capacity=80，作为新实验默认，图像token另计、完整分词不变、超过80报错不截断，CLI仍可显式覆盖用于诊断。历史run和64容量数据保持原样，不把393/425ms归给80。仅做配置/边界测试，不自动重跑GPU任务；本次不改模型/H/N/state开关/FlashRT或动作衔接。
 
 - 2026-10-19 用户要求检查capacity200→64为何改变轨迹：仅新增diagnose_state_capacity.py及比较测试，不改生产/FlashRT/权重。固定同图/state/token/noise/target，200/64/200隔离对照。首轮有效encoder/RTC全逐位一致；追加bootstrap轮64自动选核encoder第0层FFN down日志best1→5，首次差异在该GEMM输出、输入逐位同，200跨轮与重复同。三worker位置/有效长度一致，encoder/RTC padding污染检查均不影响有效输出。native bootstrap首层注意力输入相同、输出有差异；固定seed7 native首块cap200/64 max .0078125，各自逐位匹配历史104步/187步任务首块。不能把全部变动只归容量舍入/只归splitKV，Torch确定性不锁原生autotune。详见RTC_CAPACITY_DIAGNOSIS.md；原始run M1/20261019T053108.377723Z-capacity-numeric-diagnosis-aeab67f7及M1/20261019T053555.980538Z-capacity-numeric-diagnosis-c81702d8。首探针OpenPI导入失败invalid保留。不自动修选核或扩测任务。

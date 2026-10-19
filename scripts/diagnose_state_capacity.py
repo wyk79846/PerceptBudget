@@ -19,14 +19,16 @@ from perceptbudget.experiment import create_run,load_config
 from scripts import eval_q as base
 
 
-def worker(run,capacity,label):
+def worker(run,capacity,label,gemm_policy='autotune'):
     import fcntl
     config=load_config(repo_root=ROOT)
     config.update(H=20,N=5,state_enabled=True,state_prompt_capacity=capacity)
+    config['native_gemm_policy']=gemm_policy
     config['screen'].update(seed=7,init_state_index=0,suites=['libero_spatial'])
     directory=run/label
     directory.mkdir(exist_ok=True)
     result={'status':'loading','capacity':capacity,'label':label,'H':20,'N':5,
+            'native_gemm_policy':gemm_policy,
             'state_enabled':True,'flashrt_revision':config['flashrt_revision']}
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
@@ -245,12 +247,14 @@ def worker(run,capacity,label):
             print(json.dumps(result),flush=True)
 
 
-def compare(run):
+def compare(run,repeat80=False):
     import numpy as np
     result={'status':'completed','comparisons':{}}
     def as_float(x):
         return (x.astype(np.uint32)<<16).view(np.float32) if x.dtype==np.uint16 else x.astype(np.float32)
-    for a,b,label in (('capacity200a','capacity64','capacity_change'),('capacity200a','capacity200b','same_capacity_repeat')):
+    pairs=(('capacity80a','capacity80b','same_capacity_repeat'),) if repeat80 else (
+        ('capacity200a','capacity64','capacity_change'),('capacity200a','capacity200b','same_capacity_repeat'))
+    for a,b,label in pairs:
         meta=json.loads((run/a/'summary.json').read_text())
         rows=[]
         with np.load(run/a/'trace.npz') as left,np.load(run/b/'trace.npz') as right:
@@ -265,7 +269,7 @@ def compare(run):
                     'changed_fraction':float(np.count_nonzero(x!=y)/x.size)})
         result['comparisons'][label]={'first_difference':next((r for r in rows if not r['exact']),None),'stages':rows}
     result['worker_checks']={name:json.loads((run/name/'summary.json').read_text())
-                             for name in ('capacity200a','capacity64','capacity200b')}
+                             for name in (('capacity80a','capacity80b') if repeat80 else ('capacity200a','capacity64','capacity200b'))}
     base._write_json_atomic(run/'summary.json',result)
     print(json.dumps({k:v['first_difference'] for k,v in result['comparisons'].items()}),flush=True)
 
@@ -276,19 +280,24 @@ def main():
     parser.add_argument('--capacity',type=int)
     parser.add_argument('--label')
     parser.add_argument('--fixture-from',type=Path)
+    parser.add_argument('--repeat80',action='store_true')
+    parser.add_argument('--gemm-policy',choices=('autotune','heuristic-first'),default='autotune')
     args=parser.parse_args()
-    if args.worker_run: return worker(args.worker_run,args.capacity,args.label)
+    if args.worker_run: return worker(args.worker_run,args.capacity,args.label,args.gemm_policy)
     config=load_config(repo_root=ROOT)
     config.update(H=20,N=5,state_enabled=True,diagnostic_capacities=[200,64,200])
+    config.update(native_gemm_policy=args.gemm_policy)
+    if args.repeat80: config['diagnostic_capacities']=[80,80]
     run=create_run(config,'M1','capacity-numeric-diagnosis',repo_root=ROOT)
     if args.fixture_from:
         for name in ('fixture.npz','fixture.json'): shutil.copy2(args.fixture_from/name,run/name)
     shutil.copy2(__file__,run/'diagnose_state_capacity.py')
     print('run_dir='+str(run),flush=True)
-    for capacity,label in ((200,'capacity200a'),(64,'capacity64'),(200,'capacity200b')):
+    cases=((80,'capacity80a'),(80,'capacity80b')) if args.repeat80 else ((200,'capacity200a'),(64,'capacity64'),(200,'capacity200b'))
+    for capacity,label in cases:
         command=[config['python_executable'],'-u',str(ROOT/'scripts/guarded_run.py'),'--',
             config['python_executable'],'-u',str(Path(__file__).resolve()),'--worker-run',str(run),
-            '--capacity',str(capacity),'--label',label]
+            '--capacity',str(capacity),'--label',label,'--gemm-policy',args.gemm_policy]
         print(label+' start',flush=True)
         with (run/(label+'.log')).open('w') as stream:
             proc=subprocess.run(command,stdout=stream,stderr=subprocess.STDOUT)
@@ -296,7 +305,7 @@ def main():
             base._write_json_atomic(run/'summary.json',{'status':'stopped_invalid','worker':label,'exit_code':proc.returncode})
             raise RuntimeError(label+' failed')
         print(label+' completed',flush=True)
-    compare(run)
+    compare(run,args.repeat80)
 
 
 if __name__=='__main__': main()

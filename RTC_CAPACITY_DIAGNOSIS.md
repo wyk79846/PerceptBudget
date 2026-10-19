@@ -1,5 +1,28 @@
 # 容量200→64为何改变轨迹：诊断结果
 
+## 后续：80容量固定选核验证（2026-10-19）
+
+项目侧新增可选 `native_gemm_policy=heuristic-first`：代理原生GemmRunner，
+将每次BF16选核的候选数固定为1；FlashRT源码不变，默认仍为autotune。
+这不是保存此前最快算法，而是建立新的首候选数值基线，不保证跨设备/版本一致。
+
+- 固定同图像/state/noise/target，80a/80b两次独立进程的所有已记录阶段逐位一致，
+  包括encoder、RTC raw/VJP和native bootstrap；两侧padding污染检查均通过。
+- 结果：`M1/20261019T054917.649092Z-capacity-numeric-diagnosis-5f903047`。
+- 首候选80计时：完整RTC中位477.01ms，普通推理392.48ms；context345.86ms，
+  RTC专家123.15ms。固定输入各5次，不是任务成功率或真实20Hz异步结果。
+  结果：`M1/20261019T055014.598798Z-rtc-vs-native-timing-f31a4585`。
+- 同容量原自动选核：完整RTC中位392.87ms（5次390.34–394.47ms），普通推理304.33ms，
+  context259.97ms、RTC专家122.79ms。
+  结果：`M1/20261019T055156.977668Z-rtc-vs-native-timing-1332fc02`。
+  相较首候选快84.14ms，但不是逐位等价的同后端替换，也未验证跨启动自动选核的一致性。
+- 首候选有性能代价，不作为加速默认；要同时保留速度和固定数值路径，后续应保存并重放
+  已调优算法，而不是固定选第一个。现有原生绑定未提供算法导入/导出接口，本轮未扩改FlashRT。
+- CPU测试304通过/9跳过（另178 subtests）；未训练、未新增任务评测。
+
+诊断命令：`scripts/diagnose_state_capacity.py --repeat80 --gemm-policy heuristic-first --fixture-from <历史fixture目录>`。
+计时命令：`scripts/probe_rtc_vs_native.py --optimized --state-prompt-capacity 80 --gemm-policy heuristic-first`。
+
 日期：2026-10-19。仅诊断，未修改FlashRT、模型权重、生产推理逻辑或默认配置。
 
 ## 结论

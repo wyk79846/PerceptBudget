@@ -8,6 +8,8 @@ def load_model(config):
     """Use the existing constructor's chunk_size; inference is unchanged."""
     if config["precision"] != "bfloat16":
         raise ValueError("This M1 adapter implements only the requested BF16 baseline")
+    if config.get('native_gemm_policy', 'autotune') not in ('autotune', 'heuristic-first'):
+        raise ValueError('Unknown native GEMM policy')
     from scripts.run_flashrt import select_flashrt
 
     select_flashrt(config["flashrt_root"], config["openpi_root"])
@@ -34,6 +36,8 @@ def load_model(config):
         vision_pool_factor=1, vision_num_layers=27, cache_frames=1,
         state_prompt_mode="fixed",
     )
+    from perceptbudget.gemm_policy import apply_policy
+    apply_policy(pipe, config.get('native_gemm_policy', 'autotune'))
     if not pipe._force_bf16 or any((pipe._fp8_weights, pipe._int8_weights,
                                   pipe._use_int8_encoder, pipe._use_int8_vision)):
         raise RuntimeError("Requested full BF16 path did not take effect")
