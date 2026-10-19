@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户批准KV顺序对照及任务小测。context-first exact只换内核raw差.0147674(15ff257f)，action-first exact .00697818(45cc834d)同cap592，仍未过1e-4，不放宽门禁。显式controlled-delay-five/experimental-varlen仅质量入口，禁实际异步；图门禁标同后端。父d3bf8e06仅当前Spatial0/H20N5q5d5state80，不是历史失败严格复现：original dc9a71e0成功144步51.335s/1831.95ms；varlen7096c07a成功146步17.542s/570.25ms。初始before完整场景同、首raw差.00171929，首图/KV未独立逐位比较。二者570–573有效长度、0重捕获/断供、真实delay均5，执行来源gain1全审计。候选保留显式实验、默认不改、不批测，不把受控wait叫真实异步；详细RTC_ORIGINAL_REFERENCE.md末节和父analysis.md。首编排仅标签超32字符启动前退出，v2修正，无episode丢失。未改FlashRT/功耗/H/N/权重，无子agent/训练。
+
 - 2026-10-19 用户授权仅移植旧变长attention到原始expert。openpi_varlen.py仅替换隔离source模块attention（不改FlashRT/安装依赖），固定cap592动态cum_k、原始其他计算不动，probe显式--varlen-attention。896d1ea7同图570/563/557/570，samebackend graph/eager与padding毒化差全0，专家192.4–192.8ms；独立原始eager raw差.006978，五步velocity/VJP也未过1e-4，failed_gate，不接默认/不跑任务/不宣称成功率。第一轮1a288ac6容量字段错误valid-only实际592，后轮修正。320pass/9skip+178subtests。详见RTC_ORIGINAL_REFERENCE.md末节。下一步须解释attention数值差异/质量影响，不假称变长实现已经保真通过。
 
 - 2026-10-19 用户要求修state换长度卡顿。当前取代e85cb88自动重捕获：仅保留一张exact图，其他长度回退原版eager（共享权重、独立KV），恢复原长度复用图，重复prepare明确拒绝。完整44a69f7a合成state切换573/557/573/570，raw/VJPnorm差全0，0重建，完整1856/1823/1818/563ms；原长稳态median563.51ms，初始化4.97秒另计。只是取消6秒建图停顿，不是所有长度保持564ms/真实异步，CLI仍timing-only。多图完整9c21b280触发765.8MiB保护未开始任务，错误JIT和全模块图不采用；仅FFN图虽exact但约1.31s未集成，废案源码均在任务产出source，主干不留。未改FlashRT/模型配置/功耗、未训练/用子agent。详见RTC_ORIGINAL_REFERENCE.md最后小节。

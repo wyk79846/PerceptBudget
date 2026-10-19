@@ -8,7 +8,8 @@ class OriginalOpenPiRTCAdapter:
         self.model, self.torch, self.config = model, torch, config
         self.pipe, self.pipeline = model._pipe, model._pipe.pipeline
         self.horizon, self.num_steps = config['H'], config['N']
-        self.expert = OriginalOpenPiExpert(config, self.horizon, self.num_steps)
+        self.expert = OriginalOpenPiExpert(config, self.horizon, self.num_steps,
+            context_capacity=592 if config.get('experimental_original_varlen') else None)
         self.latency_estimate_seconds = 0.
         self.graph = None
         self.capture_seconds = 0.
@@ -42,13 +43,16 @@ class OriginalOpenPiRTCAdapter:
         self.graph_expert = self.expert
         return dict(raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,passed=True,
                     prefix_length=self.graph_prefix_length,capture_seconds=self.capture_seconds,
-                    limitation='other prefix lengths use original eager solver, never runtime recapture')
+                    parity_scope='same selected attention backend; not independent original attention parity',
+                    limitation=('fixed-capacity dynamic valid length; experimental attention not original-parity'
+                        if self.config.get('experimental_original_varlen') else
+                        'other prefix lengths use original eager solver, never runtime recapture'))
 
     def _select_expert(self, valid):
         """Keep the captured KV buffers intact; share frozen weights only."""
         if self.graph is None:
             return False
-        if valid == self.graph_prefix_length:
+        if valid == self.graph_prefix_length or getattr(self.graph_expert,'varlen_attention_enabled',False):
             self.expert = self.graph_expert
             return True
         if self.fallback_expert is None:
@@ -78,6 +82,9 @@ class OriginalOpenPiRTCAdapter:
         valid = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
         use_graph = self._select_expert(valid)
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
+        if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
+            from perceptbudget.openpi_varlen import enable_varlen_attention
+            enable_varlen_attention(self.expert)
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
         if use_graph and previous is not None:
@@ -96,6 +103,7 @@ class OriginalOpenPiRTCAdapter:
             valid_prefix_length=valid, vjp_norms=norms, beta=5.,
             context_graph_rebuilt=False, context_prepare_seconds=0.,
             variable_length_fallback=self.graph is not None and not use_graph,
+            attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',
             state_in_prompt=snapshot.get('state') is not None))
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['inference_ended_monotonic'] = time.monotonic()

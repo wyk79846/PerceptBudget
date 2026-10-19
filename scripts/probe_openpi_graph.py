@@ -19,6 +19,8 @@ def main():
     parser.add_argument('--fixed-context',action='store_true')
     parser.add_argument('--changing-lengths',action='store_true',help='exact-length recapture parity, not a rollout')
     parser.add_argument('--varlen-attention',action='store_true',help='experimental attention-only replacement')
+    parser.add_argument('--kv-order',choices=('action-first','context-first'),default='action-first')
+    parser.add_argument('--exact-context',action='store_true',help='KV-order isolation without capacity padding')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT)
     config.update(H=20,N=5,state_enabled=True,state_prompt_capacity=80)
@@ -42,8 +44,11 @@ def main():
             torch.use_deterministic_algorithms(True)
             prefix=Path(config['output_root'])/'M1/20261019T054917.649092Z-capacity-numeric-diagnosis-5f903047/capacity80a'
             reference=Path(config['output_root'])/'M1/20261019T092612.204175Z-openpi-expert-independent-7c7d1e10'
-            expert=OriginalOpenPiExpert(config,20,5,context_capacity=592 if args.fixed_context or args.varlen_attention else None)
-            result['context_capacity']=592 if args.fixed_context or args.varlen_attention else 'valid-only'
+            capacity=592 if args.fixed_context or (args.varlen_attention and args.kv_order=='action-first') else None
+            if args.exact_context:
+                capacity=None
+            expert=OriginalOpenPiExpert(config,20,5,context_capacity=capacity)
+            result['context_capacity']=capacity or 'valid-only'
             trace=np.load(prefix/'trace.npz')
             def bits(a): return torch.from_numpy(a.copy()).to('cuda').view(torch.bfloat16)
             keys=torch.stack([bits(trace[f'21_encoder_layer{i:02d}_key']) for i in range(18)])
@@ -51,7 +56,8 @@ def main():
             expert.refresh_context(keys,values,keys.shape[1])
             if args.varlen_attention:
                 from perceptbudget.openpi_varlen import enable_varlen_attention
-                enable_varlen_attention(expert)
+                enable_varlen_attention(expert,order=args.kv_order)
+                result['kv_order']=args.kv_order
                 result['attention_backend']='experimental_torch_flash_varlen'
             noise=torch.as_tensor(trace['32_fixed_noise'],device='cuda')
             previous=noise[5:].clone()
@@ -81,14 +87,14 @@ def main():
             ref,_=sample_original_rtc(expert,changed_noise,changed_previous,7,6)
             got=graph.replay(changed_noise,changed_previous,7,6)[0].detach().clone()
             result['changed_runtime_inputs_max_abs']=float((ref-got).abs().max())
-            expert.refresh_context(keys,values*.9,keys.shape[1]-7 if args.fixed_context or args.varlen_attention else keys.shape[1])
+            expert.refresh_context(keys,values*.9,keys.shape[1]-7 if capacity is not None else keys.shape[1])
             context_reference=sample_original_rtc(expert,noise,previous,5,5)[0]
             context_got=graph.replay(noise,previous,5,5)[0].detach().clone()
             result['changed_context_max_abs']=float((context_reference-context_got).abs().max())
             result['changed_context_changes_output']=not torch.equal(initial_raw,context_got)
             expert.refresh_context(keys,values,keys.shape[1])
             result['graph_rtc_expert']=timed(torch,lambda:graph.replay(noise,previous,5,5))
-            if args.varlen_attention:
+            if args.varlen_attention and args.kv_order=='action-first' and capacity is not None:
                 rows=[]
                 for valid in (563,557,570):
                     expert.refresh_context(keys,values,valid)

@@ -5,11 +5,13 @@ original eager attention; this backend must pass independent gates before use.
 """
 
 
-def enable_varlen_attention(expert):
+def enable_varlen_attention(expert, *, order='action-first'):
     import torch
     from perceptbudget.rtc_expert import _TorchVarlenGqaAttention
-    if expert.context_capacity is None or expert.keys is None:
-        raise ValueError('initialize a fixed-capacity context before enabling varlen attention')
+    if order not in ('action-first','context-first'):
+        raise ValueError('unknown KV order')
+    if expert.keys is None:
+        raise ValueError('initialize a fixed-capacity or exact context before enabling varlen attention')
     if getattr(expert,'varlen_attention_enabled',False):
         raise ValueError('varlen attention already enabled')
     expert.cum_q = torch.tensor([0,expert.horizon],device=expert.device,dtype=torch.int32)
@@ -23,10 +25,37 @@ def enable_varlen_attention(expert):
     expert.refresh_context = refresh
     expert.cum_k[1] = expert.horizon+expert.prefix_mask.sum()
 
+    class PrefixFirst(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx,q,k,v):
+            query=q[0].transpose(0,1).contiguous()
+            key=k[0].transpose(0,1).contiguous()
+            value=v[0].transpose(0,1).contiguous()
+            h,total=query.shape[0],key.shape[0]
+            out,lse,rng,unused,_=torch.ops.aten._flash_attention_forward(
+                query,key,value,expert.cum_q,expert.cum_k,h,total,0.,False,False,
+                scale=query.shape[-1]**-.5)
+            ctx.save_for_backward(query,key,value,out,lse,rng,unused)
+            return out.transpose(0,1).unsqueeze(0)
+
+        @staticmethod
+        def backward(ctx,gradient):
+            q,k,v,out,lse,rng,unused=ctx.saved_tensors
+            dq,dk,dv=torch.ops.aten._flash_attention_backward(
+                gradient[0].transpose(0,1).contiguous(),q,k,v,out,lse,
+                expert.cum_q,expert.cum_k,q.shape[0],k.shape[0],0.,False,rng,unused,
+                scale=q.shape[-1]**-.5)
+            return tuple(t.transpose(0,1).unsqueeze(0) for t in (dq,dk,dv))
+
     def attention(module,query,key,value,attention_mask,scaling,dropout=0.,**kwargs):
         if module.training or dropout:
             raise ValueError('varlen RTC attention requires frozen eval mode')
-        capacity = expert.context_capacity
+        if order=='context-first':
+            if expert.context_capacity is not None:
+                raise ValueError('context-first comparison requires cropped exact context')
+            out=PrefixFirst.apply(query,key,value)
+            return out.transpose(1,2).contiguous(),None
+        capacity = expert.context_capacity or expert.prefix_mask.shape[1]
         # Original Gemma concatenates prefix then actions. Supply action first
         # only inside this permutation-invariant bidirectional attention call.
         action_k = key[0,:,capacity:,:].transpose(0,1).contiguous()

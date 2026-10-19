@@ -89,7 +89,7 @@ def rollout(config, run, gate, task_id):
         def infer():
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
         timing = timed(torch, infer, count=3)
-        initial_delay = math.ceil(timing['median_ms']/50)
+        initial_delay = 5 if config.get('controlled_delay_steps') == 5 else math.ceil(timing['median_ms']/50)
         config['rtc_initial_delay_steps'] = initial_delay
         record = json.loads((run/'run.json').read_text())
         record['config_snapshot'] = config
@@ -98,7 +98,9 @@ def rollout(config, run, gate, task_id):
                       initial_delay_steps=initial_delay, original_source_hashes=provenance,
                       graph_audit=graph_audit,
                       simulation_optimization=False,
+                      experimental_attention_not_original_parity=config.get('experimental_original_varlen',False),
                       scope=('fixed-observation full-request timing; no async episode' if config.get('original_timing_only')
+                             else 'fixed five simulated delay steps; pauses simulation if inference late; not real-time async' if config.get('controlled_delay_steps') == 5
                              else 'actual-delay async, no fixed simulation wait; actual Hz measured'))
         base._write_json_atomic(run/'summary.json', result)
         print('preflight='+json.dumps(result), flush=True)
@@ -159,7 +161,8 @@ def rollout(config, run, gate, task_id):
                 assert np.array_equal(np.asarray(row['action'], dtype=np.float32),
                     np.asarray(by_id[source['prediction_id']]['actions'][source['offset']], dtype=np.float32))
                 audited += 1
-        assert all('controlled_wait_seconds' not in r for r in requests)
+        if config.get('controlled_delay_steps') is None:
+            assert all('controlled_wait_seconds' not in r for r in requests)
         assert all(r['rtc_guidance']['expert_backend']=='original_openpi_source' for r in requests)
         times = [(r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000 for r in requests[1:]]
         result.update(status='completed', episode=episode, executed_actions_audited=audited,
@@ -175,12 +178,16 @@ def main():
     parser.add_argument('--verified-run', type=Path)
     parser.add_argument('--reference-fixture', type=Path)
     parser.add_argument('--timing-only', action='store_true')
-    parser.add_argument('--cuda-graph', action='store_true',help='Exact prefix graph: fixed-input timing only')
+    parser.add_argument('--cuda-graph', action='store_true',help='Graph for fixed-input timing or controlled quality experiment')
     parser.add_argument('--state-switches',action='store_true',help='Validate changed state inputs, no task episode')
+    parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
+    parser.add_argument('--experimental-varlen',action='store_true',help='Explicit non-parity attention quality experiment, controlled test only')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     args = parser.parse_args()
-    if args.cuda_graph and (not args.timing_only or args.verify_only):
-        parser.error('--cuda-graph currently requires --timing-only and a passed --verified-run')
+    if args.experimental_varlen and not args.controlled_delay_five:
+        parser.error('--experimental-varlen requires --controlled-delay-five; not approved for actual async')
+    if args.cuda_graph and (not (args.timing_only or args.controlled_delay_five) or args.verify_only):
+        parser.error('--cuda-graph requires --timing-only or --controlled-delay-five and a passed --verified-run')
     if args.state_switches and not (args.cuda_graph and args.timing_only):
         parser.error('--state-switches requires --cuda-graph --timing-only')
     if not args.verify_only and args.verified_run is None:
@@ -197,6 +204,10 @@ def main():
     config.update(original_cuda_graph=args.cuda_graph,original_timing_only=args.timing_only,
                   original_state_switches=args.state_switches)
     config.pop('controlled_delay_steps', None)
+    if args.controlled_delay_five:
+        config.update(controlled_delay_steps=5,rtc_paper_schedule=False,
+                      execution_mode='original_expert_controlled_delay_quality_only')
+    config['experimental_original_varlen']=args.experimental_varlen
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'], task_ids=[args.task_id])
@@ -207,7 +218,8 @@ def main():
         print('run_dir='+str(run), flush=True)
         for name in ('scripts/eval_rtc_openpi.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
-                     'perceptbudget/openpi_graph.py'):
+                     'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
+                     'perceptbudget/rtc_expert.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)

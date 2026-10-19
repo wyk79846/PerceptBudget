@@ -183,3 +183,35 @@ attention内部将动作KV置前；原版位置编码仍由有效prefix mask计�
 
 未运行任务/报告成功率；不放宽阈值、不替换正式路径。前一轮1a288ac6得同样raw差，
 其summary错误显示valid-only容量字段；真实构造为592，后轮已修正记录。
+
+## KV顺序隔离与单任务质量对照（2026-10-19）
+
+用户批准两种顺序及单任务试验，仍保持默认不变。`--kv-order context-first`
+保持原始prefix先/action后的顺序，仅替换FlashAttention，使用exact有效长度，
+独立最终raw差0.0147674（15ff257f）；`--kv-order action-first --exact-context`
+无padding时差0.00697818（45cc834d），与cap592候选相同。因此本fixture
+“保持原序”没有降低最终误差，但这不是所有中间量/所有输入的全局结论。
+两种都未过严格1e-4数值门禁，不将门禁改写为passed。
+
+新增显式`eval_rtc_openpi.py --controlled-delay-five`质量入口。
+`--experimental-varlen --cuda-graph`只能搭配受控质量模式，禁止真实异步；
+独立原版门禁只验证原始后端，实验注意力结果另标
+`experimental_attention_not_original_parity=true`，图内门禁仅指同后端重放。
+`rtc_openpi`只在该显式配置下固定cap592并启用变长attention；普通路径不变。
+
+配对编排：`scripts/compare_openpi_attention_task.py`，仅Spatial0、各一次，
+固定H20/N5/q5/d5/state80/seed7/init0、双视角/BF16原混合精度/原功耗，
+执行5步后等待未完成推理，不是真实20Hz异步。不是历史失败配置严格复现。
+父run `M1/20261019T104729.576454Z-attention-controlled-pair-d3bf8e06`。
+
+| 条件 | 结果/步数 | 完整稳态请求中位 | 回合真实耗时 |
+| --- | --- | --- | --- |
+| 原始eager专家 | 成功/144 | 1831.95ms | 51.335s |
+| 仅变长attention＋图 | 成功/146 | 570.25ms | 17.542s |
+
+首步before场景完全相同，bootstrap raw max差.00171929；首图/encoder KV未
+独立逐位对比，不能称数值等价。两者经历570/571/572/573有效长度，0重捕获、
+0断供、144/146步来源审计通过，非bootstrap全部实际delay5。候选单任务成功，
+但尚无总体成功率或实际异步结果。原版/候选差包含图加速，不能把68.9%全部
+归因于attention；比已有约564ms固定长度图也不能称更快。
+本次无内存保护触发；未改FlashRT，未更改全局默认。详情父run的analysis.md。
