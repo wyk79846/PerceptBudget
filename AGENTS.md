@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求再测LIBERO10长任务：明确按libero_10 suite task0各一次（不是十个Spatial任务），沿用源顺序慢参考H25/N5/q5/d5/state80，无varlen/图。eval_rtc_openpi新增suite选择，复用现有eval_seam_sync.get_tasks的libero_10 loader和520步上限，不套Spatial220；记录suite/taskname/maxsteps与loader源码快照。用户本轮授权agent执行；保留768MiB保护/原功耗/重复native expert释放，仅一个任务。
+
 - 慢参考单次dde7d722已完成：Spatial0/H25N5q5d5/state80/原始attention/无图/author_order，220步timeout、80.990秒/完整median1842.92ms、0断供/无RAM保护触发，闭合70步/碗maxlift20.18cm，非真实异步。实际noise/previous保存，handoff_audit通过43个真实目标、215步pending旧动作、220步来源/gain1/裁切。9ea52871三组GPU sourcebody/Torchbridge逐步差全0；旧87dd5652 raw差.002391/.001569/1.19e-7；未证明失败因果、不称JAX/XLA/全encoder/所有输入等价。详见RTC_CORRECTNESS_RECHECK.md。默认/加速不替换，不扩测任务，未装LeRobot依赖。
 
 - 最新用户授权由agent建立慢速正确性参考，不再扩测/调参/加速：新增rtc_author_source.py执行作者原函数体，窄Torch适配vmap/scan/vjp（非JAX/XLA验证、共享同原始expert/KV），audit_rtc_author_source。旧87dd5652原始expert H25三case有一例raw .00156857（末步VJP差.00184537）；显式author_order候选按源tensor标量/clean乘法顺序/未化简gain/累加tau，9ea52871三case每步input/velocity/clean/error/VJP/output/mask/raw差全0，冻结原始权重，无varlen/图。默认旧路径不自动换；--author-order-reference仅受控d5禁加速/actual，必须新GPU gate/作者SHA一致，完整保存noise/previous_raw。历史29152932离线oldtail/裁切/来源220步通过但目标输入未存，不能当完整端到端证明。下一步仅一个Spatial0慢参考任务并审计实际输入，不称官方完整复现/失败根因已定。

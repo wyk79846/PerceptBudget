@@ -73,7 +73,11 @@ def rollout(config, run, gate, task_id):
     mem('before_model_load')
     torch.use_deterministic_algorithms(True)
     from flash_rt.subgraphs.pi05.context_action import enable
-    task = base._load_tasks([task_id], ['libero_spatial'])[0]
+    if config.get('rtc_suite','libero_spatial') == 'libero_10':
+        from scripts.eval_seam_sync import get_tasks
+        task=get_tasks([task_id])[0]
+    else:
+        task = base._load_tasks([task_id], ['libero_spatial'])[0]
     stats = load_libero_norm_stats(config['norm_stats_path'])
     model = base._load_and_check_model(config, torch)
     mem('after_model_load')
@@ -112,6 +116,7 @@ def rollout(config, run, gate, task_id):
         record['config_snapshot'] = config
         base._write_json_atomic(run/'run.json', record)
         result = dict(status='preflight_completed', task_id=task_id, timing=timing,
+                      suite=task['suite'],task_name=task['task_name'],max_steps=task['max_steps'],
                       initial_delay_steps=initial_delay, original_source_hashes=provenance,
                       graph_audit=graph_audit,
                       simulation_optimization=False,
@@ -207,6 +212,7 @@ def main():
     parser.add_argument('--author-order-reference',action='store_true',help='Slow original attention/expert and author-source operation order; controlled audit only')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
+    parser.add_argument('--suite',choices=('libero_spatial','libero_10'),default='libero_spatial')
     parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
@@ -247,7 +253,8 @@ def main():
     config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
-    config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'], task_ids=[args.task_id])
+    config['rtc_suite']=args.suite
+    config['screen'].update(seed=7, init_state_index=0, suites=[args.suite], task_ids=[args.task_id])
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl', CUBLAS_WORKSPACE_CONFIG=':4096:8')
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -257,7 +264,8 @@ def main():
                      'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
                      'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
-                     'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py'):
+                     'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py',
+                     'scripts/eval_seam_sync.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)
