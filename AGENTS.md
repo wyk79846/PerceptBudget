@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户批准FlashRT编码+OpenPI原始专家正确性参考。3b224fc新增openpi_reference.py/rtc_openpi.py/eval_rtc_openpi.py，隔离原始Gemma模块，AST原方法体不重写；原checkpoint suffix混合精度冻结，只共享prefix KV，bootstrap也原专家。作者Euler顺序canonical gate d9835f75对独立7c7d1e10五步速度/VJP/最终raw全0，源码SHA门禁；首gate a85cb455拆分Euler参考raw差.005876未过保留，不放宽门槛。实际task0预检571c2e57完整eager 1837.19ms、20Hz初始delay37>H20-s5=15，状态infeasible_before_episode，无正式episode/成功率/断供，正常结束未触发768MiB保护。参考用heuristic-first，不与393ms直接比较性能。仿真优化关闭，未改FlashRT/依赖/默认/H/权重，未训练；312pass/9skip+178subtests。详情RTC_ORIGINAL_REFERENCE.md。后续需保真执行加速才能验证真实异步，不能假称已完成。
+
 - 2026-10-19 用户要求继续定位：逐层首差在动作输入投影（项目BF16 matmul先舍入+加bias再舍入 vs原OpenPI FP32投影转BF16）；相对.2839%/max.03125，独立参考只换同顺序后与项目该层逐位同。第一层Ada差1.406%；逐层trace41ec3e4a。固定首步相同残差单项消融：输出dt折叠clean-VJP差28.79%、输入BF16 16.51%、timeMLP BF16 31.00%，不可相加/不能当成功率因果。诊断方法enable_reference_projections默认关闭，仅原4个FP32投影权重，输出非预折叠；cf5445c7未融合首步梯度差52.57→43.96%，尚未对齐，不接正式CLI/不批测/不称已修复。仍需time style/Ada/激活残差/attention精度逐项核对。309pass/9skip+178subtests；无FlashRT修改。详见RTC_CORRECTNESS_AUDIT.md首差消融追加。
 
 - 2026-10-19 用户强调核对算法并实现正确pi05异步。新增audit_openpi_expert.py隔离加载OpenPI原始Gemma源码+原始checkpoint专家，FP32动作/time投影、norm调制FP32、其余BF16；不安装/改transformers。录制prefix KV先逆FlashRT RoPE交错排列。独立参考run4bfa20b7最终raw相对融合已录1.630%/max.019086；同每步输入/残差且18层KV逐位门禁通过的cb3b3e95，速度场差.43–.69%，clean-VJP差13–52%，关闭融合仍近似同差。恢复底层速度VJP差.45–.73%，相减放大不能直接判反传公式错误，仍未等价通过/未定位首层差异或失败因果。新增Algorithm1时间线独立测试通过（非完整竞态/20Hz证明），308pass/9skip+178subtests。详见RTC_CORRECTNESS_AUDIT.md；不批测、不启用仿真优化、不称393ms版本正确性验收。作者JAX全模型未跑；已跑OpenPI专家但encoder未独立验证。

@@ -17,6 +17,8 @@ def _source_class(path, name, methods, scope):
     tree = ast.parse(path.read_text())
     original = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == name)
     original.body = [n for n in original.body if isinstance(n, ast.FunctionDef) and n.name in methods]
+    if {n.name for n in original.body} != methods:
+        raise ValueError('OpenPI source methods missing: '+name)
     original.bases = [ast.Attribute(value=ast.Name(id='nn', ctx=ast.Load()), attr='Module', ctx=ast.Load())]
     original.decorator_list = []
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in (

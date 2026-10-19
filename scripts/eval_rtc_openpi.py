@@ -179,6 +179,7 @@ def main():
                 config['verified_reference_run'] = str(args.verified_run.resolve())
                 result = rollout(config, run, gate, args.task_id)
             print(json.dumps(result), flush=True)
+            return 0 if result['status'] == 'completed' else 2
         except BaseException as exc:
             result.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
             raise
@@ -188,4 +189,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
