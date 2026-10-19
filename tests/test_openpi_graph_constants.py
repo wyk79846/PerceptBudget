@@ -52,3 +52,34 @@ def test_exact_length_refresh_changes_shape_without_padding():
         assert expert.keys.shape[-2] == valid
         assert expert.prefix_mask.shape == (1,valid)
         assert expert.prefix_mask.all()
+
+
+def test_changed_length_fallback_keeps_captured_context_and_reuses_weights():
+    from types import SimpleNamespace
+    from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    adapter = OriginalOpenPiRTCAdapter.__new__(OriginalOpenPiRTCAdapter)
+    suffix,keys,values = object(),object(),object()
+    cached = SimpleNamespace(suffix=suffix,keys=keys,values=values)
+    adapter.graph = object()
+    adapter.graph_prefix_length = 570
+    adapter.graph_expert = adapter.expert = cached
+    adapter.fallback_expert = None
+    assert not adapter._select_expert(569)
+    assert adapter.expert is not cached
+    assert adapter.expert.suffix is suffix
+    assert adapter.expert.keys is adapter.expert.values is None
+    assert (cached.keys,cached.values) == (keys,values)
+    fallback = adapter.expert
+    assert not adapter._select_expert(563)
+    assert adapter.expert is fallback
+    assert adapter._select_expert(570)
+    assert adapter.expert is cached
+
+
+def test_prepared_adapter_refuses_runtime_recapture():
+    import pytest
+    from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    adapter=OriginalOpenPiRTCAdapter.__new__(OriginalOpenPiRTCAdapter)
+    adapter.graph=object()
+    with pytest.raises(RuntimeError,match='runtime recapture is forbidden'):
+        adapter.prepare_graph(None)

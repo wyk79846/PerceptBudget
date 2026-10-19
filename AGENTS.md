@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户要求修state换长度卡顿。当前取代e85cb88自动重捕获：仅保留一张exact图，其他长度回退原版eager（共享权重、独立KV），恢复原长度复用图，重复prepare明确拒绝。完整44a69f7a合成state切换573/557/573/570，raw/VJPnorm差全0，0重建，完整1856/1823/1818/563ms；原长稳态median563.51ms，初始化4.97秒另计。只是取消6秒建图停顿，不是所有长度保持564ms/真实异步，CLI仍timing-only。多图完整9c21b280触发765.8MiB保护未开始任务，错误JIT和全模块图不采用；仅FFN图虽exact但约1.31s未集成，废案源码均在任务产出source，主干不留。未改FlashRT/模型配置/功耗、未训练/用子agent。详见RTC_ORIGINAL_REFERENCE.md最后小节。
+
 - 2026-10-19 用户要求先state再复查旧加速失败路径。exact-length单图释放/重捕获适配新增，563/569/570三次原版核对raw/VJPnorm差全0（44897537），但准备6.32–6.34秒，不能宣称连续异步可用，CLI仍仅timing-only。旧路径独立复查1038e871共享KVexact但fused/unfused首步速度/VJP max .016214/.014528，reference-projections仍.012237/.013376，未达1e-4，不融合旧内核。没有实际任务成败复测，不称已复现原版任务成功；详见RTC_ORIGINAL_REFERENCE.md。FlashRT/H/N/精度/state容量/频率不改，无子agent/训练。
 
 - 2026-10-19 用户授权原始专家保真加速。新增openpi_graph.py/probe_openpi_graph.py，原始计算+作者Euler不改，仅固定FP32 timestep与隔离suffix局部固定mask常量提前创建（全局torch不改）。exact prefix图保留context强引用、替换地址拒绝；可原地更新同长度KV。f275749a专家普通1449.84→图208.83ms，5步速度/VJP/raw独立差全0、动态noise/target/d/s与KV内容差0且输出改变。完整79c21c1f固定观测计时573.29ms（三次568.96–578.25）vs此前1837.19，live gate raw/norm差0、建图4.86s另计。CLI --cuda-graph强制仅--timing-only，不运行变长state episode、不报成功率/Hz。固定pad592方案55e51f7a相对有效长度独立raw差.008165未过，不采用；首次578cc0ee因mask构造捕获invalid保留。运行均有768MiB保护未触发，未改FlashRT/默认/H/N/精度/功耗。315pass/9skip+178subtests。详见RTC_ORIGINAL_REFERENCE.md追加；不要把专家209ms当完整请求或把573ms叫真异步成功。下步需保真处理实际prefix长度与继续压延迟。

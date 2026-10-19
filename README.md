@@ -1,6 +1,6 @@
 # PerceptBudget
 
-2026-10-19最新：正确性参考采用FlashRT编码＋OpenPI原始专家。固定输入下，原始专家CUDA图约209ms、完整请求约573ms（原始eager完整约1837ms），逐步速度/VJP及最终动作门禁差0。当前只支持精确固定prefix长度的计时，**不是变长state实际任务或成功率验证**。详见[原始参考路径](RTC_ORIGINAL_REFERENCE.md)。全项目默认未替换。
+2026-10-19最新：正确性参考采用FlashRT编码＋OpenPI原始专家。固定长度完整请求约564ms；state换长度后不再重新建图，而回退原始专家约1.82–1.86秒，恢复原长度可复用原图。四次合成state切换动作与VJP范数核对差0、重建0；**尚未实现所有长度快速推理，也不是实际异步任务或成功率验证**。详见[原始参考路径](RTC_ORIGINAL_REFERENCE.md)。全项目默认未替换。
 
 新实验默认 `state_prompt_capacity=80`，指文字指令与state合计的物理预留token数；图像token另算。完整分词不变、超限报错不截断，历史run配置和容量计时不改写。
 

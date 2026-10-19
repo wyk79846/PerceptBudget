@@ -12,10 +12,13 @@ class OriginalOpenPiRTCAdapter:
         self.latency_estimate_seconds = 0.
         self.graph = None
         self.capture_seconds = 0.
-        self.graph_enabled = False
+        self.graph_expert = None
+        self.fallback_expert = None
 
     def prepare_graph(self, previous_raw):
         """Gate one exact prefix shape; never pad state tokens for capture."""
+        if self.graph is not None:
+            raise RuntimeError('graph already prepared; runtime recapture is forbidden')
         import numpy as np
         from perceptbudget.openpi_reference import sample_original_rtc
         from perceptbudget.openpi_graph import CapturedOriginalRtc
@@ -26,26 +29,34 @@ class OriginalOpenPiRTCAdapter:
         delay = min(5,len(previous))
         reference, norms = sample_original_rtc(self.expert,noise,previous,delay,executed)
         started = time.monotonic()
-        self.graph = CapturedOriginalRtc(self.expert,noise)
+        candidate = CapturedOriginalRtc(self.expert,noise)
         self.capture_seconds = time.monotonic()-started
-        raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
+        raw, _, corrections = candidate.replay(noise,previous,delay,executed)
         raw_error = float((raw-reference).abs().max())
         norm_error = float((corrections.norm(dim=(1,2))-torch.tensor(norms,device='cuda')).abs().max())
         import math
         if not math.isfinite(raw_error) or not math.isfinite(norm_error) or raw_error >= 1e-4 or norm_error >= 1e-4:
             raise RuntimeError('live original CUDA graph parity failed')
+        self.graph = candidate
         self.graph_prefix_length = int(self.expert.prefix_mask.shape[1])
-        self.graph_enabled = True
+        self.graph_expert = self.expert
         return dict(raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,passed=True,
                     prefix_length=self.graph_prefix_length,capture_seconds=self.capture_seconds,
-                    limitation='length changes require explicit recapture; capture latency is not hidden')
+                    limitation='other prefix lengths use original eager solver, never runtime recapture')
 
-    def _drop_graph(self):
-        """Bound capture memory to one length, including on capture failure."""
-        import gc
-        self.graph = None
-        gc.collect()
-        self.torch.cuda.empty_cache()
+    def _select_expert(self, valid):
+        """Keep the captured KV buffers intact; share frozen weights only."""
+        if self.graph is None:
+            return False
+        if valid == self.graph_prefix_length:
+            self.expert = self.graph_expert
+            return True
+        if self.fallback_expert is None:
+            import copy
+            self.fallback_expert = copy.copy(self.graph_expert)
+            self.fallback_expert.keys = self.fallback_expert.values = None
+        self.expert = self.fallback_expert
+        return False
 
     def estimate_delay_steps(self, period):
         import math
@@ -65,24 +76,11 @@ class OriginalOpenPiRTCAdapter:
             pl._context_graph.replay(pl._graph_stream)
         pipe._graph_torch_stream.synchronize()
         valid = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
-        rebuilt = False
-        prepare_seconds = 0.
-        if self.graph is not None and valid != self.graph_prefix_length:
-            self._drop_graph()
+        use_graph = self._select_expert(valid)
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
-        if self.graph_enabled and self.graph is None and previous_raw is not None:
-            started = time.monotonic()
-            try:
-                gate = self.prepare_graph(previous_raw)
-            except BaseException:
-                self._drop_graph()
-                raise
-            rebuilt = True
-            prepare_seconds = time.monotonic()-started
-            request['original_graph_gate'] = gate
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
-        if self.graph is not None and previous is not None:
+        if use_graph and previous is not None:
             raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
             norms = corrections.norm(dim=(1,2)).cpu().tolist()
         else:
@@ -93,10 +91,11 @@ class OriginalOpenPiRTCAdapter:
         request['actions_raw'] = raw_actions.tolist()
         request.setdefault('rtc_guidance', {}).update(dict(
             delay_estimate_steps=delay, executed_steps=executed, guidance_enabled=previous is not None,
-            solver_backend='original_openpi_cuda_graph' if self.graph is not None and previous is not None else 'original_openpi_eager_vjp',
+            solver_backend='original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp',
             expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=5.,
-            context_graph_rebuilt=rebuilt, context_prepare_seconds=prepare_seconds,
+            context_graph_rebuilt=False, context_prepare_seconds=0.,
+            variable_length_fallback=self.graph is not None and not use_graph,
             state_in_prompt=snapshot.get('state') is not None))
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['inference_ended_monotonic'] = time.monotonic()
@@ -113,6 +112,7 @@ class OriginalOpenPiRTCAdapter:
         import gc
         used_graph = self.graph is not None
         self.graph = None
+        self.graph_expert = self.fallback_expert = None
         self.expert = None
         gc.collect()
         self.torch.cuda.empty_cache()

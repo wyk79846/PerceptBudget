@@ -103,6 +103,34 @@ def rollout(config, run, gate, task_id):
         base._write_json_atomic(run/'summary.json', result)
         print('preflight='+json.dumps(result), flush=True)
         if config.get('original_timing_only'):
+            if config.get('original_state_switches'):
+                from perceptbudget.openpi_reference import sample_original_rtc
+                switches=[]
+                for state in (np.zeros_like(snapshot['state']),np.full_like(snapshot['state'],-.99),
+                              np.full_like(snapshot['state'],.99),snapshot['state']):
+                    changed=dict(snapshot,state=state)
+                    rng=torch.cuda.get_rng_state()
+                    request={}
+                    adapter.predict(changed,task['instruction'],previous,delay=5,executed=5,request=request)
+                    guidance=request['rtc_guidance']
+                    torch.cuda.set_rng_state(rng)
+                    noise=torch.randn(config['H'],32,device='cuda',dtype=torch.float32)
+                    ref,norms=sample_original_rtc(adapter.expert,noise,
+                        torch.as_tensor(previous,device='cuda'),5,5)
+                    error=float(np.abs(ref.cpu().numpy()-np.asarray(request['actions_raw'])).max())
+                    norm_error=float(np.max(np.abs(np.asarray(norms)-np.asarray(guidance['vjp_norms']))))
+                    row=dict(valid_prefix_length=guidance['valid_prefix_length'],raw_max_abs=error,
+                        vjp_norm_max_abs=norm_error,solver_backend=guidance['solver_backend'],
+                        context_graph_rebuilt=guidance['context_graph_rebuilt'],
+                        context_prepare_seconds=guidance['context_prepare_seconds'],
+                        full_request_ms=(request['inference_ended_monotonic']-request['inference_started_monotonic'])*1000)
+                    switches.append(row)
+                    result['state_switches']=switches
+                    base._write_json_atomic(run/'summary.json',result)
+                    if (not np.isfinite(error) or not np.isfinite(norm_error) or max(error,norm_error)>=1e-4
+                            or guidance['context_graph_rebuilt'] or guidance['context_prepare_seconds']):
+                        raise RuntimeError('state switch parity or no-runtime-capture gate failed')
+                    print('state_switch='+json.dumps(row),flush=True)
             adapter.release_graph()
             result.update(status='completed', timing_only=True, episode_started=False,
                           note='same observation/full context + original guided expert; no task success rate')
@@ -148,10 +176,13 @@ def main():
     parser.add_argument('--reference-fixture', type=Path)
     parser.add_argument('--timing-only', action='store_true')
     parser.add_argument('--cuda-graph', action='store_true',help='Exact prefix graph: fixed-input timing only')
+    parser.add_argument('--state-switches',action='store_true',help='Validate changed state inputs, no task episode')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     args = parser.parse_args()
     if args.cuda_graph and (not args.timing_only or args.verify_only):
         parser.error('--cuda-graph currently requires --timing-only and a passed --verified-run')
+    if args.state_switches and not (args.cuda_graph and args.timing_only):
+        parser.error('--state-switches requires --cuda-graph --timing-only')
     if not args.verify_only and args.verified_run is None:
         parser.error('require --verify-only or a passed --verified-run')
     if args.verify_only and args.reference_fixture is None:
@@ -163,7 +194,8 @@ def main():
         rtc_wait_for_delay_feasibility=False, release_rtc_graph_before_artifacts=True,
         disk_backed_frames=True, pending_arm_gain=1.0,
         rtc_expert='original_openpi_source', rtc_action_state_dtype='float32')
-    config.update(original_cuda_graph=args.cuda_graph,original_timing_only=args.timing_only)
+    config.update(original_cuda_graph=args.cuda_graph,original_timing_only=args.timing_only,
+                  original_state_switches=args.state_switches)
     config.pop('controlled_delay_steps', None)
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
