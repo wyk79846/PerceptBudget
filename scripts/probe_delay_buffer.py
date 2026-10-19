@@ -603,7 +603,14 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
 
     stop = None
     status = 'invalid'
+    env_context = None
+    env_audit = None
     try:
+        if config.get('reuse_control_forward'):
+            from perceptbudget.env_forward import reuse_control_forward
+            # reset() above replaces MjSim; install only on the live instance.
+            env_context = reuse_control_forward(env)
+            env_audit = env_context.__enter__()
         future, current_request = submit(observation, 0)
         future.result()  # Only bootstrap blocks; no control ticks yet.
         harvest(0)
@@ -734,6 +741,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                                 wall_seconds=stop - active_pause['start_monotonic'])
         monitor.stop()
         executor.shutdown(wait=True)
+        if env_audit is not None:
+            env_context.__exit__(None, None, None)
         if rtc_adapter is not None and config.get('release_rtc_graph_before_artifacts'):
             released = rtc_adapter.release_graph()
             base._trace(stream, 'rtc_graph_released_before_artifacts', details=released)
@@ -796,6 +805,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                                'pre_post_state': all('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows),
                                'scene_contacts': all('contacts' in r['after'] for r in rows),
                                'frames': len(frames) == len(rows) + 1}}
+    if env_audit is not None:
+        result['env_forward_optimization'] = env_audit
     print(json.dumps({k: result[k] for k in ('q', 'status', 'steps', 'real_seconds', 'post_bootstrap_control_hz', 'tail_execution_steps', 'field_checks')}, ensure_ascii=False), flush=True)
     return result
 

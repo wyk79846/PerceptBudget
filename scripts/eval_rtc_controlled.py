@@ -269,16 +269,12 @@ def main():
                 directory.mkdir()
                 print(name + ' start', flush=True)
                 with (directory / 'trace.jsonl').open('w') as stream:
-                    from contextlib import nullcontext
-                    from perceptbudget.env_forward import reuse_control_forward
-                    context = reuse_control_forward(env) if args.reuse_control_forward else nullcontext()
-                    with context as env_audit:
-                        episode = probe.run_episode(
-                            env, task, args.q, model, stats, config, np, torch,
-                            directory, stream, rtc_adapter=adapter,
-                            condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
-                    if env_audit is not None:
-                        episode['env_forward_optimization']=env_audit
+                    episode = probe.run_episode(
+                        env, task, args.q, model, stats, config, np, torch,
+                        directory, stream, rtc_adapter=adapter,
+                        condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
+                if args.reuse_control_forward and not episode['env_forward_optimization']['skipped_forward_calls']:
+                    raise RuntimeError('environment forward optimization did not activate')
                 requests = json.loads((directory / f'q{args.q}_requests.json').read_text())
                 if config['state_enabled']:
                     assert all(np.asarray(r['model_state']).shape == (8,) and
