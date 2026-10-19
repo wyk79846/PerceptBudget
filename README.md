@@ -1,5 +1,7 @@
 # PerceptBudget
 
+2026-10-19用户确认：新实验默认 `state_prompt_capacity=80`，指文字指令与state合计的物理预留token数；图像token另算。原分词逻辑不变、超限报错不截断，历史run配置与64容量计时不改写。80容量延迟与成功率尚未实测。
+
 RTC最新可选性能试验及计时边界见 [RTC_NATIVE_PROBE.md](RTC_NATIVE_PROBE.md)。当前固定输入可测约393ms，但任务中约425ms，尚未稳定低于400ms。缩减文字预留不截断实际输入，超容量报错；这些优化均未切为全项目默认。
 
 当前开发入口（2026-10-17）：主项目固定为 `/home/wyk/workspace/PerceptBudget`，FlashRT 固定为 `config.json` 指向的 `/home/wyk/workspace/FlashRT-upstream`。两仓库当前开发分支均为 `project/perceptbudget`。SEAM 已整合到这两个目录，后续修改直接在此进行。旧 SEAM 工作区转入任务产出归档，历史结果路径保留原样。

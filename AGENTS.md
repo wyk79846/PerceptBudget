@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户确认文字/state容量选80：config.json新增state_prompt_capacity=80，作为新实验默认，图像token另计、完整分词不变、超过80报错不截断，CLI仍可显式覆盖用于诊断。历史run和64容量数据保持原样，不把393/425ms归给80。仅做配置/边界测试，不自动重跑GPU任务；本次不改模型/H/N/state开关/FlashRT或动作衔接。
+
 - 2026-10-19 用户要求检查capacity200→64为何改变轨迹：仅新增diagnose_state_capacity.py及比较测试，不改生产/FlashRT/权重。固定同图/state/token/noise/target，200/64/200隔离对照。首轮有效encoder/RTC全逐位一致；追加bootstrap轮64自动选核encoder第0层FFN down日志best1→5，首次差异在该GEMM输出、输入逐位同，200跨轮与重复同。三worker位置/有效长度一致，encoder/RTC padding污染检查均不影响有效输出。native bootstrap首层注意力输入相同、输出有差异；固定seed7 native首块cap200/64 max .0078125，各自逐位匹配历史104步/187步任务首块。不能把全部变动只归容量舍入/只归splitKV，Torch确定性不锁原生autotune。详见RTC_CAPACITY_DIAGNOSIS.md；原始run M1/20261019T053108.377723Z-capacity-numeric-diagnosis-aeab67f7及M1/20261019T053555.980538Z-capacity-numeric-diagnosis-c81702d8。首探针OpenPI导入失败invalid保留。不自动修选核或扩测任务。
 
 - 2026-10-19 用户要求尽量压到400ms。项目侧compact_state可选固定prompt容量200→64，原200分词/完整图像/state保留，实际prompt>64明确报错不截断，不改FlashRT/default。新CLI --state-prompt-capacity 64和可选--profile-rtc-stages。task0 compact64成功187步16.391s，任务内median424.91/p95432.12ms，preflight403.18ms，参考差0；较旧104步9.62s轨迹更长，不说任务更快。另固定输入同配置5次387–395ms/median392.51ms，普通同compact64为316.81ms；只能说固定输入低于400，任务中/跨运行未稳定达标。当前瓶颈图像+context约261ms/专家124ms/其余约6ms。原生梯度GEMM+432MiB cache没有加速，已从主代码撤去，原始代码/结果归档M1/20261019T051905.731157Z-rtc-native-ffn-gate-77b30896/source。历史十任务仅FFN组53–61文字token，本task58–61，64容量不是通用保证。308tests/9skip。详见RTC_NATIVE_PROBE.md，默认不变，不自动扩测或换计时口径。

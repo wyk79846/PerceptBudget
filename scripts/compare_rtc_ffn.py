@@ -26,6 +26,8 @@ def read_case(path,task_id,mode,config):
           'flashrt_revision','rtc_validation_before_task')
     for key in keys:
         if saved.get(key)!=config.get(key): raise ValueError(f'incompatible reuse: {path} {key}')
+    if (saved.get('state_prompt_capacity') or 200)!=(config.get('state_prompt_capacity') or 200):
+        raise ValueError('incompatible reuse: state prompt capacity')
     if bool(saved.get('rtc_native_fused_ffn',False))!=(mode=='fused'):
         raise ValueError('wrong fused mode')
     for key in ('seed','init_state_index'):
@@ -73,7 +75,8 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--resume-from',type=Path)
     args=parser.parse_args()
-    config=load_config(repo_root=ROOT)
+    config=(json.loads((args.resume_from/'run.json').read_text())['config_snapshot']
+            if args.resume_from else load_config(repo_root=ROOT))
     config.update(H=20,N=5,state_enabled=True,controlled_delay_steps=5,candidate_q=[5],
         rtc_attention_backend='flash-varlen',rtc_deterministic_attention=True,rtc_validation_before_task=True)
     config['screen'].update(seed=7,init_state_index=0,suites=['libero_spatial'])
@@ -85,7 +88,10 @@ def main():
         run=create_run(config,'M1','rtc-ffn-paired-spatial',repo_root=ROOT)
         result={'status':'running','expected_cases':20,'cases':[]}
         for (task_id,mode),name in REUSE.items():
-            result['cases'].append(read_case(Path(config['output_root'])/'M1'/name,task_id,mode,config))
+            try:
+                result['cases'].append(read_case(Path(config['output_root'])/'M1'/name,task_id,mode,config))
+            except ValueError as exc:
+                print(f'skip incompatible reuse task={task_id} mode={mode}: {exc}',flush=True)
         (run/'workers').mkdir()
         shutil.copy2(__file__,run/'runner.py')
     print('run_dir='+str(run),flush=True)
@@ -99,7 +105,8 @@ def main():
                 config['python_executable'],'-u',str(ROOT/'scripts/eval_rtc_controlled.py'),
                 '--rtc-only','--suite','libero_spatial','--task-id',str(task_id),'--q','5',
                 '--denoising-steps','5','--attention-backend','flash-varlen',
-                '--deterministic-attention','--state','--preflight-rtc']
+                '--deterministic-attention','--state','--preflight-rtc',
+                '--state-prompt-capacity',str(config.get('state_prompt_capacity') or 200)]
             if mode=='fused': command.append('--native-fused-ffn')
             print(f'task={task_id} mode={mode} start',flush=True)
             with log.open('w') as stream:

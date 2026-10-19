@@ -20,6 +20,7 @@
   "model_lifetime": "session",
   "refresh_anchor": "request",
   "state_enabled": true,
+  "state_prompt_capacity": 80,
   "H": 20,
   "N": 10,
   "precision": "bfloat16",
