@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户问为何env.step慢及能否改进。新增仅诊断scripts/probe_env_step.py，无模型，Spatial0固定动作各30步，保持2ms物理步长/25子步/两路256图像。M1/20261019T064241.131452Z-env-step-profile-7cfd838b：默认55.139ms，BLAS8→1仅54.976ms；主要forward21.50/physics11.66/controller9.39/dispatch5.43/cameras4.72ms。发现外层forward和controller.update每子步各一次；进程内试跳过控制器内forward后44.637ms，省10.50ms，逐步state最大6.63e-15/ctrl2.78e-17/双路图像全一致。仅固定动作短探针，未改正式runner/依赖/FlashRT，不能保证移动接触等价或并行20Hz；还需外部约6ms及资源争用。原始结果和analysis.md已落盘。首探针25444746缺threadpoolctl建环境前invalid保留，后不安装依赖而用加载OpenBLAS接口；中间bf499175仅默认/单线程。没有自动重测成功率或提升正式默认。
+
 - 2026-10-19 Spatial纯异步十任务批次已全部完成（5e0a947编排，推理bf13753）：父run=M1/20261019T061721.555052Z-rtc-async-spatial-ten-10cc127a。10项全新测有效10/10，成功4/10(task0/2/6/7)，其余220步超时，全部0断供/无异常退出。任务步数176/220/134/220/220/220/140/136/220/220；成功平均回合真实10.599s；非bootstrap292次请求合并中位417.62ms。控制13.19–14.90Hz，非稳定20Hz。历史队列max292次核查通过，1855步pending时执行、gain全1、来源worker审计通过。H20/N5/state/80/s_min5/队列10保持，不复用三项、无模型/FlashRT修改。结果summary.md及audit.md。当前不能替代旧M1正式基线，未自动扩测/调参。
 
 - 2026-10-19 用户要求Spatial全部10任务纯异步成功率。5e0a947新增只编排的eval_rtc_async_screen.py，10项全部新测不复用前三项；H20/N5/BF16/state/80/融合快后端、算法1队列max10、s_min5、原速无固定冻结，seed7/init0。唯一服务perceptbudget-rtc-async-ten-20261019，日志/tmp/perceptbudget-rtc-async-ten-20261019.log；父run=M1/20261019T061721.555052Z-rtc-async-spatial-ten-10cc127a。每任务guarded_run+GPU锁，异常停批次，可--resume-from只续缺项。运行中禁止改推理代码；实际控制Hz单独记录，不承诺20Hz，未完成不能报最终成功率。原始三任务仅历史对照。
