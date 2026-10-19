@@ -609,6 +609,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             harvest(step)
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
+            if (rtc_adapter is not None and config.get('rtc_wait_for_delay_feasibility')
+                    and future is None and step > 0 and due):
+                recent_rows = rows[-16:]
+                periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+                           for a, b in zip(recent_rows, recent_rows[1:])]
+                measured_period = float(np.median(periods)) if periods else period
+                # Preserve the audited d<=s constraint; q is a minimum request
+                # interval, not a promise to overlap two inference requests.
+                due = step - previous_request_step >= rtc_adapter.estimate_delay_steps(measured_period)
             if advance_handoff:
                 due = (future is None and advance_prefix_due(
                     step, previous_commit_step, q, prefix_adapter.prefix_len))

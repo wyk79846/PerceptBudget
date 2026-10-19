@@ -101,6 +101,7 @@ def spatial_screen(config, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--actual-delay', action='store_true', help='No controlled simulator waits; q is minimum feasible refresh interval')
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'flash-varlen', 'fa2-seqused'), default='math')
@@ -120,6 +121,8 @@ def main():
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--resume-from', type=Path, help='Reuse completed tasks from a compatible stopped screen; preserve original attempts')
     args = parser.parse_args()
+    if args.actual_delay and (not args.rtc_only or not args.preflight_rtc or args.spatial_screen or args.worker_run):
+        parser.error('--actual-delay requires single --rtc-only --preflight-rtc')
     if args.fused_attention_ops and not args.native_fused_ffn:
         parser.error('--fused-attention-ops requires --native-fused-ffn')
     if args.state_prompt_capacity is not None and (not args.state or not args.preflight_rtc or args.spatial_screen):
@@ -155,6 +158,11 @@ def main():
                   rtc_profile_stages=args.profile_rtc_stages)
     if args.state_prompt_capacity is not None:
         config['state_prompt_capacity']=args.state_prompt_capacity
+    if args.actual_delay:
+        config.pop('controlled_delay_steps', None)
+        config.update(execution_mode='rtc_actual_delay_no_simulation_freeze',
+                      rtc_wait_for_delay_feasibility=True,
+                      q_semantics='minimum request interval, additionally s>=estimated d; serialized inference')
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -166,13 +174,13 @@ def main():
             run = args.worker_run/'tasks'/f'task{args.task_id:02d}'
             base._write_json_atomic(run/'run.json', {'status': 'created', 'config_snapshot': config})
         else:
-            run = create_run(config, 'M1', f'rtc-controlled-d5-q{args.q}' + ('-state' if args.state else ''), repo_root=ROOT)
+            run = create_run(config, 'M1', ('rtc-actual-delay' if args.actual_delay else 'rtc-controlled-d5')+f'-q{args.q}' + ('-state' if args.state else ''), repo_root=ROOT)
         print('run_dir=' + str(run), flush=True)
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
                      'perceptbudget/rtc_expert.py', 'perceptbudget/rtc_native_probe.py',
                      'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu',
-                     'perceptbudget/model.py','perceptbudget/compact_state.py'):
+                     'perceptbudget/model.py','perceptbudget/compact_state.py','perceptbudget/gemm_policy.py'):
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
@@ -198,7 +206,8 @@ def main():
         _, env_class = base._libero_api()
         env = sync.make_env(env_class, task)
         result = {'status': 'running', 'task': task, 'conditions': {},
-                  'note': 'controlled simulation delay d5; wall-clock simulation pauses; not real-time'}
+                  'note': ('actual-delay asynchronous execution; no controlled simulation freeze; measured tick rates reported separately'
+                           if args.actual_delay else 'controlled simulation delay d5; wall-clock simulation pauses; not real-time')}
         try:
             obs, _ = base._prepare_env_episode(env, task, np)
             base._infer_actions(model, base._make_snapshot(obs, stats, config['state_enabled']),
@@ -226,6 +235,8 @@ def main():
                                            delay=5, executed=args.q, request={})
                 result['preflight_full_request_warm'] = timed(torch, inference)
                 result['preflight_expert_graph_warm'] = timed(torch, adapter.graph.graph.replay)
+                if args.actual_delay:
+                    adapter.latency_estimate_seconds=result['preflight_full_request_warm']['median_ms']/1000
                 result['preflight_seconds'] = time.monotonic()-started
                 base._write_json_atomic(run/'summary.json', result)
                 print('preflight='+json.dumps({k: v for k, v in result.items() if k.startswith('preflight')}), flush=True)
@@ -245,8 +256,12 @@ def main():
                     assert all(np.asarray(r['model_state']).shape == (8,) and
                                np.isfinite(r['model_state']).all() for r in requests)
                 commits = episode['commits'][1:]
-                assert all(c['commit_step'] - c['observation_step'] == 5 for c in commits)
-                assert not episode['underflow_steps']
+                if not args.actual_delay:
+                    assert all(c['commit_step'] - c['observation_step'] == 5 for c in commits)
+                    assert not episode['underflow_steps']
+                else:
+                    assert all('controlled_wait_seconds' not in r for r in requests)
+                    episode['actual_inference_delay_steps']=[c['commit_step']-c['observation_step'] for c in commits]
                 assert all(r['rtc_guidance']['guidance_enabled'] == guided for r in requests[1:])
                 checked = 0
                 for line in (directory / 'trace.jsonl').open():
@@ -260,7 +275,7 @@ def main():
                                           np.asarray(expected, dtype=np.float32))
                     checked += 1
                 episode['executed_actions_audited'] = checked
-                episode['controlled_delay_audit_passed'] = True
+                episode['actual_delay_audit_passed' if args.actual_delay else 'controlled_delay_audit_passed'] = True
                 times = [(r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
                          for r in requests[1:] if 'rtc_reference_audit' not in r]
                 episode['steady_inference_ms'] = ({'count': len(times), 'median': float(np.median(times)),
