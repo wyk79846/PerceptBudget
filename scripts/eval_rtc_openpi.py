@@ -77,7 +77,7 @@ def rollout(config, run, gate, task_id):
         obs, _ = base._prepare_env_episode(env, task, np)
         snapshot = base._make_snapshot(obs, stats, True)
         # Warm native context only; this native action is never executed.
-        base._infer_actions(model, snapshot, task['instruction'], 20, {})
+        base._infer_actions(model, snapshot, task['instruction'], config['H'], {})
         adapter = OriginalOpenPiRTCAdapter(model, torch, config)
         if adapter.expert.provenance != gate['original_source_hashes']:
             raise RuntimeError('original sources changed since verification')
@@ -137,7 +137,7 @@ def rollout(config, run, gate, task_id):
             result.update(status='completed', timing_only=True, episode_started=False,
                           note='same observation/full context + original guided expert; no task success rate')
             return result
-        if 5+initial_delay > 20:
+        if 5+initial_delay > config['H']:
             adapter.release_graph()
             result.update(status='infeasible_before_episode', reason='measured full latency exceeds available H-s old tail; no clipping or horizon change')
             return result
@@ -184,7 +184,11 @@ def main():
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
+    parser.add_argument('--horizon',type=int,choices=(20,50),default=20,
+                        help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
+    if args.horizon != 20 and not args.actual_delay:
+        parser.error('--horizon 50 currently requires explicit --actual-delay experiment')
     if args.actual_delay and (args.controlled_delay_five or args.timing_only or args.verify_only):
         parser.error('--actual-delay cannot combine with controlled delay, timing-only or verify-only')
     if args.actual_delay and not (args.experimental_varlen and args.cuda_graph):
@@ -200,7 +204,7 @@ def main():
     if args.verify_only and args.reference_fixture is None:
         parser.error('--verify-only requires --reference-fixture (author Euler order)')
     config = load_config(repo_root=ROOT)
-    config.update(H=20, N=5, state_enabled=True, state_prompt_capacity=80, candidate_q=[5],
+    config.update(H=args.horizon, N=5, state_enabled=True, state_prompt_capacity=80, candidate_q=[5],
         native_gemm_policy='heuristic-first', execution_mode='original_openpi_rtc_actual_delay',
         rtc_paper_schedule=True, rtc_delay_buffer_size=10, reuse_control_forward=False,
         rtc_wait_for_delay_feasibility=False, release_rtc_graph_before_artifacts=True,
@@ -238,9 +242,14 @@ def main():
                 if not gate.get('passed'):
                     raise RuntimeError('reference gate not passed')
                 gate_config = json.loads((args.verified_run/'run.json').read_text())['config_snapshot']
-                for key in ('H','N','model_path','openpi_root','checkpoint_path'):
+                for key in ('N','model_path','openpi_root','checkpoint_path'):
                     if config.get(key) != gate_config.get(key):
                         raise RuntimeError('reference gate config mismatch: '+key)
+                if config['H'] != gate_config.get('H'):
+                    if not (args.actual_delay and args.experimental_varlen and config['H']==50 and gate_config.get('H')==20):
+                        raise RuntimeError('reference gate config mismatch: H')
+                    config['reference_horizon_transfer']=dict(reference_H=20,experiment_H=50,
+                        limitation='source/checkpoint provenance only; independent H50 numerical parity not established')
                 config['verified_reference_run'] = str(args.verified_run.resolve())
                 result = rollout(config, run, gate, args.task_id)
             print(json.dumps(result), flush=True)
