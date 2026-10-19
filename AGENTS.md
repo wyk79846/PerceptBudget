@@ -1,5 +1,7 @@
 # 协作规则
 
+- 慢参考单次dde7d722已完成：Spatial0/H25N5q5d5/state80/原始attention/无图/author_order，220步timeout、80.990秒/完整median1842.92ms、0断供/无RAM保护触发，闭合70步/碗maxlift20.18cm，非真实异步。实际noise/previous保存，handoff_audit通过43个真实目标、215步pending旧动作、220步来源/gain1/裁切。9ea52871三组GPU sourcebody/Torchbridge逐步差全0；旧87dd5652 raw差.002391/.001569/1.19e-7；未证明失败因果、不称JAX/XLA/全encoder/所有输入等价。详见RTC_CORRECTNESS_RECHECK.md。默认/加速不替换，不扩测任务，未装LeRobot依赖。
+
 - 最新用户授权由agent建立慢速正确性参考，不再扩测/调参/加速：新增rtc_author_source.py执行作者原函数体，窄Torch适配vmap/scan/vjp（非JAX/XLA验证、共享同原始expert/KV），audit_rtc_author_source。旧87dd5652原始expert H25三case有一例raw .00156857（末步VJP差.00184537）；显式author_order候选按源tensor标量/clean乘法顺序/未化简gain/累加tau，9ea52871三case每步input/velocity/clean/error/VJP/output/mask/raw差全0，冻结原始权重，无varlen/图。默认旧路径不自动换；--author-order-reference仅受控d5禁加速/actual，必须新GPU gate/作者SHA一致，完整保存noise/previous_raw。历史29152932离线oldtail/裁切/来源220步通过但目标输入未存，不能当完整端到端证明。下一步仅一个Spatial0慢参考任务并审计实际输入，不称官方完整复现/失败根因已定。
 
 - 用户要求尝试调用LeRobot。本地clean checkout146d8474932c8b566717eb2738ba459337ab71c4，完整RTCProcessor导入缺draccus，未安装/改环境/未启动GPU。新增audit_lerobot_rtc.py仅AST原class body（配置/enum/processor）CPU执行，非完整LeRobot策略或任务。af77fcf4 toy v=2x/time=.6，源码先计算v再requires_grad，捕获velocity输入requires_grad=false，correction=.2而完整VJP应-.04；不改源码，不据此断言用户异地版本相同或当前RTC已正确。完整policy验证仍待依赖与兼容性检查，不能把source-class小测当LeRobot任务复现。

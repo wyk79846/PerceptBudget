@@ -63,7 +63,9 @@ def audit(run):
             and np.array_equal(np.asarray(row['action'],dtype=np.float32),
                 np.asarray(by_id[src['prediction_id']]['actions'][src['offset']],dtype=np.float32)))
     crops=all(r['expired_new_actions']==r['commit_step']-r['observation_step'] for r in commits)
-    return dict(run=str(run),scope='recorded old-tail alignment/history/crop/action provenance; actual solver target/noise not saved in historical runs',
+    saved_inputs=all('rtc_solver_inputs' in r for r in req)
+    return dict(run=str(run),scope='recorded old-tail alignment/history/crop/action provenance; historical unsaved solver targets cannot be checked',
+        actual_solver_inputs_saved=saved_inputs,
         passed=bool(source_valid and crops and all(all(r['checks'].values()) for r in records)),
         source_valid=bool(source_valid),crops_match=crops,controls_checked=len(controls),requests=records)
 
@@ -71,6 +73,10 @@ def audit(run):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('run',type=Path)
+    parser.add_argument('--output',type=Path)
     args=parser.parse_args()
     result=audit(args.run)
+    if args.output:
+        from scripts import eval_q as base
+        base._write_json_atomic(args.output,result)
     print(json.dumps(result),flush=True)
