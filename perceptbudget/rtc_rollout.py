@@ -12,7 +12,8 @@ class RTCGuidanceAdapter:
     def __init__(self, model, torch, *, horizon, num_steps,
                  latency_prior_seconds=0.5994,
                  attention_backend='math', guidance_enabled=True, audit_reference=False,
-                 reference_backend=False, eager_backend=False, native_fused_output_root=None):
+                 reference_backend=False, eager_backend=False, native_fused_output_root=None,
+                 fused_attention_ops=False):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -39,6 +40,10 @@ class RTCGuidanceAdapter:
                 fixed_prefix_capacity=attention_backend != 'flash')
         if native_fused_output_root is not None:
             self.expert.enable_native_fused_ffn(native_fused_output_root)
+        if fused_attention_ops:
+            if native_fused_output_root is None:
+                raise ValueError('fused attention ops require native fused FFN output root')
+            self.expert.enable_fused_attention_ops(native_fused_output_root)
         capture_started = time.monotonic()
         self.graph = (None if self.reference_backend or self.eager_backend else CapturedRtcChunk(
             self.expert.step_delta, sample, num_steps=self.num_steps))
@@ -204,6 +209,7 @@ class RTCGuidanceAdapter:
             'attention_backend': self.attention_backend,
             'vjp_norms': vjp_norms.cpu().tolist(),
             'native_fused_ffn': self.expert.native_fused_ffn,
+            'fused_attention_ops': self.expert.fused_attention_ops,
             'weighted_error_norms': error_norms.cpu().tolist(),
         })
         request['inference_ended_monotonic'] = time.monotonic()

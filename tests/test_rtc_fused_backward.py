@@ -68,3 +68,33 @@ class FusedBackwardTests(unittest.TestCase):
         expected=NativeGeGLU.backward(types.SimpleNamespace(saved_tensors=(g,u)),dy)
         for got,want in zip(out,expected): self.assert_relative(got,want)
         self.assertGreater(float((before-out[0]).abs().max()),0.)
+
+    def test_fused_residual_forward_and_both_gradients(self):
+        from perceptbudget.rtc_native_probe import FusedResidual
+        t=self.torch
+        x=t.randn(20,1024,device='cuda',dtype=t.bfloat16,requires_grad=True)
+        p=t.randn_like(x,requires_grad=True)
+        style=t.randn(20,3072,device='cuda',dtype=t.bfloat16)
+        dy=t.randn_like(x)
+        reference=(x.float()+p.float()*style.float().chunk(3,-1)[2]).bfloat16()
+        expected=t.autograd.grad(reference,(x,p),dy)
+        got=FusedResidual.apply(x,p,style)
+        actual=t.autograd.grad(got,(x,p),dy)
+        self.assertTrue(t.equal(got,reference))
+        for a,b in zip(actual,expected): self.assertTrue(t.equal(a,b))
+
+    def test_fused_qkv_rope_forward_and_gradient(self):
+        from perceptbudget.rtc_native_probe import FusedQKVRope
+        from perceptbudget.rtc_expert import DifferentiableExpert
+        t=self.torch
+        x=t.randn(20,2560,device='cuda',dtype=t.bfloat16,requires_grad=True)
+        rope=t.randn(20,256,device='cuda',dtype=t.bfloat16)
+        reference=(DifferentiableExpert._rope(x[:,:2048].reshape(20,8,256),rope),
+                   DifferentiableExpert._rope(x[:,2048:2304].reshape(20,1,256),rope),
+                   x[:,2304:].reshape(20,1,256))
+        seeds=tuple(t.randn_like(v) for v in reference)
+        expected,=t.autograd.grad(reference,x,seeds)
+        got=FusedQKVRope.apply(x,rope)
+        actual,=t.autograd.grad(got,x,seeds)
+        for a,b in zip(got,reference): self.assertTrue(t.equal(a,b))
+        self.assert_relative(actual,expected,tolerance=1e-5)

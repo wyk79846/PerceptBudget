@@ -25,6 +25,9 @@ def load(output_root):
     p,i = ctypes.c_void_p,ctypes.c_int
     lib.rtc_ada_dx.argtypes = [p,p,p,p,i,i,p]
     lib.rtc_geglu_dx.argtypes = [p,p,p,p,p,i,p]
+    lib.rtc_residual.argtypes = [p,p,p,p,i,i,i,p]
+    lib.rtc_qkv_rope.argtypes = [p,p,p,p,p,i,p]
+    lib.rtc_qkv_rope_dx.argtypes = [p,p,p,p,p,i,p]
     lib.rtc_ada_dx.restype = lib.rtc_geglu_dx.restype = i
     _LIB = lib
 
@@ -64,3 +67,44 @@ def geglu_backward(gate,up,dy):
     if code:
         raise RuntimeError(f'GeGLU VJP CUDA launch failed: {code}')
     return dg,du
+
+
+def residual(x,projected,style,backward=False):
+    import torch
+    _validate(x,projected,style)
+    if x.ndim!=2 or projected.shape!=x.shape or style.shape!=(x.shape[0],3*x.shape[1]):
+        raise ValueError('invalid residual shapes')
+    out=torch.empty_like(x)
+    code=_LIB.rtc_residual(x.data_ptr(),projected.data_ptr(),style.data_ptr(),out.data_ptr(),
+                          *x.shape,int(backward),torch.cuda.current_stream().cuda_stream)
+    if code: raise RuntimeError(f'residual CUDA error {code}')
+    return out
+
+
+def qkv_rope(x,rope):
+    import torch
+    _validate(x,rope)
+    if x.ndim!=2 or x.shape[1]!=2560 or rope.shape!=(x.shape[0],256):
+        raise ValueError('invalid QKV/RoPE shapes')
+    rows=x.shape[0]
+    q=torch.empty((rows,8,256),device=x.device,dtype=x.dtype)
+    k=torch.empty((rows,1,256),device=x.device,dtype=x.dtype)
+    v=torch.empty_like(k)
+    code=_LIB.rtc_qkv_rope(x.data_ptr(),rope.data_ptr(),q.data_ptr(),k.data_ptr(),v.data_ptr(),
+                          rows,torch.cuda.current_stream().cuda_stream)
+    if code: raise RuntimeError(f'QKV RoPE CUDA error {code}')
+    return q,k,v
+
+
+def qkv_rope_backward(dq,dk,dv,rope):
+    import torch
+    dq,dk,dv=(v.contiguous() for v in (dq,dk,dv))
+    _validate(dq,dk,dv,rope)
+    rows=rope.shape[0]
+    if dq.shape!=(rows,8,256) or dk.shape!=(rows,1,256) or dv.shape!=dk.shape:
+        raise ValueError('invalid QKV gradient shapes')
+    out=torch.empty((rows,2560),device=dq.device,dtype=dq.dtype)
+    code=_LIB.rtc_qkv_rope_dx(dq.data_ptr(),dk.data_ptr(),dv.data_ptr(),rope.data_ptr(),
+                             out.data_ptr(),rows,torch.cuda.current_stream().cuda_stream)
+    if code: raise RuntimeError(f'QKV RoPE backward CUDA error {code}')
+    return out

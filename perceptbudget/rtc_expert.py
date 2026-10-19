@@ -206,6 +206,7 @@ class DifferentiableExpert:
                                  f'{tuple(weight.shape)}, {weight.dtype}, {weight.device}')
         self._context = None
         self.native_fused_ffn = False
+        self.fused_attention_ops = False
 
     def enable_native_fused_ffn(self, output_root):
         """Experimental opt-in; call only before capturing a new RTC graph."""
@@ -213,6 +214,11 @@ class DifferentiableExpert:
         load(output_root)
         self._native_ffn_ones = torch.ones(1024, device=self.device, dtype=self.dtype)
         self.native_fused_ffn = True
+
+    def enable_fused_attention_ops(self,output_root):
+        """Opt-in fused Ada/RoPE/residual input VJP; never changes defaults."""
+        self.enable_native_fused_ffn(output_root)
+        self.fused_attention_ops = True
 
     def set_attention_backend(self, name):
         """Select the math, PyTorch Flash SDPA, or FlashRT FA2 backend."""
@@ -395,11 +401,18 @@ class DifferentiableExpert:
         hidden = ((x @ w['action_in_proj_w']).float()
                   + w['action_in_proj_b'].float()).to(self.dtype)
         for i in range(18):
-            norm, gate = self._ada(hidden, ctx['attn'][step, i])
+            if self.fused_attention_ops:
+                from perceptbudget.rtc_native_probe import FusedAda,FusedQKVRope,FusedResidual
+                norm=FusedAda.apply(hidden,ctx['attn'][step,i],self._native_ffn_ones,self.pipeline.fvk)
+            else:
+                norm, gate = self._ada(hidden, ctx['attn'][step, i])
             qkv = norm @ w['attn_qkv_w'][i]
-            q = self._rope(qkv[:, :2048].reshape(self.chunk_size, 8, 256), ctx['rope'])
-            k = self._rope(qkv[:, 2048:2304].reshape(self.chunk_size, 1, 256), ctx['rope'])
-            v = qkv[:, 2304:].reshape(self.chunk_size, 1, 256)
+            if self.fused_attention_ops:
+                q,k,v=FusedQKVRope.apply(qkv,ctx['rope'])
+            else:
+                q = self._rope(qkv[:, :2048].reshape(self.chunk_size, 8, 256), ctx['rope'])
+                k = self._rope(qkv[:, 2048:2304].reshape(self.chunk_size, 1, 256), ctx['rope'])
+                v = qkv[:, 2304:].reshape(self.chunk_size, 1, 256)
             q = q.transpose(0, 1).unsqueeze(0)
             if self.attention_backend_name == 'flash-varlen':
                 attended = _TorchVarlenGqaAttention.apply(
@@ -423,19 +436,23 @@ class DifferentiableExpert:
                         attn_mask=ctx.get('attn_mask'))
             attended = attended.squeeze(0).transpose(0, 1).reshape(self.chunk_size, 2048)
             projected = attended @ w['attn_o_w'][i]
-            hidden = (hidden.float() + projected.float() * gate).to(self.dtype)
+            hidden = (FusedResidual.apply(hidden,projected,ctx['attn'][step,i]) if self.fused_attention_ops
+                      else (hidden.float() + projected.float() * gate).to(self.dtype))
             if self.native_fused_ffn:
                 from perceptbudget.rtc_native_probe import ffn
                 hidden = ffn(hidden, ctx['ffn'][step,i],
                     [w['ffn_gate_w'][i],w['ffn_up_w'][i],w['ffn_down_w'][i]],
                     native=True,gemm=self.pipeline.gemm,fvk=self.pipeline.fvk,
-                    ones=self._native_ffn_ones,fused_backward=True)
+                    ones=self._native_ffn_ones,fused_backward=True,fused_residual=self.fused_attention_ops)
                 continue
             norm, gate = self._ada(hidden, ctx['ffn'][step, i])
             activated = self._geglu(norm @ w['ffn_gate_w'][i], norm @ w['ffn_up_w'][i])
             projected = activated @ w['ffn_down_w'][i]
             hidden = (hidden.float() + projected.float() * gate).to(self.dtype)
-        norm, _ = self._ada(hidden, ctx['final'][step])
+        if self.fused_attention_ops:
+            norm=FusedAda.apply(hidden,ctx['final'][step],self._native_ffn_ones,self.pipeline.fvk)
+        else:
+            norm, _ = self._ada(hidden, ctx['final'][step])
         return ((norm @ w['action_out_proj_w']).float()
                 + w['action_out_proj_b'].float()).to(self.dtype)
 

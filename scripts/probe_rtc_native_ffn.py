@@ -17,7 +17,10 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--fused-backward',action='store_true')
     parser.add_argument('--full-rtc-gate',action='store_true')
+    parser.add_argument('--fused-attention-ops',action='store_true')
     args=parser.parse_args()
+    if args.fused_attention_ops and not (args.fused_backward and args.full_rtc_gate):
+        parser.error('--fused-attention-ops requires --fused-backward --full-rtc-gate')
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=5, state_enabled=True)
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'])
@@ -44,7 +47,7 @@ def main():
         _, env_class = base._libero_api()
         env = base._make_env(env_class, task)
         result = {'status':'running', 'scope':'single FFN; no rollout or full RTC replacement',
-                  'fused_backward':args.fused_backward}
+                  'fused_backward':args.fused_backward,'fused_attention_ops':args.fused_attention_ops}
         try:
             obs, _ = base._prepare_env_episode(env, task, np)
             stats = load_libero_norm_stats(config['norm_stats_path'])
@@ -123,7 +126,10 @@ def main():
                     expert.refresh_context(pl.attn.enc_K[:,:expert.context_capacity],
                         pl.attn.enc_V[:,:expert.context_capacity],int(pl.attn.dec_devpos.item()))
                 for name in ('baseline','fused'):
-                    if name=='fused': expert.enable_native_fused_ffn(config['output_root'])
+                    if args.fused_attention_ops:
+                        expert.enable_native_fused_ffn(config['output_root'])
+                        if name=='fused': expert.enable_fused_attention_ops(config['output_root'])
+                    elif name=='fused': expert.enable_native_fused_ffn(config['output_root'])
                     captured=CapturedRtcChunk(expert.step_delta,noise,num_steps=5)
                     got=tuple(v.detach().clone() for v in captured.replay(noise,target,mask))
                     torch.cuda.synchronize()

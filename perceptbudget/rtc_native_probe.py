@@ -80,11 +80,40 @@ class FusedGeGLU(NativeGeGLU):
         return dg,du,None
 
 
+class FusedResidual(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx,x,projected,style):
+        from perceptbudget.rtc_fused_backward import residual
+        ctx.save_for_backward(style)
+        return residual(x,projected,style)
+
+    @staticmethod
+    def backward(ctx,grad):
+        from perceptbudget.rtc_fused_backward import residual
+        style,=ctx.saved_tensors
+        dy=grad.contiguous()
+        return dy,residual(dy,dy,style,backward=True),None
+
+
+class FusedQKVRope(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx,x,rope):
+        from perceptbudget.rtc_fused_backward import qkv_rope
+        ctx.save_for_backward(rope)
+        return qkv_rope(x,rope)
+
+    @staticmethod
+    def backward(ctx,dq,dk,dv):
+        from perceptbudget.rtc_fused_backward import qkv_rope_backward
+        rope,=ctx.saved_tensors
+        return qkv_rope_backward(dq,dk,dv,rope),None
+
+
 def ffn(x, style, weights, *, native=False, gemm=None, fvk=None, ones=None,
-        include_residual=True, fused_backward=False):
+        include_residual=True, fused_backward=False, fused_residual=False):
     """One real-width FFN sublayer, including Ada norm and gated residual."""
     from perceptbudget.rtc_expert import DifferentiableExpert
-    gate = style.float().chunk(3, -1)[2]
+    gate = style.float().chunk(3, -1)[2] if not fused_residual else None
     if native:
         norm = (FusedAda if fused_backward else NativeAda).apply(x, style, ones, fvk)
         a = NativeLinear.apply(norm, weights[0], gemm)
@@ -95,5 +124,8 @@ def ffn(x, style, weights, *, native=False, gemm=None, fvk=None, ones=None,
         norm, _ = DifferentiableExpert._ada(x, style)
         act = DifferentiableExpert._geglu(norm @ weights[0], norm @ weights[1])
         projected = act @ weights[2]
+    if fused_residual:
+        if not include_residual: raise ValueError('fused residual requires residual output')
+        return FusedResidual.apply(x,projected,style)
     branch = projected.float()*gate
     return ((x.float()+branch) if include_residual else branch).to(x.dtype)

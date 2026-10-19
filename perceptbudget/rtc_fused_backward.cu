@@ -51,3 +51,64 @@ extern "C" int rtc_geglu_dx(const void* gate,const void* up,const void* dy,
         (__nv_bfloat16*)dg,(__nv_bfloat16*)du,n);
     return (int)cudaGetLastError();
 }
+
+__global__ void residual_kernel(const __nv_bfloat16* x,const __nv_bfloat16* p,
+    const __nv_bfloat16* style,__nv_bfloat16* y,int rows,int dim,bool backward) {
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if(j>=rows*dim) return;
+    int row=j/dim,col=j%dim;
+    float gate=__bfloat162float(style[row*3*dim+2*dim+col]);
+    float value=__bfloat162float(x[j]);
+    y[j]=__float2bfloat16_rn(backward ? value*gate : value+__bfloat162float(p[j])*gate);
+}
+
+__global__ void qkv_rope_kernel(const __nv_bfloat16* input,const __nv_bfloat16* rope,
+    __nv_bfloat16* q,__nv_bfloat16* k,__nv_bfloat16* v,int rows) {
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if(j>=rows*2560) return;
+    int row=j/2560,col=j%2560;
+    if(col>=2304) { v[row*256+col-2304]=input[j]; return; }
+    int offset=col%256, base=col-(offset%2);
+    float a=__bfloat162float(input[row*2560+base]);
+    float b=__bfloat162float(input[row*2560+base+1]);
+    float c=__bfloat162float(rope[row*256+offset-(offset%2)]);
+    float s=__bfloat162float(rope[row*256+offset-(offset%2)+1]);
+    __nv_bfloat16 out=__float2bfloat16_rn(offset%2 ? b*c+a*s : a*c-b*s);
+    if(col<2048) q[row*2048+col]=out; else k[row*256+col-2048]=out;
+}
+
+__global__ void qkv_rope_dx_kernel(const __nv_bfloat16* dq,const __nv_bfloat16* dk,
+    const __nv_bfloat16* dv,const __nv_bfloat16* rope,__nv_bfloat16* dx,int rows) {
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if(j>=rows*2560) return;
+    int row=j/2560,col=j%2560;
+    if(col>=2304) { dx[j]=dv[row*256+col-2304]; return; }
+    int offset=col%256, base=col-(offset%2);
+    const __nv_bfloat16* source=col<2048 ? dq+row*2048+base : dk+row*256+base-2048;
+    float a=__bfloat162float(source[0]), b=__bfloat162float(source[1]);
+    float c=__bfloat162float(rope[row*256+offset-(offset%2)]);
+    float s=__bfloat162float(rope[row*256+offset-(offset%2)+1]);
+    dx[j]=__float2bfloat16_rn(offset%2 ? b*c-a*s : a*c+b*s);
+}
+
+extern "C" int rtc_residual(const void* x,const void* p,const void* style,
+    void* y,int rows,int dim,int backward,void* stream) {
+    residual_kernel<<<(rows*dim+255)/256,256,0,(cudaStream_t)stream>>>(
+        (const __nv_bfloat16*)x,(const __nv_bfloat16*)p,(const __nv_bfloat16*)style,
+        (__nv_bfloat16*)y,rows,dim,backward!=0);
+    return (int)cudaGetLastError();
+}
+extern "C" int rtc_qkv_rope(const void* x,const void* rope,void* q,void* k,void* v,
+    int rows,void* stream) {
+    qkv_rope_kernel<<<(rows*2560+255)/256,256,0,(cudaStream_t)stream>>>(
+        (const __nv_bfloat16*)x,(const __nv_bfloat16*)rope,(__nv_bfloat16*)q,
+        (__nv_bfloat16*)k,(__nv_bfloat16*)v,rows);
+    return (int)cudaGetLastError();
+}
+extern "C" int rtc_qkv_rope_dx(const void* q,const void* k,const void* v,const void* rope,
+    void* dx,int rows,void* stream) {
+    qkv_rope_dx_kernel<<<(rows*2560+255)/256,256,0,(cudaStream_t)stream>>>(
+        (const __nv_bfloat16*)q,(const __nv_bfloat16*)k,(const __nv_bfloat16*)v,
+        (const __nv_bfloat16*)rope,(__nv_bfloat16*)dx,rows);
+    return (int)cudaGetLastError();
+}
