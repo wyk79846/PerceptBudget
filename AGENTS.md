@@ -1,5 +1,9 @@
 # 协作规则
 
+- 2026-10-19 Spatial纯异步十任务批次已全部完成（5e0a947编排，推理bf13753）：父run=M1/20261019T061721.555052Z-rtc-async-spatial-ten-10cc127a。10项全新测有效10/10，成功4/10(task0/2/6/7)，其余220步超时，全部0断供/无异常退出。任务步数176/220/134/220/220/220/140/136/220/220；成功平均回合真实10.599s；非bootstrap292次请求合并中位417.62ms。控制13.19–14.90Hz，非稳定20Hz。历史队列max292次核查通过，1855步pending时执行、gain全1、来源worker审计通过。H20/N5/state/80/s_min5/队列10保持，不复用三项、无模型/FlashRT修改。结果summary.md及audit.md。当前不能替代旧M1正式基线，未自动扩测/调参。
+
+- 2026-10-19 用户要求Spatial全部10任务纯异步成功率。5e0a947新增只编排的eval_rtc_async_screen.py，10项全部新测不复用前三项；H20/N5/BF16/state/80/融合快后端、算法1队列max10、s_min5、原速无固定冻结，seed7/init0。唯一服务perceptbudget-rtc-async-ten-20261019，日志/tmp/perceptbudget-rtc-async-ten-20261019.log；父run=M1/20261019T061721.555052Z-rtc-async-spatial-ten-10cc127a。每任务guarded_run+GPU锁，异常停批次，可--resume-from只续缺项。运行中禁止改推理代码；实际控制Hz单独记录，不承诺20Hz，未完成不能报最终成功率。原始三任务仅历史对照。
+
 - 2026-10-19 用户要求试论文RTC调度，a2b00bf新增--paper-schedule/rtc_schedule.DelayQueue：s_min5、单线程推理空闲即刷新、最近10个实际延迟步数max，初始d由preflight/.05向上取整。删除该模式额外s>=估计d等待，bootstrap d>s允许但必须d<=H-s（公式不变，不裁剪；图3稳态约束初始化边界明确记录）。同Spatial0/1/2新结果成功182步13.163s/超时220步15.470s/成功141步10.109s，2/3，全0断供；任务内推理中位423.59/418.42/423.91ms，控制14.16/14.51/14.40Hz，非稳定20Hz。history逐项核查28/34/21次通过、gain1、来源审计通过；初态hash同旧但bootstrap raw差.00390625/.00390625/.0078125，不能把改善全归调度。记录M1/20261019T060802.697243Z-rtc-paper-schedule-q5-state-ff4383a5/three_task_summary.md，另run bf82994a/0e458cc0。306pass/9skip+178subtests。未训练/未改FlashRT/未替换M1或自动扩测。
 
 - 2026-10-19 用户授权真实延迟异步三个Spatial任务0/1/2各一次。03eb4a9新增--actual-delay，复用原入口不设controlled_delay_steps；q5为最小间隔，保留d<=s约束动态推迟，实际间隔5–7步，原速gain1。H20/N5/state/80/flash-varlen融合快后端。结果0/1超时220步15.596/16.149s，2成功140步9.751s，全部0断供，推理中位421.25/425.29/425.69ms，实际控制14.39/13.89/14.83Hz，不能称稳定20Hz/正式替代旧M1。env.step平均63.73/65.94/61.59ms，控制准备+尾部约6ms；未细分内部物理/渲染或证明GPU争用。完整记录在M1/20261019T055901.803138Z-rtc-actual-delay-q5-state-54bea0c0/three_task_summary.md，另外run后缀09243f5a/cce148fa。无额外扩测或FlashRT改动。不能把超时耗时叫成功完成时间。
