@@ -103,6 +103,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--actual-delay', action='store_true', help='No controlled simulator waits; q is minimum feasible refresh interval')
     parser.add_argument('--paper-schedule', action='store_true', help='Algorithm 1: max of last 10 observed delays; q=s_min')
+    parser.add_argument('--reuse-control-forward', action='store_true', help='Experimental process-local duplicate forward removal')
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'flash-varlen', 'fa2-seqused'), default='math')
@@ -122,6 +123,8 @@ def main():
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--resume-from', type=Path, help='Reuse completed tasks from a compatible stopped screen; preserve original attempts')
     args = parser.parse_args()
+    if args.reuse_control_forward and not args.actual_delay:
+        parser.error('--reuse-control-forward requires --actual-delay')
     if args.paper_schedule and not args.actual_delay:
         parser.error('--paper-schedule requires --actual-delay')
     if args.actual_delay and (not args.rtc_only or not args.preflight_rtc or args.spatial_screen or args.worker_run):
@@ -170,6 +173,7 @@ def main():
         config.update(rtc_paper_schedule=True, rtc_delay_buffer_size=10,
                       rtc_wait_for_delay_feasibility=False,
                       q_semantics='Algorithm1 s_min; start when idle and s>=q; delay=max(last10 actual step delays)')
+    config['reuse_control_forward']=args.reuse_control_forward
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -188,7 +192,7 @@ def main():
                      'perceptbudget/rtc_expert.py', 'perceptbudget/rtc_native_probe.py',
                      'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu',
                      'perceptbudget/model.py','perceptbudget/compact_state.py','perceptbudget/gemm_policy.py',
-                     'perceptbudget/rtc_schedule.py'):
+                     'perceptbudget/rtc_schedule.py','perceptbudget/env_forward.py'):
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
@@ -265,10 +269,16 @@ def main():
                 directory.mkdir()
                 print(name + ' start', flush=True)
                 with (directory / 'trace.jsonl').open('w') as stream:
-                    episode = probe.run_episode(
-                        env, task, args.q, model, stats, config, np, torch,
-                        directory, stream, rtc_adapter=adapter,
-                        condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
+                    from contextlib import nullcontext
+                    from perceptbudget.env_forward import reuse_control_forward
+                    context = reuse_control_forward(env) if args.reuse_control_forward else nullcontext()
+                    with context as env_audit:
+                        episode = probe.run_episode(
+                            env, task, args.q, model, stats, config, np, torch,
+                            directory, stream, rtc_adapter=adapter,
+                            condition=name, refresh_policy='latest_due', pending_arm_gain=1.)
+                    if env_audit is not None:
+                        episode['env_forward_optimization']=env_audit
                 requests = json.loads((directory / f'q{args.q}_requests.json').read_text())
                 if config['state_enabled']:
                     assert all(np.asarray(r['model_state']).shape == (8,) and
