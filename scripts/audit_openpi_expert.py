@@ -23,11 +23,13 @@ from scripts import eval_q as base
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--project-reference', type=Path)
+    parser.add_argument('--author-euler', action='store_true', help='Preserve author x+dt*(v+guidance) evaluation order')
     parser.add_argument('--reference-variant', choices=('original','folded-output','bf16-input','bf16-time','split-input-bias'), default='original')
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     source = Path(config['output_root'])/'M1/20261019T054917.649092Z-capacity-numeric-diagnosis-5f903047/capacity80a'
-    config.update(H=20, N=5, reference_trace=str(source), reference_variant=args.reference_variant)
+    config.update(H=20, N=5, reference_trace=str(source), reference_variant=args.reference_variant,
+                  author_euler_order=args.author_euler)
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         run = create_run(config, 'M1', 'openpi-expert-independent', repo_root=ROOT)
@@ -152,7 +154,7 @@ def main():
             outputs[f'vjp{k}']=g.detach().cpu().numpy()
             outputs[f'input{k}']=x.detach().cpu().numpy()
             outputs[f'error{k}']=error.detach().cpu().numpy()
-            x = (x-v/5+beta*g/5).detach()
+            x = ((x+(1/5)*(-v+beta*g)) if args.author_euler else (x-v/5+beta*g/5)).detach()
             print('step='+str(k)+' finite='+str(bool(torch.isfinite(x).all())),flush=True)
         outputs['raw']=x.cpu().numpy()
         fixed_reference=Path(config['output_root'])/'M1/20261019T090506.707357Z-openpi-expert-independent-4bfa20b7/reference.npz'
@@ -168,6 +170,7 @@ def main():
         result=dict(status='completed', scope='independent original OpenPI expert, shared recorded encoder KV; not full model parity',
             raw_max_abs=float(np.max(np.abs(difference))), raw_relative_l2=float(np.linalg.norm(difference)/np.linalg.norm(trace['33_rtc_raw'])),
             variant=args.reference_variant,
+            author_euler_order=args.author_euler,
             all_weights_frozen=all(not p.requires_grad for p in expert.parameters()), reference_source=str(source_file))
         base._write_json_atomic(run/'summary.json', result)
         print(json.dumps(result),flush=True)

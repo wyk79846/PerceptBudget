@@ -448,9 +448,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                     # only execution at commit discards the actual expired rows.
                     executed=seam_executed, delay_estimate=0, request=request)
             elif rtc_adapter is not None and step == 0:
-                actions = base._infer_actions(model, snapshot, task['instruction'],
-                                              config['H'], request)
-                request['actions_raw'] = model._pipe._noise_out.float().cpu().numpy().copy().tolist()
+                if hasattr(rtc_adapter, 'bootstrap'):
+                    actions = rtc_adapter.bootstrap(snapshot, task['instruction'], request)
+                else:
+                    actions = base._infer_actions(model, snapshot, task['instruction'],
+                                                  config['H'], request)
+                    request['actions_raw'] = model._pipe._noise_out.float().cpu().numpy().copy().tolist()
             elif rtc_adapter is not None:
                 actions = rtc_adapter.predict(
                     snapshot, task['instruction'], rtc_previous_raw,
