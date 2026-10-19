@@ -252,7 +252,8 @@ def main():
         for name in ('scripts/eval_rtc_openpi.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
-                     'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py'):
+                     'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
+                     'perceptbudget/rtc_schedule.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)

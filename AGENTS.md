@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户授权修正RTC延迟历史：Algorithm1的A_init bootstrap不入Q，Q仍初始化[d_init]；DelayQueue.observe显式observation_step=0跳过，不把正常后台0步延迟一并过滤。harvest记录bootstrap排除原因和delay_queue_observed=false。新增初始保守值保留到正确10个样本后淘汰的回归测试。用户自行重跑H25/N5/q5/state80真实异步+释放重复native expert，agent不启动GPU，不改变attention/精度/H/N或宣称数值等价。
+
 - 用户要求H25：入口--horizon增加25，非默认H仍只允许显式actual-delay实验，reference_horizon_transfer记录真实H，不冒充H20独立参考覆盖25。保持释放重复native expert、N5/q5/state80/Spatial0/原功耗/768MiB保护，用户启动GPU，agent仅给命令和分析。默认H20不改。
 
 - 用户将自行重试H50内存清理：新增rtc_memory.py和显式--release-unused-native-expert，仅预热完成的fixed BF16管线，sync后删除_ckpt_bf16 decoder_*重复权重/对应指针，保留encoder/vision/context graph/KV/冻结原专家；进程不可逆context-only，禁native infer/infer_batch/rebuild及full/decoder图replay。保留native图handle而不手动destroy避免共享所有权风险，不称释放全部图内存。每阶段memory.jsonl与native_expert_release.json记录预计释放权重bytes与实测内存；episode reset前gc/empty_cache。CPU guard/保留测试通过，未在GPU验证、不代用户启动，768MiB保护不变。代码只在主项目，不改FlashRT/精度/权重计算/H/N。

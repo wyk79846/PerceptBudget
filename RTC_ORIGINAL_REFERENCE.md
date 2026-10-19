@@ -238,3 +238,12 @@ attention内部将动作KV置前；原版位置编码仍由有效prefix mask计�
 Torch allocated/reserved、移除的权重名与字节数。768MiB保护始终启用。
 仅CPU模拟保留/禁用检查及CLI测试完成，GPU节省量和数值仍待用户日志确认，
 不能以理论释放字节数冒充板级实测。
+
+### 修正bootstrap延迟入队（用户授权重跑）
+
+Algorithm 1在后台循环前已有A_init，Q只应含d_init。旧harvest将bootstrap
+实际延迟0也入队，导致初始保守值早一轮淘汰。H25历史1f059059的第89步
+因此用d=10，而排除bootstrap时应仍为12；未证实该差异导致任务失败。
+现按observation_step=0显式排除，真实后台推理即使delay=0也正常计入。
+请求保留delay_history_excluded_reason，源码快照包含rtc_schedule.py。
+仅修正队列，不改变attention、动作、H25/N5/q5/state80或真实异步方式。

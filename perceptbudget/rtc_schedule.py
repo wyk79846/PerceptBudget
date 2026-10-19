@@ -12,7 +12,12 @@ class DelayQueue:
     def estimate(self):
         return max(self.values)
 
-    def observe(self, delay):
+    def observe(self, delay, *, observation_step=None):
         if delay < 0:
             raise ValueError('negative delay')
+        # Algorithm 1 starts with A_init already available and Q=[d_init].
+        # Its bootstrap is not a completed background inference sample.
+        if observation_step == 0:
+            return False
         self.values.append(int(delay))
+        return True

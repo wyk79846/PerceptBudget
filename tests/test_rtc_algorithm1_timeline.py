@@ -3,6 +3,23 @@ from scripts.probe_delay_buffer import commit, refresh_due
 from perceptbudget.rtc_schedule import DelayQueue
 
 
+def test_bootstrap_does_not_age_out_initial_delay_one_request_early():
+    history=DelayQueue(12,size=10)
+    assert history.observe(0,observation_step=0) is False
+    assert list(history.values) == [12]
+    for step in range(1,10):
+        assert history.observe(8,observation_step=step*8) is True
+    assert history.estimate == 12
+    history.observe(8,observation_step=80)
+    assert history.estimate == 8
+
+
+def test_real_background_zero_delay_is_not_discarded():
+    history=DelayQueue(12)
+    assert history.observe(0,observation_step=5) is True
+    assert list(history.values) == [12,0]
+
+
 def test_paper_relative_counter_matches_absolute_queue_across_variable_delays():
     horizon, minimum = 20, 5
     queue = {}

@@ -496,8 +496,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
             if delay_queue is not None and not current_request.get('delay_queue_observed'):
-                delay_queue.observe(guidance['actual_delay_steps'])
-                current_request['delay_queue_observed'] = True
+                current_request['delay_queue_observed'] = delay_queue.observe(
+                    guidance['actual_delay_steps'],
+                    observation_step=current_request['observation_step'])
+                if current_request['observation_step'] == 0:
+                    guidance['delay_history_excluded_reason'] = 'bootstrap A_init is not an inference-loop delay sample'
             guidance['observed_inference_seconds'] = (
                 current_request.get('inference_ended_monotonic', time.monotonic())
                 - current_request.get('inference_started_monotonic',
