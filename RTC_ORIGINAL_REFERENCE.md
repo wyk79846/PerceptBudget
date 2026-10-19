@@ -224,3 +224,17 @@ attention内部将动作KV置前；原版位置编码仍由有效prefix mask计�
 最近10次实际延迟步数max引导，提交按实际已过步数裁剪，不冻结仿真。
 若预检H-s余量不足则episode开始前停止，不静默改H/N或裁剪延迟。
 用户负责启动，agent未运行GPU；任务结果、实际Hz、断供待日志核查。
+
+### H50 内存清理试验入口（待用户运行）
+
+追加 `--release-unused-native-expert`：FlashRT完整预热之后、加载原始专家之前，
+释放本进程未使用的FlashRT `decoder_*` BF16权重和对应指针。
+此后该进程只可执行context图，native infer/batch/rebuild和full/decoder图replay
+被显式禁用。原始专家、vision/encoder、context KV、精度和RTC公式不变。
+为避免native图handle共享所有权风险，不手动销毁其handle，仅禁用；
+因此不宣称原生图内存全部释放。启动必须新进程，不可恢复普通native推理。
+
+各阶段 `memory.jsonl`、`native_expert_release.json`保存释放前后MemAvailable、
+Torch allocated/reserved、移除的权重名与字节数。768MiB保护始终启用。
+仅CPU模拟保留/禁用检查及CLI测试完成，GPU节省量和数值仍待用户日志确认，
+不能以理论释放字节数冒充板级实测。

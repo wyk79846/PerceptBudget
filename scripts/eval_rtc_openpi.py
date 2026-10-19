@@ -64,21 +64,37 @@ def rollout(config, run, gate, task_id):
     from scripts.probe_rtc_step import timed
     base._patch_egl_cleanup()
     torch, _ = base._check_cuda_and_native(config)
+    from perceptbudget.rtc_memory import memory_record,release_unused_native_expert
+    def mem(stage):
+        record=memory_record(torch,stage)
+        with (run/'memory.jsonl').open('a') as stream:
+            stream.write(json.dumps(record)+'\n')
+        print('memory='+json.dumps(record),flush=True)
+    mem('before_model_load')
     torch.use_deterministic_algorithms(True)
     from flash_rt.subgraphs.pi05.context_action import enable
     task = base._load_tasks([task_id], ['libero_spatial'])[0]
     stats = load_libero_norm_stats(config['norm_stats_path'])
     model = base._load_and_check_model(config, torch)
+    mem('after_model_load')
     enable(model)
     _, cls = base._libero_api()
     env = base._make_env(cls, task)
+    mem('after_environment_creation')
     env._pb_lock_fixtures = True
     try:
         obs, _ = base._prepare_env_episode(env, task, np)
         snapshot = base._make_snapshot(obs, stats, True)
         # Warm native context only; this native action is never executed.
         base._infer_actions(model, snapshot, task['instruction'], config['H'], {})
+        mem('after_native_warmup')
+        if config.get('release_unused_native_expert'):
+            cleanup=release_unused_native_expert(model,torch)
+            base._write_json_atomic(run/'native_expert_release.json',cleanup)
+            print('native_expert_release='+json.dumps(cleanup),flush=True)
+            mem('after_unused_native_expert_release')
         adapter = OriginalOpenPiRTCAdapter(model, torch, config)
+        mem('after_original_expert_load')
         if adapter.expert.provenance != gate['original_source_hashes']:
             raise RuntimeError('original sources changed since verification')
         provenance = adapter.expert.provenance
@@ -86,6 +102,7 @@ def rollout(config, run, gate, task_id):
         adapter.bootstrap(snapshot, task['instruction'], initial)
         previous = np.asarray(initial['actions_raw'], dtype=np.float32)[5:]
         graph_audit = adapter.prepare_graph(previous) if config.get('original_cuda_graph') else None
+        mem('after_rtc_graph_prepare')
         def infer():
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
         timing = timed(torch, infer, count=3)
@@ -143,6 +160,10 @@ def rollout(config, run, gate, task_id):
             return result
         directory = run/'rtc'
         directory.mkdir()
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        mem('before_episode_reset')
         with (directory/'trace.jsonl').open('w') as stream:
             episode = probe.run_episode(env, task, 5, model, stats, config, np, torch,
                 directory, stream, rtc_adapter=adapter, condition='original_openpi_rtc',
@@ -183,6 +204,7 @@ def main():
     parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
+    parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--horizon',type=int,choices=(20,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
@@ -217,6 +239,7 @@ def main():
         config.update(controlled_delay_steps=5,rtc_paper_schedule=False,
                       execution_mode='original_expert_controlled_delay_quality_only')
     config['experimental_original_varlen']=args.experimental_varlen
+    config['release_unused_native_expert']=args.release_unused_native_expert
     config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
@@ -229,7 +252,7 @@ def main():
         for name in ('scripts/eval_rtc_openpi.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
-                     'perceptbudget/rtc_expert.py'):
+                     'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)
