@@ -214,6 +214,7 @@ def main():
     parser.add_argument('--author-order-reference',action='store_true',help='Slow original attention/expert and author-source operation order; controlled audit only')
     parser.add_argument('--source-step-prefixes',nargs='+',type=int,help='Opt-in original single-step graphs for up to eight exact lengths; miss falls back slow')
     parser.add_argument('--source-step-profile',type=Path,help='Read this task prefix lengths from a matched slow-batch summary; unseen lengths use slow fallback')
+    parser.add_argument('--source-packed-conditioning',action='store_true',help='Opt-in exact fixed-time results with source-step graph bank')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--suite',choices=('libero_spatial','libero_10'),default='libero_spatial')
@@ -230,6 +231,8 @@ def main():
                 args.source_step_profile,task_id=args.task_id,suite=args.suite,horizon=args.horizon)
         except (OSError,ValueError,KeyError) as exc:
             parser.error(str(exc))
+    if args.source_packed_conditioning and not args.source_step_prefixes:
+        parser.error('--source-packed-conditioning requires source-step-prefixes or profile')
     if args.source_step_prefixes and (not args.author_order_reference or not args.controlled_delay_five
             or len(set(args.source_step_prefixes))>8 or any(not 1<=n<=592 for n in args.source_step_prefixes)):
         parser.error('--source-step-prefixes requires author-order-reference controlled-delay-five and at most eight lengths')
@@ -268,6 +271,7 @@ def main():
     config.update(rtc_author_order=args.author_order_reference,rtc_audit_inputs=args.author_order_reference)
     config['source_step_prefixes']=args.source_step_prefixes
     config['source_step_profile']=step_profile
+    config['source_packed_conditioning']=args.source_packed_conditioning
     config['release_unused_native_expert']=args.release_unused_native_expert
     config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
@@ -284,7 +288,8 @@ def main():
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
                      'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
                      'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py',
-                     'scripts/eval_seam_sync.py','perceptbudget/rtc_source_step_graph.py'):
+                     'scripts/eval_seam_sync.py','perceptbudget/rtc_source_step_graph.py',
+                     'perceptbudget/rtc_condition_cache.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)

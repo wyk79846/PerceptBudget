@@ -28,3 +28,11 @@ def test_horizon_25_is_recognized_but_requires_explicit_actual_mode():
         cwd=root,capture_output=True,text=True)
     assert result.returncode == 2
     assert 'requires explicit --actual-delay' in result.stderr
+
+
+def test_packed_conditioning_requires_explicit_source_graph_bank():
+    root=Path(__file__).resolve().parents[1]
+    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py','--source-packed-conditioning'],
+        cwd=root,capture_output=True,text=True)
+    assert result.returncode==2
+    assert 'requires source-step-prefixes or profile' in result.stderr

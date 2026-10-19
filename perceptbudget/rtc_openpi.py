@@ -23,10 +23,15 @@ class OriginalOpenPiRTCAdapter:
         noise=torch.randn(self.horizon,32,device='cuda',dtype=torch.float32)
         import json
         started=time.monotonic()
+        conditioning=None
+        if self.config.get('source_packed_conditioning'):
+            from perceptbudget.rtc_condition_cache import enable_condition_cache
+            conditioning=enable_condition_cache(self.expert,graph_live=True)
         self.step_bank=SourceStepBank(self.expert,lengths,noise,
             progress=lambda r:print('step_graph_prepared='+json.dumps(r),flush=True))
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
+            packed_conditioning=conditioning,
             audits=self.step_bank.audits,limitation='unprepared valid lengths use exact slow reference; no runtime capture')
 
     def prepare_graph(self, previous_raw):

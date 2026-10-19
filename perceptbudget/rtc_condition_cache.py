@@ -1,7 +1,7 @@
 """Exact frozen time-only linear results; no attention or RTC math changes."""
 
 
-def enable_condition_cache(expert):
+def enable_condition_cache(expert, *, graph_live=False):
     import torch
     suffix=expert.suffix
     if getattr(expert,'_condition_cache',None) is not None:
@@ -34,13 +34,29 @@ def enable_condition_cache(expert):
                     handle.remove()
             for module in modules[2:]:
                 record(module,(cond,),module(cond))
+    if graph_live:
+        if any(x.dtype!=torch.float32 for slot in cache.values() for x in slot['outputs']):
+            raise ValueError('packed conditioning must preserve original FP32 results')
+        if any(any(sig!=slot['inputs'][0] for sig in slot['inputs']) for slot in cache.values()):
+            raise ValueError('packed conditioning requires identical per-step input signatures')
+        packed=torch.stack([torch.cat([cache[id(m)]['outputs'][k].reshape(-1)
+            for m in modules]) for k in range(expert.num_steps)])
+        live=packed[0].clone()
+        offset=0
+        for module in modules:
+            slot=cache[id(module)]
+            shape=slot['outputs'][0].shape
+            size=slot['outputs'][0].numel()
+            slot['live']=live[offset:offset+size].view(shape)
+            offset+=size
+        expert._packed_condition_cache=PackedConditionCache(packed,live)
     for module in modules:
         slot=cache[id(module)]
         if len(slot['outputs'])!=expert.num_steps:
             raise RuntimeError('time conditioning was not called once per step')
         def make_forward(slot):
             def forward(x):
-                step=getattr(expert,'_rtc_condition_step',None)
+                step=0 if graph_live else getattr(expert,'_rtc_condition_step',None)
                 if type(step) is not int or not 0<=step<expert.num_steps:
                     raise RuntimeError('conditioning cache needs explicit expert step')
                 if x.requires_grad:
@@ -49,10 +65,19 @@ def enable_condition_cache(expert):
                     raise RuntimeError('time conditioning input signature changed')
                 if tuple(p._version for p in slot['module'].parameters())!=slot['versions']:
                     raise RuntimeError('frozen conditioning weights changed')
-                return slot['outputs'][step]
+                return slot['live'] if graph_live else slot['outputs'][step]
             return forward
         module.forward=make_forward(slot)
     expert._condition_cache=cache
     return dict(modules=len(modules),steps=expert.num_steps,
         cached_mib=sum(x.numel()*x.element_size() for v in cache.values() for x in v['outputs'])/2**20,
         limitation='fixed frozen time schedule only; no weight/time/state modification permitted')
+
+
+class PackedConditionCache:
+    """Sequential-only stable views for CUDA graphs; upload outside capture."""
+    def __init__(self,packed,live):
+        self.packed,self.live=packed,live
+
+    def select_step(self,step):
+        self.live.copy_(self.packed[step])

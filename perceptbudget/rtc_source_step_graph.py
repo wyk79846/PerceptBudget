@@ -45,11 +45,15 @@ class SourceStepGraph:
             raise ValueError('source step graph requires FP32 Hx32 noise')
         if expert.suffix.training or any(p.requires_grad for p in expert.suffix.parameters()):
             raise ValueError('source step graph requires frozen eval expert')
-        if getattr(expert,'_condition_cache',None) is not None:
+        if getattr(expert,'_condition_cache',None) is not None and getattr(expert,'_packed_condition_cache',None) is None:
             raise ValueError('step graph gate must use original uncached conditioning')
         expert.enable_graph_constants()
         self.times=[x.detach().clone() for x in expert.times]
         self.expert=copy.copy(expert)
+        self.condition_cache=getattr(expert,'_packed_condition_cache',None)
+        self.expert._condition_upload_external=True
+        if self.condition_cache is not None:
+            self.condition_cache.select_step(0)
         self.expert.times=[self.times[0].clone(),*self.times[1:]]
         self.context=(expert.keys,expert.values,expert.prefix_mask)
         self.binding=tuple(x.data_ptr() for x in self.context)
@@ -104,6 +108,8 @@ class SourceStepGraph:
             self.mask.copy_(weights);self.tau.zero_()
             for k,t in enumerate(self.times):
                 self.expert.times[0].copy_(t)
+                if self.condition_cache is not None:
+                    self.condition_cache.select_step(k)
                 before=self.x.detach().clone() if trace is not None else None
                 self.graph.replay()
                 out,v,clean,error,g=self.outputs

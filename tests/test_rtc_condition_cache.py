@@ -52,3 +52,21 @@ def test_condition_cache_rejects_grad_input_and_modified_weights():
         expert.suffix.time_mlp_in.weight.add_(1)
     with pytest.raises(RuntimeError,match='weights changed'):
         expert.suffix.time_mlp_in(torch.ones(1,4))
+
+
+def test_packed_cache_live_views_preserve_all_steps_and_gradients():
+    import torch
+    from perceptbudget.rtc_condition_cache import enable_condition_cache
+    expert=build_expert()
+    expected=[expert.suffix.dense(expert.suffix.embed_suffix(None,None,t)[3])
+              for t in expert.times]
+    enable_condition_cache(expert,graph_live=True)
+    pointer=expert._packed_condition_cache.live.data_ptr()
+    for step,t in enumerate(expert.times):
+        expert._packed_condition_cache.select_step(step)
+        value=expert.suffix.dense(expert.suffix.embed_suffix(None,None,t)[3])
+        torch.testing.assert_close(value,expected[step],atol=0,rtol=0)
+        x=torch.ones_like(value,requires_grad=True)
+        grad,=torch.autograd.grad((value*x).sum(),x)
+        torch.testing.assert_close(grad,expected[step],atol=0,rtol=0)
+        assert expert._packed_condition_cache.live.data_ptr()==pointer

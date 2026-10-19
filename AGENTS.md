@@ -1,5 +1,7 @@
 # 协作规则
 
+- 最新保真加速：可选--source-packed-conditioning需source-step bank，39个原始FP32纯时间层打包预计算，图外逐step上传live buffer（图内禁止覆盖step0）；慢fallback每步也显式select。da9c81a0三固定KV/噪声case五步raw/VJP全0，专家215–231→182–199ms。同Spatial2 5384eecc成功124步/14.589s/完整median551.49ms，上一图bf2821fc123步/15.232s/583.21ms；不是逐值同轨迹：frame20先3通道差1级，request4首次raw差.0029175但noise/previous/state同，control26才分歧，尚无相同完整观测双后端重放，勿断言纯渲染原因。24轮目标/124步来源裁切审计通过，0断供/fallback/内存保护；setup8.56秒另计。受控d5非真实20Hz/十任务。当前全套338passed9skipped178subtests，新增CLI guard另测通过。未动FlashRT/功耗/精度/attention，默认慢参考和图不缓存路径仍可选。详见RTC_SOURCE_ACCELERATION.md顶部；以下为历史上下文。
+
 - 新单步图Spatial2 bf2821fc完成123步success/15.232s、完整median583.21ms vs本轮慢参考e6373b1a123步/43.585s/1815.74ms。25份raw/noise/previous逐值同，控制action及before场景全同；124帧仅一通道差1级，不能称images bitexact。24轮目标/123步来源裁切审计通过，0断供/重建/fallback/RAM保护。预建566/567/568花8.81秒另计；非真实异步/非十任务成功率。CLI --source-step-profile从匹配慢批次按task准备≤8长度，只shape预热；未见长度fallback慢参考。修正release日志cuda_graph_used包含step bank（已完成run旧字段false勿误判，真实requestbackend为stepgraph）。335tests已通过，新增profile测试已单测通过。详见RTC_SOURCE_ACCELERATION.md，不整套切回旧varlen路径，不自动宣称7/10赋给新候选。
 
 - 用户授权以最新7/10慢参考为基准重新提速。原始注意力/精度/FP32源顺序不动。时间条件缓存2a52c29b三长度raw/VJP逐步差0但仅省35–60ms，暂未接入runtime。新SourceStepGraph dbfb73ca原始单步forward/VJP动态time、作者未化简gain/FP32tau原顺序，H25N5三组逐步input/velocity/clean/error/VJP/output差全0，专家1456–1458→215–232ms。初轮beta构造捕获invalid保留，v2仅常量预建修复。SourceStepBank最多8个exact长度共用scratch池，预建在setup，miss回退source-order慢参考不重建不padding，默认不开。下一步仅Spatial2一次受控q5d5与已完成慢参考123步成对比，prefix566/567/568来自该历史任务，未知长度fallback必须报告；不是已恢复全任务/真实异步加速，不改FlashRT或功耗。

@@ -16,7 +16,10 @@ from scripts import eval_q as base
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--step-graph',action='store_true')
+    parser.add_argument('--packed-conditioning',action='store_true')
     args=parser.parse_args()
+    if args.packed_conditioning and not args.step_graph:
+        parser.error('--packed-conditioning requires --step-graph')
     config=load_config(repo_root=ROOT)
     config.update(H=25,N=5,state_enabled=True,state_prompt_capacity=80)
     os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
@@ -47,11 +50,21 @@ def main():
             previous=torch.randn(25,32,device='cuda')*.3
             cases=((570,12,5),(563,10,10),(557,9,8))
             saved=[]
+            graph_before=[]
             for valid,d,s in cases:
                 expert.refresh_context(keys,values,valid)
                 trace=[]
                 raw,_=sample_original_rtc(expert,noise,previous[s:],d,s,trace=trace,author_order=True)
                 saved.append((raw,trace,timed(torch,lambda:sample_original_rtc(expert,noise,previous[s:],d,s,author_order=True),count=3)))
+                if args.packed_conditioning:
+                    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+                    graph=SourceStepGraph(expert,noise)
+                    graph_before.append(timed(torch,lambda:graph.replay(noise,previous[s:],d,s),count=3))
+                    del graph
+                    import gc
+                    gc.collect();torch.cuda.empty_cache()
+            if args.packed_conditioning:
+                result['cache']=enable_condition_cache(expert,graph_live=True)
             if not args.step_graph:
                 result['cache']=enable_condition_cache(expert)
             else:
@@ -78,6 +91,8 @@ def main():
                     before=before,after=after,passed=bool(np.isfinite(error) and error<1e-4
                     and all(np.isfinite(v) and v<1e-4 for x in per_step for n,v in x.items() if n!='step')))
                 result['cases'].append(row)
+                if args.packed_conditioning:
+                    row['graph_before']=graph_before[len(result['cases'])-1]
                 if args.step_graph:
                     row['capture_seconds']=capture_seconds
                     del graph

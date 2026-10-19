@@ -142,6 +142,9 @@ class OriginalOpenPiExpert:
             cache.update(self.keys[i], self.values[i], i)
         t = self.times[step]
         self._rtc_condition_step=step
+        packed=getattr(self,'_packed_condition_cache',None)
+        if packed is not None and not getattr(self,'_condition_upload_external',False):
+            packed.select_step(step)
         return self.suffix.denoise_step(None, self.prefix_mask, cache, x.unsqueeze(0), t).squeeze(0)
 
 
