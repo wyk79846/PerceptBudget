@@ -38,3 +38,17 @@ def test_graph_rejects_replaced_context_before_gpu_replay():
     expert.keys = expert.keys.clone()
     with pytest.raises(RuntimeError,match='refusing stale KV'):
         graph.replay(torch.zeros(20,32),torch.zeros(15,32),5,5)
+
+
+def test_exact_length_refresh_changes_shape_without_padding():
+    import torch
+    from perceptbudget.openpi_reference import OriginalOpenPiExpert
+    expert = OriginalOpenPiExpert.__new__(OriginalOpenPiExpert)
+    expert.context_capacity = None
+    expert.keys = expert.values = None
+    keys, values = torch.randn(18,9,1,256), torch.randn(18,9,1,256)
+    for valid in (9,5,8,9):
+        expert.refresh_context(keys,values,valid)
+        assert expert.keys.shape[-2] == valid
+        assert expert.prefix_mask.shape == (1,valid)
+        assert expert.prefix_mask.all()

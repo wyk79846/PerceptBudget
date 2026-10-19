@@ -108,3 +108,22 @@ python scripts/eval_rtc_openpi.py --verified-run <passed-gate-run> --task-id 0
 
 GPU任务使用已有guarded_run、GPU锁和独立systemd服务，结果只写任务产出目录。
 CPU测试312通过、9跳过，另178 subtests通过。代码引入于3b224fc，后续记录见Git。
+# 2026-10-19：state 实际长度切换复核
+
+`probe_openpi_graph.py --changing-lengths`：run
+`M1/20261019T095342.025541Z-openpi-rtc-graph-probe-44897537`。
+实际 prefix 长度依次 570→563→569→570，不补齐、不截断；每次释放旧图，
+按真实长度重新捕获，动作最大差与五步 VJP 范数差均为 0。
+原长度五步速度及 VJP 对独立参考也全为 0；专家图重放中位 209.34 ms。
+
+换长度准备耗时（包含原版核对与捕获）为 6.33 / 6.34 / 6.32 秒。
+因此本修改仅解决变长时的正确性，不解决连续异步实时性。
+适配器明确记录 `context_graph_rebuilt`、`context_prepare_seconds`，
+准备时间计入整个请求，不隐藏为稳态推理；仅保留一个长度的图以限制内存。
+正式 CLI 的图模式仍限 timing-only，未放开真实任务，也未更新成功率。
+
+同轮旧快版复查：`M1/20261019T095456.833116Z-openpi-expert-independent-1038e871`。
+18 层共享 KV 逐位相同后，首步融合/未融合速度最大差均 .016214、
+VJP 最大差 .014528；仅恢复原始动作投影后仍为 .012237 / .013376。
+未满足 1e-4 门禁，不合入旧融合内核。该检查不是任务成败对照，
+也不能据此断言已证明数值偏差导致失败；没有重跑旧失败任务。

@@ -17,6 +17,7 @@ from scripts import eval_q as base
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--fixed-context',action='store_true')
+    parser.add_argument('--changing-lengths',action='store_true',help='exact-length recapture parity, not a rollout')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT)
     config.update(H=20,N=5,state_enabled=True,state_prompt_capacity=80)
@@ -81,9 +82,27 @@ def main():
             result['changed_context_changes_output']=not torch.equal(initial_raw,context_got)
             expert.refresh_context(keys,values,keys.shape[1])
             result['graph_rtc_expert']=timed(torch,lambda:graph.replay(noise,previous,5,5))
+            if args.changing_lengths:
+                import gc
+                result['length_transitions']=[]
+                for valid in (keys.shape[1]-7,keys.shape[1]-1,keys.shape[1]):
+                    started=time.monotonic()
+                    del graph
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    expert.refresh_context(keys,values,valid)
+                    reference_raw,reference_norms=sample_original_rtc(expert,noise,previous,5,5)
+                    graph=CapturedOriginalRtc(expert,noise)
+                    got,_,gradient=graph.replay(noise,previous,5,5)
+                    error=float((got-reference_raw).abs().max())
+                    norm_error=float((gradient.norm(dim=(1,2))-torch.tensor(reference_norms,device='cuda')).abs().max())
+                    result['length_transitions'].append(dict(valid=int(valid),raw_max_abs=error,
+                        vjp_norm_max_abs=norm_error,prepare_seconds=time.monotonic()-started,
+                        passed=bool(np.isfinite(error) and np.isfinite(norm_error) and max(error,norm_error)<1e-4)))
             result['passed']=(result['changed_context_changes_output']
                 and all(max(r['velocity_max_abs'],r['vjp_max_abs'])<1e-4 for r in result['per_step'])
                 and all(result[k]<1e-4 for k in ('eager_vs_independent_max_abs','graph_vs_independent_max_abs','changed_runtime_inputs_max_abs','changed_context_max_abs')))
+            result['passed']=result['passed'] and all(r['passed'] for r in result.get('length_transitions',[]))
             result['status']='completed' if result['passed'] else 'failed_gate'
         except BaseException as exc:
             result.update(status='invalid',error=f'{type(exc).__name__}: {exc}')
