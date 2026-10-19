@@ -15,6 +15,19 @@ class OriginalOpenPiRTCAdapter:
         self.capture_seconds = 0.
         self.graph_expert = None
         self.fallback_expert = None
+        self.step_bank = None
+
+    def prepare_step_bank(self,lengths):
+        from perceptbudget.rtc_source_step_graph import SourceStepBank
+        torch=self.torch
+        noise=torch.randn(self.horizon,32,device='cuda',dtype=torch.float32)
+        import json
+        started=time.monotonic()
+        self.step_bank=SourceStepBank(self.expert,lengths,noise,
+            progress=lambda r:print('step_graph_prepared='+json.dumps(r),flush=True))
+        return dict(passed=True,backend='source_order_step_graph',
+            prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
+            audits=self.step_bank.audits,limitation='unprepared valid lengths use exact slow reference; no runtime capture')
 
     def prepare_graph(self, previous_raw):
         """Gate one exact prefix shape; never pad state tokens for capture."""
@@ -80,14 +93,22 @@ class OriginalOpenPiRTCAdapter:
             pl._context_graph.replay(pl._graph_stream)
         pipe._graph_torch_stream.synchronize()
         valid = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
-        use_graph = self._select_expert(valid)
+        step_graph=None
+        if self.step_bank is not None:
+            self.expert,step_graph=self.step_bank.select(valid)
+            use_graph=False
+        else:
+            use_graph = self._select_expert(valid)
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
         if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
             from perceptbudget.openpi_varlen import enable_varlen_attention
             enable_varlen_attention(self.expert)
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
-        if use_graph and previous is not None:
+        if step_graph is not None and previous is not None:
+            raw,correction_norms=step_graph.replay(noise,previous,delay,executed)
+            norms=correction_norms.cpu().tolist()
+        elif use_graph and previous is not None:
             raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
             norms = corrections.norm(dim=(1,2)).cpu().tolist()
         else:
@@ -104,11 +125,12 @@ class OriginalOpenPiRTCAdapter:
         request['actions_raw'] = raw_actions.tolist()
         request.setdefault('rtc_guidance', {}).update(dict(
             delay_estimate_steps=delay, executed_steps=executed, guidance_enabled=previous is not None,
-            solver_backend='original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp',
+            solver_backend=('original_source_step_graph' if step_graph is not None and previous is not None else
+                'original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp'),
             expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=5.,
             context_graph_rebuilt=False, context_prepare_seconds=0.,
-            variable_length_fallback=self.graph is not None and not use_graph,
+            variable_length_fallback=(self.step_bank is not None and step_graph is None) or (self.graph is not None and not use_graph),
             attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',
             state_in_prompt=snapshot.get('state') is not None))
         request['rtc_guidance']['author_source_order']=self.config.get('rtc_author_order',False)
@@ -127,6 +149,7 @@ class OriginalOpenPiRTCAdapter:
         import gc
         used_graph = self.graph is not None
         self.graph = None
+        self.step_bank = None
         self.graph_expert = self.fallback_expert = None
         self.expert = None
         gc.collect()

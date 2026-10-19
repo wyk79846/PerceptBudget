@@ -141,6 +141,7 @@ class OriginalOpenPiExpert:
         for i in range(18):
             cache.update(self.keys[i], self.values[i], i)
         t = self.times[step]
+        self._rtc_condition_step=step
         return self.suffix.denoise_step(None, self.prefix_mask, cache, x.unsqueeze(0), t).squeeze(0)
 
 

@@ -106,6 +106,8 @@ def rollout(config, run, gate, task_id):
         adapter.bootstrap(snapshot, task['instruction'], initial)
         previous = np.asarray(initial['actions_raw'], dtype=np.float32)[5:]
         graph_audit = adapter.prepare_graph(previous) if config.get('original_cuda_graph') else None
+        if config.get('source_step_prefixes'):
+            graph_audit=adapter.prepare_step_bank(config['source_step_prefixes'])
         mem('after_rtc_graph_prepare')
         def infer():
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
@@ -210,12 +212,15 @@ def main():
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
     parser.add_argument('--author-order-reference',action='store_true',help='Slow original attention/expert and author-source operation order; controlled audit only')
+    parser.add_argument('--source-step-prefixes',nargs='+',type=int,help='Opt-in original single-step graphs for up to eight exact lengths; miss falls back slow')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--suite',choices=('libero_spatial','libero_10'),default='libero_spatial')
     parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
+    if args.source_step_prefixes and (not args.author_order_reference or not args.controlled_delay_five or len(set(args.source_step_prefixes))>8):
+        parser.error('--source-step-prefixes requires author-order-reference controlled-delay-five and at most eight lengths')
     if args.author_order_reference and (not args.controlled_delay_five or args.cuda_graph or args.experimental_varlen or args.actual_delay or args.verify_only):
         parser.error('--author-order-reference requires controlled-delay-five and forbids acceleration/actual-delay/verify')
     if args.horizon != 20 and not (args.actual_delay or args.author_order_reference):
@@ -249,6 +254,7 @@ def main():
                       execution_mode='original_expert_controlled_delay_quality_only')
     config['experimental_original_varlen']=args.experimental_varlen
     config.update(rtc_author_order=args.author_order_reference,rtc_audit_inputs=args.author_order_reference)
+    config['source_step_prefixes']=args.source_step_prefixes
     config['release_unused_native_expert']=args.release_unused_native_expert
     config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
@@ -265,7 +271,7 @@ def main():
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
                      'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
                      'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py',
-                     'scripts/eval_seam_sync.py'):
+                     'scripts/eval_seam_sync.py','perceptbudget/rtc_source_step_graph.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)
