@@ -9,9 +9,13 @@ import math
 
 
 def soft_mask(horizon, delay, executed):
-    """Paper Eq. 5. executed=s, delay=d, with d<=s<=H-d."""
-    if not (0 <= delay <= executed <= horizon - delay and horizon > 0):
-        raise ValueError('RTC requires 0 <= d <= s <= H-d')
+    """Eq.5 with valid overlap d<=H-s; allow bootstrap d>s.
+
+    Steady-state serialized scheduling normally yields s>=previous actual d;
+    a conservative initial estimate may exceed s without exceeding old tail.
+    """
+    if not (0 <= executed <= horizon and 0 <= delay <= horizon-executed and horizon > 0):
+        raise ValueError('RTC requires nonnegative s,d and d+s<=H')
     weights = []
     for index in range(horizon):
         if index < delay:
@@ -36,8 +40,8 @@ def guidance_scale(tau, beta=5.):
 def soft_mask_tensor(horizon, delay, executed, *, device):
     """FP32 device expression matching the independently audited reference."""
     import torch
-    if not 0 <= delay <= executed <= horizon-delay or horizon <= 0:
-        raise ValueError('RTC requires 0 <= d <= s <= H-d')
+    if not (horizon > 0 and 0 <= executed <= horizon and 0 <= delay <= horizon-executed):
+        raise ValueError('RTC requires nonnegative s,d and d+s<=H')
     i = torch.arange(horizon, device=device, dtype=torch.float32)
     c = (horizon-executed-i)/(horizon-executed-delay+1)
     return torch.where(i < delay, torch.ones_like(i), torch.where(
@@ -86,7 +90,7 @@ def paper_reference(step_delta, noise, previous, *, delay, executed, num_steps=1
     """
     import torch
     h = noise.shape[0]
-    if not 0 <= delay <= executed <= h-delay or previous.shape != (h-executed, 32):
+    if not (0 <= executed <= h and 0 <= delay <= h-executed) or previous.shape != (h-executed, 32):
         raise ValueError('invalid RTC overlap')
     target = torch.zeros_like(noise, dtype=torch.float32)
     target[:h-executed] = previous.detach().float()

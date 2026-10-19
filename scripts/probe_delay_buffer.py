@@ -314,6 +314,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
     future = None
     previous_request_step = 0
     previous_commit_step = 0
+    delay_queue = None
+    if config.get('rtc_paper_schedule'):
+        from perceptbudget.rtc_schedule import DelayQueue
+        delay_queue = DelayQueue(config['rtc_initial_delay_steps'], config['rtc_delay_buffer_size'])
     current_request = None
     missed_triggers, underflows = [], []
     selector = None
@@ -380,7 +384,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                        for a, b in zip(recent_rows, recent_rows[1:])]
             period_estimate = float(np.median(periods)) if periods else period
             delay = config.get('controlled_delay_steps', rtc_adapter.estimate_delay_steps(period_estimate))
-            if not (delay <= executed <= config['H'] - delay):
+            if delay_queue is not None:
+                delay = delay_queue.estimate
+            feasible = (0 <= delay <= config['H'] - executed if delay_queue is not None
+                        else delay <= executed <= config['H'] - delay)
+            if not feasible:
                 raise RuntimeError(f'RTC infeasible before inference: d={delay}, '
                                    f's={executed}, H={config["H"]}')
             if step not in queue:
@@ -405,6 +413,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 'predicted_inference_seconds': rtc_adapter.latency_estimate_seconds,
                 'old_chunk_origin_step': old_origin,
             }
+            if delay_queue is not None:
+                request['rtc_guidance']['delay_history_steps'] = list(delay_queue.values)
+                request['rtc_guidance']['initialization_d_exceeds_s'] = delay > executed
         raw_prefix = None
         prefix_len = None
         if prefix_adapter is not None and step > 0:
@@ -481,6 +492,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if rtc_adapter is not None and current_request.get('rtc_guidance'):
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
+            if delay_queue is not None and not current_request.get('delay_queue_observed'):
+                delay_queue.observe(guidance['actual_delay_steps'])
+                current_request['delay_queue_observed'] = True
             guidance['observed_inference_seconds'] = (
                 current_request.get('inference_ended_monotonic', time.monotonic())
                 - current_request.get('inference_started_monotonic',

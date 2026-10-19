@@ -102,6 +102,7 @@ def spatial_screen(config, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--actual-delay', action='store_true', help='No controlled simulator waits; q is minimum feasible refresh interval')
+    parser.add_argument('--paper-schedule', action='store_true', help='Algorithm 1: max of last 10 observed delays; q=s_min')
     parser.add_argument('--rtc-only', action='store_true', help='Audit RTC only; retain previous paired baseline separately')
     parser.add_argument('--paper-reference', action='store_true', help='Use slow independent paper equations, without a captured expert graph')
     parser.add_argument('--attention-backend', choices=('math', 'flash', 'flash-varlen', 'fa2-seqused'), default='math')
@@ -121,6 +122,8 @@ def main():
     parser.add_argument('--worker-run', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--resume-from', type=Path, help='Reuse completed tasks from a compatible stopped screen; preserve original attempts')
     args = parser.parse_args()
+    if args.paper_schedule and not args.actual_delay:
+        parser.error('--paper-schedule requires --actual-delay')
     if args.actual_delay and (not args.rtc_only or not args.preflight_rtc or args.spatial_screen or args.worker_run):
         parser.error('--actual-delay requires single --rtc-only --preflight-rtc')
     if args.fused_attention_ops and not args.native_fused_ffn:
@@ -163,6 +166,10 @@ def main():
         config.update(execution_mode='rtc_actual_delay_no_simulation_freeze',
                       rtc_wait_for_delay_feasibility=True,
                       q_semantics='minimum request interval, additionally s>=estimated d; serialized inference')
+    if args.paper_schedule:
+        config.update(rtc_paper_schedule=True, rtc_delay_buffer_size=10,
+                      rtc_wait_for_delay_feasibility=False,
+                      q_semantics='Algorithm1 s_min; start when idle and s>=q; delay=max(last10 actual step delays)')
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -174,13 +181,14 @@ def main():
             run = args.worker_run/'tasks'/f'task{args.task_id:02d}'
             base._write_json_atomic(run/'run.json', {'status': 'created', 'config_snapshot': config})
         else:
-            run = create_run(config, 'M1', ('rtc-actual-delay' if args.actual_delay else 'rtc-controlled-d5')+f'-q{args.q}' + ('-state' if args.state else ''), repo_root=ROOT)
+            run = create_run(config, 'M1', ('rtc-paper-schedule' if args.paper_schedule else 'rtc-actual-delay' if args.actual_delay else 'rtc-controlled-d5')+f'-q{args.q}' + ('-state' if args.state else ''), repo_root=ROOT)
         print('run_dir=' + str(run), flush=True)
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
                      'perceptbudget/rtc_expert.py', 'perceptbudget/rtc_native_probe.py',
                      'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu',
-                     'perceptbudget/model.py','perceptbudget/compact_state.py','perceptbudget/gemm_policy.py'):
+                     'perceptbudget/model.py','perceptbudget/compact_state.py','perceptbudget/gemm_policy.py',
+                     'perceptbudget/rtc_schedule.py'):
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
@@ -237,6 +245,16 @@ def main():
                 result['preflight_expert_graph_warm'] = timed(torch, adapter.graph.graph.replay)
                 if args.actual_delay:
                     adapter.latency_estimate_seconds=result['preflight_full_request_warm']['median_ms']/1000
+                if args.paper_schedule:
+                    import math
+                    config['rtc_initial_delay_steps']=math.ceil(adapter.latency_estimate_seconds/0.05)
+                    result['rtc_schedule']={'initial_delay_steps':config['rtc_initial_delay_steps'],
+                        'buffer_size':10,'estimate':'max(observed controller step delays)',
+                        'minimum_execution_steps':args.q,
+                        'bootstrap_note':'allow d>s only when old overlap still covers d; no mask clipping'}
+                    run_record=json.loads((run/'run.json').read_text())
+                    run_record['config_snapshot']=config
+                    base._write_json_atomic(run/'run.json',run_record)
                 result['preflight_seconds'] = time.monotonic()-started
                 base._write_json_atomic(run/'summary.json', result)
                 print('preflight='+json.dumps({k: v for k, v in result.items() if k.startswith('preflight')}), flush=True)

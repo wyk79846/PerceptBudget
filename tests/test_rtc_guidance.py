@@ -26,9 +26,21 @@ class RTCGuidanceTest(unittest.TestCase):
         self.assertTrue(all(a > b for a, b in zip(w[6:12], w[7:13])))
 
     def test_bad_latency_is_not_silently_clamped(self):
-        for d, s in [(11, 11), (7, 6), (7, 14)]:
+        for d, s in [(11, 11), (-1, 6), (7, 14)]:
             with self.assertRaises(ValueError):
                 soft_mask(20, d, s)
+
+    def test_bootstrap_large_delay_still_fits_overlap(self):
+        self.assertEqual(soft_mask(20, 8, 5)[:8], [1.]*8)
+        import torch
+        from perceptbudget.rtc_guidance import guided_sample, paper_reference
+        torch.manual_seed(17)
+        noise, previous = torch.randn(20, 32), torch.randn(15, 32)
+        def step(x, k):
+            return (-.3*x+.1*x.roll(1, 0)+.01*k)/5
+        a, _ = guided_sample(step, noise, previous, delay=8, executed=5, num_steps=5)
+        b, _ = paper_reference(step, noise, previous, delay=8, executed=5, num_steps=5)
+        torch.testing.assert_close(a, b, atol=1e-6, rtol=1e-6)
 
     def test_scale_finite_at_zero(self):
         self.assertEqual(guidance_scale(0), 5.)
