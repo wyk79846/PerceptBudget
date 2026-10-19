@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求尝试调用LeRobot。本地clean checkout146d8474932c8b566717eb2738ba459337ab71c4，完整RTCProcessor导入缺draccus，未安装/改环境/未启动GPU。新增audit_lerobot_rtc.py仅AST原class body（配置/enum/processor）CPU执行，非完整LeRobot策略或任务。af77fcf4 toy v=2x/time=.6，源码先计算v再requires_grad，捕获velocity输入requires_grad=false，correction=.2而完整VJP应-.04；不改源码，不据此断言用户异地版本相同或当前RTC已正确。完整policy验证仍待依赖与兼容性检查，不能把source-class小测当LeRobot任务复现。
+
 - 用户授权修正RTC延迟历史：Algorithm1的A_init bootstrap不入Q，Q仍初始化[d_init]；DelayQueue.observe显式observation_step=0跳过，不把正常后台0步延迟一并过滤。harvest记录bootstrap排除原因和delay_queue_observed=false。新增初始保守值保留到正确10个样本后淘汰的回归测试。用户自行重跑H25/N5/q5/state80真实异步+释放重复native expert，agent不启动GPU，不改变attention/精度/H/N或宣称数值等价。
 
 - 用户要求H25：入口--horizon增加25，非默认H仍只允许显式actual-delay实验，reference_horizon_transfer记录真实H，不冒充H20独立参考覆盖25。保持释放重复native expert、N5/q5/state80/Spatial0/原功耗/768MiB保护，用户启动GPU，agent仅给命令和分析。默认H20不改。

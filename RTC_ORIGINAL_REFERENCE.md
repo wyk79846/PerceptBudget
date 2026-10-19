@@ -247,3 +247,17 @@ Algorithm 1在后台循环前已有A_init，Q只应含d_init。旧harvest将boot
 现按observation_step=0显式排除，真实后台推理即使delay=0也正常计入。
 请求保留delay_history_excluded_reason，源码快照包含rtc_schedule.py。
 仅修正队列，不改变attention、动作、H25/N5/q5/state80或真实异步方式。
+
+### LeRobot直接调用检查（未完成完整任务）
+
+本地源码clean revision `146d8474932c8b566717eb2738ba459337ab71c4`。
+正常导入`lerobot.policies.rtc.modeling_rtc.RTCProcessor`缺`draccus`，
+没有擅自安装或修改共享环境。`scripts/audit_lerobot_rtc.py`通过AST选取
+原始enum/config/RTCProcessor类体执行，仅替代包级依赖导入，未改方法体。
+CPU运行 `M1/20261019T113210.525238Z-lerobot-rtc-source-audit-af77fcf4`。
+
+toy速度v=2x、time=.6时，源码传给速度函数的x.requires_grad=false；
+之后才开启梯度，实际correction=.20000005，完整clean VJP应为-.04000001。
+此为本地类源码行为，不代表用户异地版本相同，也不能据此宣称我们的策略已正确。
+还没有加载完整LeRobot pi05、环境或执行GPU任务。实际需要核对用户版本/配置，
+并在隔离依赖环境完成完整policy验证；不把这个小测当成LeRobot成功率结果。
