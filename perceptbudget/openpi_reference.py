@@ -94,15 +94,43 @@ def original_prefix(keys, values, valid):
 
 
 class OriginalOpenPiExpert:
-    def __init__(self, config, horizon, num_steps, device='cuda'):
+    def __init__(self, config, horizon, num_steps, device='cuda', context_capacity=None):
         self.suffix, self.provenance = load_original_suffix(config, horizon, device)
         self.horizon, self.num_steps, self.device = horizon, num_steps, device
         self.keys = self.values = None
+        self.context_capacity = context_capacity
+        import torch
+        # Constant original FP32 timesteps, created outside capture. Values and
+        # arithmetic are unchanged; no time-MLP or Ada computation is skipped.
+        self.times = [torch.tensor([1-step/num_steps], device=device, dtype=torch.float32)
+                      for step in range(num_steps)]
+
+    def enable_graph_constants(self):
+        import torch
+        scope = self.suffix.embed_suffix.__func__.__globals__
+        if isinstance(scope['torch'], _MaskConstantTorch):
+            return
+        constant = torch.tensor([1]+[0]*(self.horizon-1), device=self.device, dtype=torch.float32)
+        # Only this isolated suffix's globals are affected, not torch itself,
+        # installed Transformers, or any FlashRT module.
+        scope['torch'] = _MaskConstantTorch(torch, constant)
 
     def refresh_context(self, keys, values, valid):
         import torch
-        self.keys, self.values = original_prefix(keys, values, valid)
-        self.prefix_mask = torch.ones(1, valid, dtype=torch.bool, device=self.device)
+        k, v = original_prefix(keys, values, valid)
+        capacity = self.context_capacity or valid
+        if capacity < valid:
+            raise ValueError('original context capacity overflow; never truncate')
+        shape = (*k.shape[:-2], capacity, k.shape[-1])
+        if self.keys is None or self.keys.shape != shape:
+            self.keys = torch.zeros(shape, device=k.device, dtype=k.dtype)
+            self.values = torch.zeros_like(self.keys)
+            self.prefix_mask = torch.zeros(1, capacity, dtype=torch.bool, device=k.device)
+        with torch.no_grad():
+            self.keys.zero_(); self.values.zero_(); self.prefix_mask.zero_()
+            self.keys[..., :valid, :].copy_(k)
+            self.values[..., :valid, :].copy_(v)
+            self.prefix_mask[:, :valid] = True
 
     def velocity(self, x, step):
         import torch
@@ -112,8 +140,26 @@ class OriginalOpenPiExpert:
         cache = DynamicCache()
         for i in range(18):
             cache.update(self.keys[i], self.values[i], i)
-        t = torch.tensor([1-step/self.num_steps], device=x.device, dtype=torch.float32)
+        t = self.times[step]
         return self.suffix.denoise_step(None, self.prefix_mask, cache, x.unsqueeze(0), t).squeeze(0)
+
+
+class _MaskConstantTorch:
+    """Reuse exactly one immutable original suffix mask tensor constructor."""
+    def __init__(self, torch, constant):
+        self.torch, self.constant = torch, constant
+        self.values = [1]+[0]*(constant.numel()-1)
+
+    def __getattr__(self, name):
+        return getattr(self.torch, name)
+
+    def tensor(self, data, *args, **kwargs):
+        if (not args and isinstance(data, list) and data == self.values
+                and set(kwargs) == {'dtype','device'}
+                and kwargs['dtype'] == self.constant.dtype
+                and self.torch.device(kwargs['device']) == self.constant.device):
+            return self.constant
+        return self.torch.tensor(data, *args, **kwargs)
 
 
 def sample_original_rtc(expert, noise, previous, delay, executed, beta=5.):

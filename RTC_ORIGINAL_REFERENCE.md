@@ -3,8 +3,51 @@
 ## 状态（2026-10-19）
 
 已接通独立原始源码路径，固定样本计算门禁通过；真实异步尚未完成验证。
-原路径完整推理太慢，H20预检判定无法覆盖延迟，未启动正式episode。
+首轮eager完整推理太慢，H20预检判定无法覆盖延迟，未启动正式episode。
+追加CUDA图后固定输入完整请求约573ms，见下一节；仍不是实际任务结果。
 没有修改FlashRT、环境依赖、权重、硬件频率或项目正式默认。
+
+## 保真CUDA图加速（追加）
+
+新增`perceptbudget/openpi_graph.py`重放原始expert前向/VJP与作者Euler运算顺序。
+只将固定FP32时刻与固定suffix掩码张量提前创建；后者仅作用于隔离suffix的局部torch代理，
+不改全局torch.tensor。没有缓存/改写time MLP或Ada数值，没有降低精度、步数或改变checkpoint。
+图绑定exact prefix shape，KV内容可原地刷新；上下文地址替换时拒绝重放，以防stale KV。
+当前CLI强制`--cuda-graph`仅用于`--timing-only`，不允许作为实际episode入口。
+
+|范围|普通执行中位ms|CUDA图中位ms|
+|---|---:|---:|
+|固定输入原始专家（含RTC梯度）|1449.84|208.83|
+|完整FlashRT编码＋原始专家请求|1837.19（此前同配置）|573.29|
+
+专家probe：`M1/20261019T094518.966641Z-openpi-rtc-graph-probe-f275749a`。
+五步速度场、五步输入VJP及最终raw与独立作者顺序参考最大差均0；
+改变噪声、旧动作目标、d/s参数后，图与普通原始执行最大差0；
+刷新KV内容后仍差0，且输出确实改变，未使用旧KV。
+单次建图约4.64秒，独立于上述稳态计时。专家不求梯度的普通执行约588.56ms。
+
+完整请求：`M1/20261019T094418.002933Z-openpi-rtc-actual-79c21c1f`。
+3次573.29/578.25/568.96ms，中位573.29ms；对比原eager中位1837.19ms约降低68.8%。
+实际观测live gate的raw及VJP范数差0，prefix570，建图4.86秒另计。
+原raw summary的scope沿用通用async描述不够准确，但timing_only=true/episode_started=false明确；
+本轮没有实际控制episode、Hz或成功率，后续脚本已修正timing-only的scope标签。
+仍使用heuristic-first，不能直接同历史自写专家393ms的自动选核计时作公平比较。
+
+失败/未采用方案也保留：
+
+- 第一轮578cc0ee捕获被原方法内固定掩码torch.tensor阻挡，invalid；通过局部提前创建常量解决。
+- 固定物理KV容量592以支持变长state的55e51f7a：图与同容量原始执行一致，
+  但相对有效长度570的独立参考raw差0.008165，未通过1e-4门禁，不用于runtime。
+  因此当前只采用exact prefix形状，不用padding换取一个通用图，不在任务中自动重建图。
+
+下一步应解决多个实际prefix长度的保真执行管理，再验证实际异步。
+573ms在目标20Hz下仍超过H20可稳定容纳的半horizon预算，不能据此承诺不断供。
+315 CPU tests通过、9跳过，另178 subtests通过。所有门禁只涵盖已测输入，不证明全任务正确。
+
+```bash
+python scripts/probe_openpi_graph.py
+python scripts/eval_rtc_openpi.py --verified-run <passed-gate-run> --task-id 0 --timing-only --cuda-graph
+```
 
 ## 三个组件
 

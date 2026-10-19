@@ -85,6 +85,7 @@ def rollout(config, run, gate, task_id):
         initial = {}
         adapter.bootstrap(snapshot, task['instruction'], initial)
         previous = np.asarray(initial['actions_raw'], dtype=np.float32)[5:]
+        graph_audit = adapter.prepare_graph(previous) if config.get('original_cuda_graph') else None
         def infer():
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
         timing = timed(torch, infer, count=3)
@@ -95,9 +96,17 @@ def rollout(config, run, gate, task_id):
         base._write_json_atomic(run/'run.json', record)
         result = dict(status='preflight_completed', task_id=task_id, timing=timing,
                       initial_delay_steps=initial_delay, original_source_hashes=provenance,
-                      simulation_optimization=False, scope='actual-delay async, no fixed simulation wait; actual Hz measured')
+                      graph_audit=graph_audit,
+                      simulation_optimization=False,
+                      scope=('fixed-observation full-request timing; no async episode' if config.get('original_timing_only')
+                             else 'actual-delay async, no fixed simulation wait; actual Hz measured'))
         base._write_json_atomic(run/'summary.json', result)
         print('preflight='+json.dumps(result), flush=True)
+        if config.get('original_timing_only'):
+            adapter.release_graph()
+            result.update(status='completed', timing_only=True, episode_started=False,
+                          note='same observation/full context + original guided expert; no task success rate')
+            return result
         if 5+initial_delay > 20:
             adapter.release_graph()
             result.update(status='infeasible_before_episode', reason='measured full latency exceeds available H-s old tail; no clipping or horizon change')
@@ -137,8 +146,12 @@ def main():
     parser.add_argument('--verify-only', action='store_true')
     parser.add_argument('--verified-run', type=Path)
     parser.add_argument('--reference-fixture', type=Path)
+    parser.add_argument('--timing-only', action='store_true')
+    parser.add_argument('--cuda-graph', action='store_true',help='Exact prefix graph: fixed-input timing only')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     args = parser.parse_args()
+    if args.cuda_graph and (not args.timing_only or args.verify_only):
+        parser.error('--cuda-graph currently requires --timing-only and a passed --verified-run')
     if not args.verify_only and args.verified_run is None:
         parser.error('require --verify-only or a passed --verified-run')
     if args.verify_only and args.reference_fixture is None:
@@ -150,6 +163,7 @@ def main():
         rtc_wait_for_delay_feasibility=False, release_rtc_graph_before_artifacts=True,
         disk_backed_frames=True, pending_arm_gain=1.0,
         rtc_expert='original_openpi_source', rtc_action_state_dtype='float32')
+    config.update(original_cuda_graph=args.cuda_graph,original_timing_only=args.timing_only)
     config.pop('controlled_delay_steps', None)
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
@@ -160,7 +174,8 @@ def main():
         run = create_run(config, 'M1', 'openpi-rtc-gate' if args.verify_only else 'openpi-rtc-actual', repo_root=ROOT)
         print('run_dir='+str(run), flush=True)
         for name in ('scripts/eval_rtc_openpi.py', 'scripts/probe_delay_buffer.py',
-                     'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py'):
+                     'perceptbudget/openpi_reference.py', 'perceptbudget/rtc_openpi.py',
+                     'perceptbudget/openpi_graph.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, dest)

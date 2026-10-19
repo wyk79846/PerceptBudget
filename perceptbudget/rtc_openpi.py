@@ -13,6 +13,29 @@ class OriginalOpenPiRTCAdapter:
         self.graph = None
         self.capture_seconds = 0.
 
+    def prepare_graph(self, previous_raw):
+        """Fixed-input timing only: gate a single exact prefix shape."""
+        import numpy as np
+        from perceptbudget.openpi_reference import sample_original_rtc
+        from perceptbudget.openpi_graph import CapturedOriginalRtc
+        torch = self.torch
+        noise = torch.randn(self.horizon,32,device='cuda',dtype=torch.float32)
+        previous = torch.as_tensor(np.asarray(previous_raw),device='cuda',dtype=torch.float32)
+        reference, norms = sample_original_rtc(self.expert,noise,previous,5,5)
+        started = time.monotonic()
+        self.graph = CapturedOriginalRtc(self.expert,noise)
+        self.capture_seconds = time.monotonic()-started
+        raw, _, corrections = self.graph.replay(noise,previous,5,5)
+        raw_error = float((raw-reference).abs().max())
+        norm_error = float((corrections.norm(dim=(1,2))-torch.tensor(norms,device='cuda')).abs().max())
+        import math
+        if not math.isfinite(raw_error) or not math.isfinite(norm_error) or raw_error >= 1e-4 or norm_error >= 1e-4:
+            raise RuntimeError('live original CUDA graph parity failed')
+        self.graph_prefix_length = int(self.expert.prefix_mask.shape[1])
+        return dict(raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,passed=True,
+                    prefix_length=self.graph_prefix_length,capture_seconds=self.capture_seconds,
+                    limitation='single exact prefix shape; timing only, not dynamic-state rollout')
+
     def estimate_delay_steps(self, period):
         import math
         return max(1, math.ceil(self.latency_estimate_seconds/period))
@@ -31,15 +54,24 @@ class OriginalOpenPiRTCAdapter:
             pl._context_graph.replay(pl._graph_stream)
         pipe._graph_torch_stream.synchronize()
         valid = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
+        if self.graph is not None and valid != self.graph_prefix_length:
+            raise RuntimeError('exact-prefix graph cannot accept changed state token length; no padding/rebuild fallback')
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
-        raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed)
+        if self.graph is not None and previous is not None:
+            raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
+            norms = corrections.norm(dim=(1,2)).cpu().tolist()
+        else:
+            raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed)
         raw_actions = raw.cpu().numpy().copy()
+        if not np.isfinite(raw_actions).all() or not np.isfinite(norms).all():
+            raise RuntimeError('nonfinite original OpenPI RTC output or VJP')
         request['actions_raw'] = raw_actions.tolist()
         request.setdefault('rtc_guidance', {}).update(dict(
             delay_estimate_steps=delay, executed_steps=executed, guidance_enabled=previous is not None,
-            solver_backend='original_openpi_eager_vjp', expert_backend='original_openpi_source',
+            solver_backend='original_openpi_cuda_graph' if self.graph is not None and previous is not None else 'original_openpi_eager_vjp',
+            expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=5.,
             state_in_prompt=snapshot.get('state') is not None))
         actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
@@ -55,7 +87,9 @@ class OriginalOpenPiRTCAdapter:
 
     def release_graph(self):
         import gc
+        used_graph = self.graph is not None
+        self.graph = None
         self.expert = None
         gc.collect()
         self.torch.cuda.empty_cache()
-        return {'original_openpi_suffix_released': True, 'cuda_graph_used': False}
+        return {'original_openpi_suffix_released': True, 'cuda_graph_used': used_graph}
