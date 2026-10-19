@@ -1,5 +1,7 @@
 # PerceptBudget
 
+RTC最新可选性能试验及计时边界见 [RTC_NATIVE_PROBE.md](RTC_NATIVE_PROBE.md)。当前固定输入可测约393ms，但任务中约425ms，尚未稳定低于400ms。缩减文字预留不截断实际输入，超容量报错；这些优化均未切为全项目默认。
+
 当前开发入口（2026-10-17）：主项目固定为 `/home/wyk/workspace/PerceptBudget`，FlashRT 固定为 `config.json` 指向的 `/home/wyk/workspace/FlashRT-upstream`。两仓库当前开发分支均为 `project/perceptbudget`。SEAM 已整合到这两个目录，后续修改直接在此进行。旧 SEAM 工作区转入任务产出归档，历史结果路径保留原样。
 
 FlashRT 的逐文件修改清单见 [PERCEPTBUDGET_CHANGES.md](../FlashRT-upstream/PERCEPTBUDGET_CHANGES.md)。主项目保留既有 RTC 诊断；SEAM 同步入口为 `scripts/eval_seam_sync.py`，真实延迟异步入口为 `scripts/eval_seam_async.py`，早期异步 SEAM 探针保留在历史分支中。

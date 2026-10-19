@@ -13,7 +13,7 @@ class RTCGuidanceAdapter:
                  latency_prior_seconds=0.5994,
                  attention_backend='math', guidance_enabled=True, audit_reference=False,
                  reference_backend=False, eager_backend=False, native_fused_output_root=None,
-                 fused_attention_ops=False):
+                 fused_attention_ops=False,profile_stages=False):
         from flash_rt.subgraphs.pi05.rtc_action_vjp import CapturedRtcChunk
         from perceptbudget.rtc_expert import DifferentiableExpert
 
@@ -31,6 +31,7 @@ class RTCGuidanceAdapter:
         self._audited_prefixes = set()
         self.reference_backend = bool(reference_backend)
         self.eager_backend = bool(eager_backend)
+        self.profile_stages=bool(profile_stages)
         sample = torch.zeros((self.horizon, 32), device=self.pipe._noise_buf.device,
                              dtype=torch.bfloat16).float()
         self.expert = DifferentiableExpert(
@@ -112,19 +113,30 @@ class RTCGuidanceAdapter:
         torch = self.torch
         pipe, pl = self.pipe, self.pipeline
         request['inference_started_monotonic'] = time.monotonic()
+        stages={}
+        last_stage=request['inference_started_monotonic']
+        def mark(name):
+            nonlocal last_stage
+            if self.profile_stages:
+                now=time.monotonic()
+                stages[name]=(now-last_stage)*1000
+                last_stage=now
         with torch.cuda.stream(pipe._graph_torch_stream):
             self.model.set_prompt(prompt, state=snapshot.get('state'))
+            mark('prompt_ms')
             pipe._fill_img_buf({'images': snapshot['images']})
             pipe._copy_tensor_to_pipeline_buf_stream(
                 pipe._img_buf, pl.input_images_buf,
                 pipe._graph_torch_stream.cuda_stream)
             pl._context_graph.replay(pl._graph_stream)
         pipe._graph_torch_stream.synchronize()
+        mark('images_and_context_ms')
 
         prefix = (int(pl.attn.dec_devpos.item()) if pl._fixed_shape
                   else int(pl.encoder_seq_len))
         context_diagnostic = self._refresh_context_for_prefix(prefix)
         request.setdefault('rtc_guidance', {}).update(context_diagnostic)
+        mark('context_refresh_ms')
 
         expected = (self.horizon - executed, 32)
         if tuple(previous_raw.shape) != expected:
@@ -140,6 +152,7 @@ class RTCGuidanceAdapter:
         mask = soft_mask_tensor(self.horizon, delay, executed, device=device)
         if not self.guidance_enabled:
             mask.zero_()
+        mark('noise_target_mask_ms')
         if self.reference_backend:
             if not self.guidance_enabled:
                 raise ValueError('paper-reference backend requires guidance')
@@ -165,6 +178,7 @@ class RTCGuidanceAdapter:
         vjp_norms = vjp_norms.detach().clone()
         error_norms = error_norms.detach().clone()
         torch.cuda.synchronize()
+        mark('expert_ms')
 
         if self.audit_reference and not self.reference_backend and self.guidance_enabled and not self._reference_audited:
             import gc
@@ -195,6 +209,7 @@ class RTCGuidanceAdapter:
                 self.graph = CapturedRtcChunk(self.expert.step_delta, noise,
                                               num_steps=self.num_steps)
 
+        mark('reference_audit_ms')
         raw_actions = raw.cpu().numpy().astype(np.float32, copy=True)
         actions = unnormalize_actions(raw_actions, self.pipe.norm_stats)[:, :7]
         request['actions_raw'] = raw_actions.tolist()
@@ -213,6 +228,8 @@ class RTCGuidanceAdapter:
             'weighted_error_norms': error_norms.cpu().tolist(),
         })
         request['inference_ended_monotonic'] = time.monotonic()
+        mark('output_and_log_ms')
+        if self.profile_stages: request['rtc_stage_ms']=stages
         self.latency_estimate_seconds = (
             request['inference_ended_monotonic']
             - request['inference_started_monotonic'])

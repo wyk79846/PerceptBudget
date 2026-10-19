@@ -18,11 +18,13 @@ def main():
     parser.add_argument('--fused-backward',action='store_true')
     parser.add_argument('--full-rtc-gate',action='store_true')
     parser.add_argument('--fused-attention-ops',action='store_true')
+    parser.add_argument('--state-prompt-capacity',type=int,choices=(64,80,96,200))
     args=parser.parse_args()
     if args.fused_attention_ops and not (args.fused_backward and args.full_rtc_gate):
         parser.error('--fused-attention-ops requires --fused-backward --full-rtc-gate')
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=5, state_enabled=True)
+    if args.state_prompt_capacity is not None: config['state_prompt_capacity']=args.state_prompt_capacity
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'])
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

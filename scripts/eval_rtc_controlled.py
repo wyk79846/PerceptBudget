@@ -110,6 +110,8 @@ def main():
     parser.add_argument('--preflight-rtc', action='store_true', help='Validate and time RTC before the task; keep live task timing separate')
     parser.add_argument('--native-fused-ffn',action='store_true',help='Experimental native FFN and fused input gradients; not baseline-equivalent')
     parser.add_argument('--fused-attention-ops',action='store_true',help='Experimental fused Ada/RoPE/residual; requires native-fused-ffn')
+    parser.add_argument('--state-prompt-capacity',type=int,choices=(64,80,96,200),help='Physical fixed-state capacity only; never truncate actual tokens')
+    parser.add_argument('--profile-rtc-stages',action='store_true')
     parser.add_argument('--denoising-steps', type=int, choices=(5, 10), default=10)
     parser.add_argument('--q', type=int, choices=(5, 8, 10), default=10)
     parser.add_argument('--suite', choices=('libero_10', 'libero_spatial'), default='libero_10')
@@ -120,6 +122,8 @@ def main():
     args = parser.parse_args()
     if args.fused_attention_ops and not args.native_fused_ffn:
         parser.error('--fused-attention-ops requires --native-fused-ffn')
+    if args.state_prompt_capacity is not None and (not args.state or not args.preflight_rtc or args.spatial_screen):
+        parser.error('--state-prompt-capacity requires single --state --preflight-rtc')
     if args.native_fused_ffn and (args.spatial_screen or not args.rtc_only or not args.preflight_rtc
                                   or args.attention_backend!='flash-varlen'):
         parser.error('--native-fused-ffn requires single --rtc-only --preflight-rtc --attention-backend flash-varlen')
@@ -147,7 +151,10 @@ def main():
                   disk_backed_frames=args.rtc_only and args.state,
                   rtc_validation_before_task=args.preflight_rtc,
                   rtc_native_fused_ffn=args.native_fused_ffn,
-                  rtc_fused_attention_ops=args.fused_attention_ops)
+                  rtc_fused_attention_ops=args.fused_attention_ops,
+                  rtc_profile_stages=args.profile_rtc_stages)
+    if args.state_prompt_capacity is not None:
+        config['state_prompt_capacity']=args.state_prompt_capacity
     config['screen'].update(seed=7, init_state_index=0, suites=[args.suite],
                             task_ids=list(range(10)) if args.spatial_screen else [args.task_id],
                             trials_per_task=1, task_ids_status='explicit_controlled_RTC_selection')
@@ -164,7 +171,8 @@ def main():
         for name in ('scripts/eval_rtc_controlled.py', 'scripts/probe_delay_buffer.py',
                      'perceptbudget/rtc_rollout.py', 'perceptbudget/rtc_guidance.py',
                      'perceptbudget/rtc_expert.py', 'perceptbudget/rtc_native_probe.py',
-                     'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu'):
+                     'perceptbudget/rtc_fused_backward.py','perceptbudget/rtc_fused_backward.cu',
+                     'perceptbudget/model.py','perceptbudget/compact_state.py'):
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
@@ -199,7 +207,8 @@ def main():
                                          attention_backend=args.attention_backend, audit_reference=True,
                                          reference_backend=args.paper_reference, eager_backend=args.eager_rtc,
                                          native_fused_output_root=config['output_root'] if args.native_fused_ffn else None,
-                                         fused_attention_ops=args.fused_attention_ops)
+                                         fused_attention_ops=args.fused_attention_ops,
+                                         profile_stages=args.profile_rtc_stages)
             result['initial_graph_capture_seconds'] = adapter.capture_seconds
             if args.preflight_rtc:
                 from scripts.probe_rtc_step import timed

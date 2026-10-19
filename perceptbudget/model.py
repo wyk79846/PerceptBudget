@@ -24,6 +24,10 @@ def load_model(config):
     from flash_rt.api import VLAModel
     from flash_rt.frontends.torch.pi05_rtx import Pi05TorchFrontendRtx
 
+    if config.get('state_prompt_capacity') is not None:
+        from perceptbudget.compact_state import frontend_type
+        Pi05TorchFrontendRtx=frontend_type(Pi05TorchFrontendRtx,config['state_prompt_capacity'])
+
     pipe = Pi05TorchFrontendRtx(
         config["checkpoint_path"], num_views=2, chunk_size=config["H"],
         num_steps=config["N"], use_fp8=False, hardware="rtx_sm87",

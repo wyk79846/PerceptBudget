@@ -1,5 +1,6 @@
 """Same-input N5/state timing diagnosis; no rollout or weight updates."""
 import fcntl
+import argparse
 import json
 import os
 from pathlib import Path
@@ -13,8 +14,13 @@ from perceptbudget.experiment import create_run, load_config
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--optimized',action='store_true')
+    parser.add_argument('--state-prompt-capacity',type=int,choices=(64,80,96,200))
+    args=parser.parse_args()
     config = load_config(repo_root=ROOT)
     config.update(H=20, N=5, state_enabled=True)
+    if args.state_prompt_capacity is not None: config['state_prompt_capacity']=args.state_prompt_capacity
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'])
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -50,13 +56,22 @@ def main():
                 pipe._graph_torch_stream.synchronize()
             result['context_graph_only'] = timed(torch, context)
             adapter = RTCGuidanceAdapter(model, torch, horizon=20, num_steps=5,
-                attention_backend='flash-varlen', audit_reference=False)
+                attention_backend='flash-varlen', audit_reference=False,
+                native_fused_output_root=config['output_root'] if args.optimized else None,
+                fused_attention_ops=args.optimized,profile_stages=True)
             previous = pipe._noise_out.float().cpu().numpy().copy()[5:]
+            stage_samples=[]
             def rtc():
-                return adapter.predict(snap, task['instruction'], previous,
-                                       delay=5, executed=5, request={})
+                request={}
+                value=adapter.predict(snap, task['instruction'], previous,
+                                       delay=5, executed=5, request=request)
+                stage_samples.append(request['rtc_stage_ms'])
+                return value
             rtc()
             result['rtc_full'] = timed(torch, rtc)
+            import statistics
+            result['rtc_stages_median_ms']={key:statistics.median(r[key] for r in stage_samples[-5:])
+                                            for key in stage_samples[-1]}
             result['rtc_expert_graph'] = timed(torch, adapter.graph.graph.replay)
             # Same Torch expert without input-gradient guidance: isolate the
             # VJP increment from the native-vs-Torch implementation difference.
