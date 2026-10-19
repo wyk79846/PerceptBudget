@@ -178,16 +178,21 @@ def main():
     parser.add_argument('--verified-run', type=Path)
     parser.add_argument('--reference-fixture', type=Path)
     parser.add_argument('--timing-only', action='store_true')
-    parser.add_argument('--cuda-graph', action='store_true',help='Graph for fixed-input timing or controlled quality experiment')
+    parser.add_argument('--cuda-graph', action='store_true',help='CUDA graph for explicit timing or quality/async experiments')
     parser.add_argument('--state-switches',action='store_true',help='Validate changed state inputs, no task episode')
     parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
-    parser.add_argument('--experimental-varlen',action='store_true',help='Explicit non-parity attention quality experiment, controlled test only')
+    parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
+    parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
     args = parser.parse_args()
-    if args.experimental_varlen and not args.controlled_delay_five:
-        parser.error('--experimental-varlen requires --controlled-delay-five; not approved for actual async')
-    if args.cuda_graph and (not (args.timing_only or args.controlled_delay_five) or args.verify_only):
-        parser.error('--cuda-graph requires --timing-only or --controlled-delay-five and a passed --verified-run')
+    if args.actual_delay and (args.controlled_delay_five or args.timing_only or args.verify_only):
+        parser.error('--actual-delay cannot combine with controlled delay, timing-only or verify-only')
+    if args.actual_delay and not (args.experimental_varlen and args.cuda_graph):
+        parser.error('--actual-delay currently requires --experimental-varlen --cuda-graph')
+    if args.experimental_varlen and not (args.controlled_delay_five or args.actual_delay):
+        parser.error('--experimental-varlen requires explicit controlled or actual-delay experiment')
+    if args.cuda_graph and (not (args.timing_only or args.controlled_delay_five or args.actual_delay) or args.verify_only):
+        parser.error('--cuda-graph requires timing-only, controlled-delay-five or actual-delay')
     if args.state_switches and not (args.cuda_graph and args.timing_only):
         parser.error('--state-switches requires --cuda-graph --timing-only')
     if not args.verify_only and args.verified_run is None:
@@ -208,6 +213,7 @@ def main():
         config.update(controlled_delay_steps=5,rtc_paper_schedule=False,
                       execution_mode='original_expert_controlled_delay_quality_only')
     config['experimental_original_varlen']=args.experimental_varlen
+    config['explicit_actual_delay_experiment']=args.actual_delay
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
     config['screen'].update(seed=7, init_state_index=0, suites=['libero_spatial'], task_ids=[args.task_id])

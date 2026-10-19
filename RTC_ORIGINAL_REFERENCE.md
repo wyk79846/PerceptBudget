@@ -215,3 +215,12 @@ attention内部将动作KV置前；原版位置编码仍由有效prefix mask计�
 但尚无总体成功率或实际异步结果。原版/候选差包含图加速，不能把68.9%全部
 归因于attention；比已有约564ms固定长度图也不能称更快。
 本次无内存保护触发；未改FlashRT，未更改全局默认。详情父run的analysis.md。
+
+### 用户自行运行实际异步（后续授权，尚未测）
+
+`eval_rtc_openpi.py --actual-delay --experimental-varlen --cuda-graph --verified-run <d9835f75目录> --task-id 0`。
+此显式模式取代上述“只允许受控实验”的CLI限制，不更改默认。
+禁止与controlled-delay-five/timing-only混用；推理时继续原速执行旧动作，
+最近10次实际延迟步数max引导，提交按实际已过步数裁剪，不冻结仿真。
+若预检H-s余量不足则episode开始前停止，不静默改H/N或裁剪延迟。
+用户负责启动，agent未运行GPU；任务结果、实际Hz、断供待日志核查。
