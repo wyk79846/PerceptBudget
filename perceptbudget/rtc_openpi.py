@@ -147,11 +147,13 @@ class OriginalOpenPiRTCAdapter:
 
     def release_graph(self):
         import gc
-        used_graph = self.graph is not None
+        used_step_bank = self.step_bank is not None
+        used_graph = self.graph is not None or used_step_bank
         self.graph = None
         self.step_bank = None
         self.graph_expert = self.fallback_expert = None
         self.expert = None
         gc.collect()
         self.torch.cuda.empty_cache()
-        return {'original_openpi_suffix_released': True, 'cuda_graph_used': used_graph}
+        return {'original_openpi_suffix_released': True, 'cuda_graph_used': used_graph,
+                'source_step_bank_used': used_step_bank}

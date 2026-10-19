@@ -7,9 +7,44 @@ import copy
 import math
 
 
+def lengths_from_reference_profile(profile,*,task_id,suite,horizon):
+    """Use historical lengths only for prewarming, never for action decisions."""
+    import hashlib
+    import json
+    from pathlib import Path
+    profile=Path(profile)
+    record=json.loads(profile.read_text())
+    entries=[r for r in record['records'] if r['task_id']==task_id]
+    if len(entries)!=1:
+        raise ValueError('reference profile must contain this task exactly once')
+    run=Path(entries[0]['source_run'])
+    config=json.loads((run/'run.json').read_text())['config_snapshot']
+    expected=dict(H=horizon,N=5,state_enabled=True,state_prompt_capacity=80,
+        controlled_delay_steps=5,rtc_suite=suite,rtc_author_order=True,
+        experimental_original_varlen=False,original_cuda_graph=False)
+    if any(config.get(k)!=v for k,v in expected.items()):
+        raise ValueError('reference profile configuration mismatch')
+    summary=json.loads((run/'summary.json').read_text())
+    if summary.get('task_id')!=task_id or summary.get('suite')!=suite:
+        raise ValueError('reference profile task/suite mismatch')
+    requests=run/'rtc/q5_requests.json'
+    lengths=sorted(set(r['rtc_guidance']['valid_prefix_length'] for r in json.loads(requests.read_text())))
+    if not lengths or len(lengths)>8 or any(type(n) is not int or not 1<=n<=592 for n in lengths):
+        raise ValueError('invalid reference prefix lengths')
+    return lengths,dict(profile=str(profile.resolve()),source_run=str(run),
+        requests_sha256=hashlib.sha256(requests.read_bytes()).hexdigest(),
+        limitation='historical shape preparation only; unseen lengths fall back to slow reference')
+
+
 class SourceStepGraph:
     def __init__(self,expert,noise,*,pool=None,stream=None):
         import torch
+        if expert.context_capacity is not None or getattr(expert,'varlen_attention_enabled',False):
+            raise ValueError('source step graph requires exact original attention context')
+        if noise.shape!=(expert.horizon,32) or noise.dtype!=torch.float32:
+            raise ValueError('source step graph requires FP32 Hx32 noise')
+        if expert.suffix.training or any(p.requires_grad for p in expert.suffix.parameters()):
+            raise ValueError('source step graph requires frozen eval expert')
         if getattr(expert,'_condition_cache',None) is not None:
             raise ValueError('step graph gate must use original uncached conditioning')
         expert.enable_graph_constants()

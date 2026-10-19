@@ -1,5 +1,7 @@
 # 协作规则
 
+- 新单步图Spatial2 bf2821fc完成123步success/15.232s、完整median583.21ms vs本轮慢参考e6373b1a123步/43.585s/1815.74ms。25份raw/noise/previous逐值同，控制action及before场景全同；124帧仅一通道差1级，不能称images bitexact。24轮目标/123步来源裁切审计通过，0断供/重建/fallback/RAM保护。预建566/567/568花8.81秒另计；非真实异步/非十任务成功率。CLI --source-step-profile从匹配慢批次按task准备≤8长度，只shape预热；未见长度fallback慢参考。修正release日志cuda_graph_used包含step bank（已完成run旧字段false勿误判，真实requestbackend为stepgraph）。335tests已通过，新增profile测试已单测通过。详见RTC_SOURCE_ACCELERATION.md，不整套切回旧varlen路径，不自动宣称7/10赋给新候选。
+
 - 用户授权以最新7/10慢参考为基准重新提速。原始注意力/精度/FP32源顺序不动。时间条件缓存2a52c29b三长度raw/VJP逐步差0但仅省35–60ms，暂未接入runtime。新SourceStepGraph dbfb73ca原始单步forward/VJP动态time、作者未化简gain/FP32tau原顺序，H25N5三组逐步input/velocity/clean/error/VJP/output差全0，专家1456–1458→215–232ms。初轮beta构造捕获invalid保留，v2仅常量预建修复。SourceStepBank最多8个exact长度共用scratch池，预建在setup，miss回退source-order慢参考不重建不padding，默认不开。下一步仅Spatial2一次受控q5d5与已完成慢参考123步成对比，prefix566/567/568来自该历史任务，未知长度fallback必须报告；不是已恢复全任务/真实异步加速，不改FlashRT或功耗。
 
 - LIBERO-10 task0慢参考e8972221已完成347步success（仿真17.35s/真实125.804s/完整median1819.13ms），0断供/异常/RAM保护触发；配置H25N5q5d5state80/原attention/author_order/无图不变。任务汤罐+番茄酱放篮子，520上限。handoff_audit通过69轮实际target、347步来源/gain1/裁切，有actualdelay的340步旧动作一致；末次成功后完成未提交，actualdelay=None不算断供或伪造延迟。仅单次受控长任务成功，非真实异步/总体成功率/加速路径结果；不扩测或恢复加速。详见RTC_CORRECTNESS_RECHECK.md第5节。
