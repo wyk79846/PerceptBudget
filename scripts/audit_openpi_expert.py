@@ -23,10 +23,11 @@ from scripts import eval_q as base
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--project-reference', type=Path)
+    parser.add_argument('--reference-variant', choices=('original','folded-output','bf16-input','bf16-time','split-input-bias'), default='original')
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     source = Path(config['output_root'])/'M1/20261019T054917.649092Z-capacity-numeric-diagnosis-5f903047/capacity80a'
-    config.update(H=20, N=5, reference_trace=str(source))
+    config.update(H=20, N=5, reference_trace=str(source), reference_variant=args.reference_variant)
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         run = create_run(config, 'M1', 'openpi-expert-independent', repo_root=ROOT)
@@ -91,15 +92,47 @@ def main():
         positions = torch.arange(valid, valid+20, device='cuda').unsqueeze(0)
         mask = torch.zeros(1,1,20,valid+20,device='cuda',dtype=torch.float32)
         outputs = {}
+        active_step = [-1]
+        hooks = []
+        def capture(label):
+            def hook(mod, inputs, output):
+                if active_step[0] != 0:
+                    return
+                value = output[0] if isinstance(output,tuple) else output
+                outputs[label] = value.detach().float().cpu().numpy()
+            return hook
+        for index,layer in enumerate(expert.layers):
+            hooks.append(layer.register_forward_hook(capture(f'layer{index:02d}')))
+            if index == 0:
+                for name in ('input_layernorm','self_attn','post_attention_layernorm','mlp'):
+                    hooks.append(getattr(layer,name).register_forward_hook(capture('layer00_'+name)))
+        if args.reference_variant == 'bf16-time':
+            time_in.to(torch.bfloat16); time_out.to(torch.bfloat16)
+        if args.reference_variant == 'bf16-input':
+            action_in.to(torch.bfloat16)
+        folded_w = (action_out.weight.detach()*(-1/5)).to(torch.bfloat16)
+        folded_b = (action_out.bias.detach()*(-1/5)).to(torch.bfloat16)
         def velocity(x,k):
+            active_step[0] = k
             t = torch.tensor([1-k/5],device='cuda',dtype=torch.float32)
             emb = scope['create_sinusoidal_pos_embedding'](t,1024,4e-3,4.,device=t.device).to(t.dtype)
+            emb = emb.to(time_in.weight.dtype)
             cond = torch.nn.functional.silu(time_out(torch.nn.functional.silu(time_in(emb))))
-            hidden = action_in(x.unsqueeze(0))
+            cond = cond.float()
+            hidden = action_in(x.unsqueeze(0).to(action_in.weight.dtype))
+            if args.reference_variant == 'split-input-bias':
+                hidden = ((x.unsqueeze(0).bfloat16() @ action_in.weight.bfloat16().t()).float()+
+                          action_in.bias.bfloat16().float()).bfloat16()
+            if k == 0:
+                outputs['action_projection_bf16']=hidden.detach().bfloat16().float().cpu().numpy()
+                outputs['time_condition']=cond.detach().float().cpu().numpy()
             cache = DynamicCache()
             for i in range(18): cache.update(keys[i],values[i],i)
             hidden = expert(inputs_embeds=hidden, attention_mask=mask, position_ids=positions,
                             past_key_values=cache, use_cache=False, adarms_cond=cond).last_hidden_state
+            if args.reference_variant == 'folded-output':
+                delta = ((hidden.to(torch.bfloat16) @ folded_w.t()).float()+folded_b.float()).to(torch.bfloat16)
+                return (-5*delta.float()).squeeze(0)
             return action_out(hidden.float()).squeeze(0)
         noise = torch.as_tensor(trace['32_fixed_noise'],device='cuda')
         target = torch.zeros_like(noise); target[:15] = noise[5:]
@@ -122,10 +155,19 @@ def main():
             x = (x-v/5+beta*g/5).detach()
             print('step='+str(k)+' finite='+str(bool(torch.isfinite(x).all())),flush=True)
         outputs['raw']=x.cpu().numpy()
+        fixed_reference=Path(config['output_root'])/'M1/20261019T090506.707357Z-openpi-expert-independent-4bfa20b7/reference.npz'
+        with np.load(fixed_reference) as fixed:
+            fixed_x=torch.as_tensor(fixed['input0'],device='cuda').requires_grad_(True)
+            fixed_error=torch.as_tensor(fixed['error0'],device='cuda')
+            fixed_v=velocity(fixed_x,0)
+            fixed_g,=torch.autograd.grad(fixed_x-fixed_v,fixed_x,grad_outputs=fixed_error)
+            outputs['fixed_velocity0']=fixed_v.detach().cpu().numpy()
+            outputs['fixed_vjp0']=fixed_g.detach().cpu().numpy()
         np.savez_compressed(run/'reference.npz',**outputs)
         difference = outputs['raw']-trace['33_rtc_raw']
         result=dict(status='completed', scope='independent original OpenPI expert, shared recorded encoder KV; not full model parity',
             raw_max_abs=float(np.max(np.abs(difference))), raw_relative_l2=float(np.linalg.norm(difference)/np.linalg.norm(trace['33_rtc_raw'])),
+            variant=args.reference_variant,
             all_weights_frozen=all(not p.requires_grad for p in expert.parameters()), reference_source=str(source_file))
         base._write_json_atomic(run/'summary.json', result)
         print(json.dumps(result),flush=True)
@@ -156,12 +198,38 @@ def project_check(config, source, run, reference):
         raise RuntimeError('reference prefix KV differs from current project KV; invalid comparison')
     saved=np.load(reference/'reference.npz')
     metrics=[]
-    for mode in ('fused','unfused'):
+    project_stages={}
+    import inspect
+    lines, first_line=inspect.getsourcelines(expert._step_delta)
+    source_lines={first_line+i:s.strip() for i,s in enumerate(lines)}
+    def tracer(frame,event,arg):
+        if frame.f_code is not expert._step_delta.__func__.__code__:
+            return None
+        if event=='line':
+            line=source_lines.get(frame.f_lineno,'')
+            loc=frame.f_locals
+            label=None
+            if line=='for i in range(18):':
+                label=f'layer{loc["i"]:02d}' if 'i' in loc else 'action_projection_bf16'
+                value=loc['hidden']
+            elif line=="qkv = norm @ w['attn_qkv_w'][i]" and loc['i']==0:
+                label='layer00_input_layernorm'; value=loc['norm']
+            if label:
+                project_stages[label]=value.detach().float().cpu().numpy()
+        return tracer
+    for mode in ('fused','unfused','reference-projections'):
         expert.fused_attention_ops = mode=='fused'
         expert.native_fused_ffn = mode=='fused'
+        if mode=='reference-projections':
+            expert.enable_reference_projections(config['model_path'])
         for k in range(5):
             x=torch.as_tensor(saved[f'input{k}'],device='cuda').requires_grad_(True)
-            delta=expert.step_delta(x,k).float()
+            trace_active=mode=='unfused' and k==0
+            if trace_active: sys.settrace(tracer)
+            try:
+                delta=expert.step_delta(x,k).float()
+            finally:
+                if trace_active: sys.settrace(None)
             velocity=-5*delta
             estimate=x-(1-k/5)*velocity
             error=torch.as_tensor(saved[f'error{k}'],device='cuda')
@@ -178,6 +246,7 @@ def project_check(config, source, run, reference):
             row['velocity_vjp_recovered']=dict(relative_l2=float(np.linalg.norm(a-b)/max(np.linalg.norm(b),1e-12)))
             metrics.append(row)
             print(json.dumps(row),flush=True)
+    np.savez_compressed(run/'project_stages.npz',**project_stages)
     base._write_json_atomic(run/'summary.json',dict(status='completed',reference=str(reference),
         prefix_kv_exact=kv_equal,
         scope='same independent input and residual per step; original OpenPI vs fused FlashRT expert',metrics=metrics))

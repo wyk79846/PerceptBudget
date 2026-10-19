@@ -1,5 +1,55 @@
 # RTC正确性审查（2026-10-19，进行中）
 
+## 首差定位与单项消融（追加）
+
+本轮仅诊断；未改正式runner/默认精度/FlashRT，未重测成功率。
+
+### 首个前向差异已定位输入投影
+
+原OpenPI输入FP32动作线性层后转BF16；项目先把输入转BF16，矩阵乘输出先舍入BF16，
+然后加bias再舍入。实际项目未融合step0输入投影相对原OpenPI差0.2839%，max0.03125。
+独立OpenPI参考只换成项目这个计算顺序后，该层输出与项目逐位一致（max0），
+因此已经有可复现的首差解释，而不只是猜测。
+
+第一层输入归一化相对差1.406%，第一层输出约0.518%；其余层仍存在累计差。
+追踪结果：`M1/20261019T091556.727806Z-openpi-expert-independent-41ec3e4a/project_stages.npz`。
+复现首差参考：以`/tmp/perceptbudget-openpi-split-input-20261019.log`中run_dir为源，
+`reference.npz`保存输入投影及每层输出。
+
+### 同输入、同残差的单项消融
+
+在独立原OpenPI中一次只改一项，首步输入与残差均固定为原始参考，避免由新残差混淆梯度。
+
+|单项变化|首步速度场相对差|首步clean-VJP相对差|
+|---|---:|---:|
+|只改输出层dt预折叠及BF16输出计算|0.237%|28.79%|
+|只改动作输入线性层为BF16（含输入cast，非项目split-bias）|0|16.51%|
+|只改时间MLP为BF16|0.243%|31.00%|
+|输入改为项目split-bias顺序|另见原始npz|27.63%|
+
+这些百分比不能相加，也不能解释为对应比例成功率变化。说明即使前向相同，
+输入cast和反向数值路径仍可能改变RTC修正；输出折叠不是无条件可用于RTC VJP的等价优化。
+原始三组固定残差run：3fc30f5e（original）、85b404bc（folded-output）、
+c4194fc8（bf16-input）、4cf5ad55（bf16-time），均在M1目录。
+
+### 小范围恢复尝试：尚未通过
+
+DifferentiableExpert新增显式诊断方法`enable_reference_projections`，默认None/关闭；
+只加载原checkpoint四个FP32动作投影张量，不对权重求梯度，输出保留FP32且不预折叠权重dt。
+未接入正式CLI或默认RTC，未声称速度不变。
+
+同输入同残差相对原OpenPI，未融合原路径→诊断恢复：
+首步clean-VJP差52.57%→43.96%，速度场差0.420%→0.323%；仍有大量差异。
+结果：`M1/20261019T091828.296955Z-openpi-expert-independent-cf5445c7`。
+不能把该诊断修改叫完整修复，也不能据此恢复成功率扫描。
+
+下一步针对时间style精度、Ada调制、激活/残差舍入、eager与FlashAttention计算顺序
+继续逐项对齐；先保持同prefix KV证明解码器，再独立审查encoder。
+已有证据只定位数值差异来源，不证明它们解释了全部闭环失败。
+309 CPU tests通过、9跳过，另178 subtests通过；新增测试保证原默认仍使用BF16输入、
+诊断模式保留FP32输入及其梯度。测试首轮collection提前导Torch导致轻量导入测试失败，
+改为函数内延迟导入后全通过，未改变生产轻量导入机制。
+
 ## 新进展：独立OpenPI专家参考已运行
 
 新增`scripts/audit_openpi_expert.py`，独立进程隔离导入OpenPI原始Gemma模块，

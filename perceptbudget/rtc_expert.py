@@ -207,6 +207,20 @@ class DifferentiableExpert:
         self._context = None
         self.native_fused_ffn = False
         self.fused_attention_ops = False
+        self.reference_projections = None
+
+    def enable_reference_projections(self, checkpoint_path):
+        """Diagnostic-only original FP32 action projections; no folded dt.
+
+        Keep disabled by default. Call before any graph capture. This isolates
+        projection rounding from the remaining BF16 expert implementation.
+        """
+        from safetensors import safe_open
+        with safe_open(str(checkpoint_path), framework='pt', device='cpu') as checkpoint:
+            self.reference_projections = {
+                key: checkpoint.get_tensor(key).to(device=self.device, dtype=torch.float32).detach()
+                for key in ('action_in_proj.weight', 'action_in_proj.bias',
+                            'action_out_proj.weight', 'action_out_proj.bias')}
 
     def enable_native_fused_ffn(self, output_root):
         """Experimental opt-in; call only before capturing a new RTC graph."""
@@ -393,13 +407,20 @@ class DifferentiableExpert:
         # Disable inherited autocast so all GEMMs really use BF16 inputs and
         # FP32 elementwise math matches the source kernel's precision policy.
         with torch.autocast(device_type=self.device.type, enabled=False):
-            result = self._step_delta(x.reshape(self.chunk_size, 32).to(self.dtype), step)
+            value = x.reshape(self.chunk_size, 32)
+            if self.reference_projections is None:
+                value = value.to(self.dtype)
+            result = self._step_delta(value, step)
         return result.reshape(x.shape)
 
     def _step_delta(self, x, step):
         w, ctx = self.weights, self._context
-        hidden = ((x @ w['action_in_proj_w']).float()
-                  + w['action_in_proj_b'].float()).to(self.dtype)
+        if self.reference_projections is None:
+            hidden = ((x @ w['action_in_proj_w']).float()
+                      + w['action_in_proj_b'].float()).to(self.dtype)
+        else:
+            p = self.reference_projections
+            hidden = F.linear(x.float(), p['action_in_proj.weight'], p['action_in_proj.bias']).to(self.dtype)
         for i in range(18):
             if self.fused_attention_ops:
                 from perceptbudget.rtc_native_probe import FusedAda,FusedQKVRope,FusedResidual
@@ -453,6 +474,9 @@ class DifferentiableExpert:
             norm=FusedAda.apply(hidden,ctx['final'][step],self._native_ffn_ones,self.pipeline.fvk)
         else:
             norm, _ = self._ada(hidden, ctx['final'][step])
+        if self.reference_projections is not None:
+            p = self.reference_projections
+            return F.linear(norm.float(), p['action_out_proj.weight'], p['action_out_proj.bias'])*(-1/self.num_steps)
         return ((norm @ w['action_out_proj_w']).float()
                 + w['action_out_proj_b'].float()).to(self.dtype)
 
