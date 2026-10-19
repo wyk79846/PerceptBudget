@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-19 用户授权真实延迟异步三个Spatial任务0/1/2各一次。03eb4a9新增--actual-delay，复用原入口不设controlled_delay_steps；q5为最小间隔，保留d<=s约束动态推迟，实际间隔5–7步，原速gain1。H20/N5/state/80/flash-varlen融合快后端。结果0/1超时220步15.596/16.149s，2成功140步9.751s，全部0断供，推理中位421.25/425.29/425.69ms，实际控制14.39/13.89/14.83Hz，不能称稳定20Hz/正式替代旧M1。env.step平均63.73/65.94/61.59ms，控制准备+尾部约6ms；未细分内部物理/渲染或证明GPU争用。完整记录在M1/20261019T055901.803138Z-rtc-actual-delay-q5-state-54bea0c0/three_task_summary.md，另外run后缀09243f5a/cce148fa。无额外扩测或FlashRT改动。不能把超时耗时叫成功完成时间。
+
 - 2026-10-19 用户同意先稳定选核/80容量再优化。新增项目侧可选native_gemm_policy=heuristic-first，仅代理autotune候选数1，不改FlashRT，默认autotune保留。80a/80b固定fixture独立进程所有追踪阶段逐位一致、padding检查通过；但首候选完整RTC477.01ms/普通392.48ms，不能作为加速默认。同80自动选核固定输入完整RTC392.87ms(390.34–394.47)/普通304.33ms，context259.97/专家122.79。不是任务/真实20Hz结果、不是自动选核跨进程一致性证明。要保留最快算法并固定需原生导入导出接口，尚未实现。CPU304pass/9skip另178subtests。未训练/未扩测任务/未继续改编码器。详见RTC_CAPACITY_DIAGNOSIS.md后续记录。
 
 - 2026-10-19 用户确认文字/state容量选80：config.json新增state_prompt_capacity=80，作为新实验默认，图像token另计、完整分词不变、超过80报错不截断，CLI仍可显式覆盖用于诊断。历史run和64容量数据保持原样，不把393/425ms归给80。仅做配置/边界测试，不自动重跑GPU任务；本次不改模型/H/N/state开关/FlashRT或动作衔接。
