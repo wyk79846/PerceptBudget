@@ -48,3 +48,36 @@ heuristic-first）。
 - 阶段 2b：专家逐步内 fused CUDA kernel（adaRMS 调制、GeGLU 前向+VJP 融合）候选；
   参考已证伪清单（b3-baseline-freeze：A regpipe/shape mapping/MTILE64/stage 专化均证伪，勿重复）。
 - 阶段 2c：闭环 task0/q15 真实异步复测（接入候选后）。
+
+## 阶段 2b：专家耗时结构（已完成，重要结论）
+
+同一 665-token 上下文、固定噪声/目标，纯测量不改生产：
+
+| 路径 | 中位 | 说明 |
+| --- | ---: | --- |
+| 5 步逐步图重放（生产路径，fwd+VJP×5） | 284.4ms | 56.9ms/步 |
+| 整段 5 步一张图（新 capture_full） | 284.8ms | **无收益** |
+| 纯前向 5 步（一张图，无 VJP） | 106.5ms | parity=0 |
+| eager 无梯度前向 5 步（无图） | 543.7ms | Python 开销参照 |
+
+结论：
+1. **逐步之间的 Python/启动开销 ≈ 0**（整段图没有变快）。生产专家侧 285ms 里
+   **~107ms 是前向、~178ms 是 VJP 反向**。反向占 62%，是专家侧主攻方向。
+2. 整段图 capture_full 已实现且 parity=0（raw/VJP 范数逐值同），但没有速度收益，
+   仅留作结构验证工具，不接入生产。
+3. eager 前向 544ms 慢是因为无图 + 每步重建 DynamicCache 等 Python 开销，
+   侧面确认现有逐步图已消掉这层。
+
+VJP 178ms 的构成（待进一步）：18 层 × (adaRMS dx、attention VJP、GeGLU dx、
+QKV/RoPE dx) 的 autograd 反向内核。优化候选：
+- 用 `rtc_fused_backward.cu`（已有 BF16 输入 VJP 内核：ada_dx/geglu_dx/qkv_rope_dx）
+  融合反向小算子——历史在旧模型上试过单层 2–3% 收益，未通过 1e-4 gate；
+  这次在 CUDA 图内以逐步 gate 方式重试（差值要求：相对逐步图 <1e-4）。
+- 仓库记忆：B3 冻结清单中的 kernel 优化路径已证伪（那是权重侧低比特 kernel，
+  与本处激活侧 VJP 不同，不冲突）。
+
+## autotune 决策（2026-10-20 用户指示）
+
+用户决定：**暂不接入 autotune**（保持 heuristic-first 数值口径），待其他优化
+完成后再评估是否切换（届时可配合 FlashRT 算法表导出接口锁定跨进程一致性）。
+
