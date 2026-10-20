@@ -104,8 +104,10 @@ def main():
                         help='Skip legacy expert split/full-graph experiments after request timing')
     parser.add_argument('--exact-flash-probe', action='store_true',
                         help='Attention-only experiment, preserving original FP32 projections and conditioning')
+    parser.add_argument('--fused-norm-probe',action='store_true',
+                        help='Compare FP32-style AdaRMS fusion on retained FlashAttention baseline')
     args = parser.parse_args()
-    if args.suffix_vjp_probe and args.exact_flash_probe:
+    if sum((args.suffix_vjp_probe,args.exact_flash_probe,args.fused_norm_probe))>1:
         parser.error('compare one candidate at a time')
     if args.iterations < 5 or args.warmup < 1 or not 0 < args.delay <= 45 \
             or not 0 <= args.executed <= 50 or args.executed + 5 > 50:
@@ -138,6 +140,10 @@ def main():
         if args.exact_flash_probe:
             dest = run / 'source/perceptbudget/rtc_exact_flash_probe.py'
             shutil.copy2(ROOT / 'perceptbudget/rtc_exact_flash_probe.py', dest)
+        if args.fused_norm_probe:
+            for name in ('rtc_fused_norm.py','rtc_fused_norm.cu'):
+                dest=run/'source/perceptbudget'/name
+                shutil.copy2(ROOT/'perceptbudget'/name,dest)
         result = dict(status='running', reference_run=str(args.reference_run),
                       iterations=args.iterations, warmup=args.warmup,
                       delay=args.delay, executed=args.executed, seed=args.seed)
@@ -285,21 +291,25 @@ def run_once(config, gate, run, args):
 
     mem('after_steady_loop')
     aggregate_out = aggregate(rows)
-    if args.suffix_vjp_probe or args.exact_flash_probe or args.requests_only:
-        result = (compare_exact_flash(adapter, previous, args, rows[-1]['valid'],run)
+    if args.suffix_vjp_probe or args.exact_flash_probe or args.fused_norm_probe or args.requests_only:
+        result = (compare_fused_norm(adapter,previous,args,rows[-1]['valid'],run)
+                  if args.fused_norm_probe else
+                  compare_exact_flash(adapter, previous, args, rows[-1]['valid'],run)
                   if args.exact_flash_probe else
                   compare_suffix_vjp_variants(adapter, previous, args, rows[-1]['valid'],run)
                   if args.suffix_vjp_probe else None)
         (run / 'stage_rows.json').write_text(json.dumps(rows, indent=1))
         if result is not None:
-            (run / ('exact_flash.json' if args.exact_flash_probe else 'suffix_vjp.json')).write_text(json.dumps(result, indent=1))
+            (run / ('fused_norm.json' if args.fused_norm_probe else
+                    'exact_flash.json' if args.exact_flash_probe else 'suffix_vjp.json')).write_text(json.dumps(result, indent=1))
         adapter.release_graph()
         del env, model, adapter
         import gc
         gc.collect()
         torch.cuda.empty_cache()
         return dict(summary=dict(total_ms=aggregate_out['total_ms'],
-                                 candidate_kind='exact_flash' if args.exact_flash_probe else 'suffix_vjp',
+                                 candidate_kind='fused_norm' if args.fused_norm_probe else
+                                                'exact_flash' if args.exact_flash_probe else 'suffix_vjp',
                                  candidate=result,
                                  graph_audit=graph_audit),
                     aggregate=aggregate_out)
@@ -455,6 +465,45 @@ def run_once(config, gate, run, args):
     gc.collect()
     torch.cuda.empty_cache()
     return dict(summary=summary, aggregate=aggregate_out)
+
+
+def compare_fused_norm(adapter,previous,args,valid,run):
+    import torch
+    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+    from perceptbudget.rtc_fused_norm import enable_fused_norm
+    if not adapter.config.get('rtc_exact_flash_attention'):
+        raise ValueError('norm experiment requires retained FlashAttention baseline')
+    bound,reference=adapter.step_bank.select(valid)
+    old=torch.as_tensor(previous,device='cuda',dtype=torch.float32)
+    torch.cuda.manual_seed(args.seed)
+    noise=torch.randn(adapter.horizon,32,device='cuda')
+    restore,metadata=enable_fused_norm(bound,adapter.config['output_root'])
+    try:candidate=SourceStepGraph(bound,noise,beta=adapter.beta)
+    finally:restore()
+    errors=[]
+    for seed in (args.seed,args.seed+1,args.seed+2):
+        torch.cuda.manual_seed(seed);noise=torch.randn_like(noise)
+        a,b=[],[]
+        raw,norms=reference.replay(noise,old,args.delay,args.executed,trace=a)
+        raw,norms=raw.clone(),norms.clone()
+        got,gn=candidate.replay(noise,old,args.delay,args.executed,trace=b)
+        errors.append(dict(seed=seed,raw_max_abs=float((got-raw).abs().max()),
+            relative_l2_7=float((got[:,:7]-raw[:,:7]).norm()/raw[:,:7].norm().clamp_min(1e-12)),
+            relative_l2_32=float((got-raw).norm()/raw.norm().clamp_min(1e-12)),
+            vjp_norm_max_abs=float((gn-norms).abs().max()),
+            per_step=[{k:float((x[k]-y[k]).abs().max()) for k in x} for x,y in zip(a,b)]))
+        del a,b
+    times={'reference':[],'candidate':[]}
+    for rep in range(14):
+        order=(('reference',reference),('candidate',candidate))
+        for name,graph in (order if rep%2==0 else reversed(order)):
+            torch.cuda.synchronize();started=time.monotonic()
+            graph.replay(noise,old,args.delay,args.executed)
+            torch.cuda.synchronize()
+            if rep>=4:times[name].append((time.monotonic()-started)*1000)
+    result=dict(metadata=metadata,errors=errors,timing_ms={k:summarize(v) for k,v in times.items()})
+    print('fused_norm_result='+json.dumps(result),flush=True)
+    return result
 
 
 def compare_exact_flash(adapter, previous, args, valid, run):

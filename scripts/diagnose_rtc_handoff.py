@@ -55,7 +55,7 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False, fused_norm=False, audit_norm=False):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
     config['rtc_beta'] = beta
@@ -64,6 +64,8 @@ def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, che
     config['rtc_exact_flash_attention'] = bool(exact_flash)
     config['rtc_suffix_only_vjp'] = bool(suffix_vjp)
     config['rtc_audit_attention_same_input'] = bool(audit_attention)
+    config['rtc_fused_norm']=bool(fused_norm)
+    config['rtc_audit_fused_norm']=bool(audit_norm)
     if exact_flash:
         config['attention_validation_scope'] = 'same Flash SDPA backend eager/graph gate; not original eager numerical parity'
     if suffix_vjp:
@@ -153,8 +155,14 @@ def main():
     parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
     parser.add_argument('--exact-flash-attention',action='store_true',help='experimental original expert with exact-context Flash SDPA')
     parser.add_argument('--suffix-only-vjp',action='store_true',help='experimental eager attention with constant-prefix KV gradient elimination; not combined with Flash SDPA')
+    parser.add_argument('--fused-norm',action='store_true',help='opt-in FP32-style AdaRMS fusion on exact FlashAttention')
+    parser.add_argument('--audit-norm-inputs',action='store_true',help='same-input norm-fusion audit against retained FlashAttention before rollout')
     parser.add_argument('--audit-attention-inputs',action='store_true',help='initial same-KV/noise/target comparison before candidate rollout')
     args = parser.parse_args()
+    if args.fused_norm and not args.exact_flash_attention:
+        parser.error('fused norm requires --exact-flash-attention')
+    if args.audit_norm_inputs and not args.fused_norm:
+        parser.error('norm audit requires --fused-norm')
     if args.exact_flash_attention and args.suffix_only_vjp:
         parser.error('attention backends are alternatives; choose only one')
     if args.audit_attention_inputs and not (args.exact_flash_attention or args.suffix_only_vjp):
@@ -167,7 +175,8 @@ def main():
         return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q,args.horizon,args.checkpoint_profile,
                       **dict((k,v) for k,v in (('exact_flash',args.exact_flash_attention),
                                               ('audit_attention',args.audit_attention_inputs),
-                                              ('suffix_vjp',args.suffix_only_vjp)) if v))
+                                              ('suffix_vjp',args.suffix_only_vjp),
+                                              ('fused_norm',args.fused_norm),('audit_norm',args.audit_norm_inputs)) if v))
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
@@ -177,6 +186,8 @@ def main():
     config['rtc_exact_flash_attention']=bool(args.exact_flash_attention)
     config['rtc_suffix_only_vjp']=bool(args.suffix_only_vjp)
     config['rtc_audit_attention_same_input']=bool(args.audit_attention_inputs)
+    config['rtc_fused_norm']=bool(args.fused_norm)
+    config['rtc_audit_fused_norm']=bool(args.audit_norm_inputs)
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
@@ -196,6 +207,8 @@ def main():
             command+=['--suffix-only-vjp']
         if args.audit_attention_inputs:
             command+=['--audit-attention-inputs']
+        if args.fused_norm:command+=['--fused-norm']
+        if args.audit_norm_inputs:command+=['--audit-norm-inputs']
         with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
         item = {'condition': mode, 'task_id': task_id, 'exit_code': code}

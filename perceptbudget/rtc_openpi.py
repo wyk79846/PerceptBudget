@@ -4,6 +4,8 @@ import time
 
 class OriginalOpenPiRTCAdapter:
     def __init__(self, model, torch, config):
+        if config.get('rtc_fused_norm') and not config.get('rtc_exact_flash_attention'):
+            raise ValueError('fused norm experiment requires exact FlashAttention')
         from perceptbudget.openpi_reference import OriginalOpenPiExpert
         self.model, self.torch, self.config = model, torch, config
         self.pipe, self.pipeline = model._pipe, model._pipe.pipeline
@@ -25,6 +27,7 @@ class OriginalOpenPiRTCAdapter:
         if config.get('rtc_exact_flash_attention') and config.get('rtc_suffix_only_vjp'):
             raise ValueError('exact FlashAttention and suffix-only eager VJP are alternative backends, not stackable')
         self._attention_restore = None
+        self._norm_restore = None
 
     def prepare_step_bank(self,lengths):
         from perceptbudget.rtc_source_step_graph import SourceStepBank
@@ -125,6 +128,11 @@ class OriginalOpenPiRTCAdapter:
             else:
                 from perceptbudget.rtc_exact_flash_probe import enable_exact_flash_probe
                 self._attention_restore=enable_exact_flash_probe(self.expert)
+        if self.config.get('rtc_fused_norm') and self._norm_restore is None:
+            from perceptbudget.rtc_fused_norm import enable_fused_norm,audit_fused_norm_same_input
+            if self.config.get('rtc_audit_fused_norm'):
+                self.norm_same_input_audit=audit_fused_norm_same_input(self.expert,self.config['output_root'],beta=self.beta)
+            self._norm_restore,self.norm_metadata=enable_fused_norm(self.expert,self.config['output_root'])
         if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
             from perceptbudget.openpi_varlen import enable_varlen_attention
             enable_varlen_attention(self.expert)
@@ -154,6 +162,7 @@ class OriginalOpenPiRTCAdapter:
                 'original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp'),
             expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=self.beta,
+            fused_norm=bool(self.config.get('rtc_fused_norm')),
             context_graph_rebuilt=False, context_prepare_seconds=0.,
             variable_length_fallback=(self.step_bank is not None and step_graph is None) or (self.graph is not None and not use_graph),
             attention_backend=('experimental_eager_suffix_vjp' if self.config.get('rtc_suffix_only_vjp') else
@@ -178,6 +187,9 @@ class OriginalOpenPiRTCAdapter:
 
     def release_graph(self):
         import gc
+        if self._norm_restore is not None:
+            self._norm_restore()
+            self._norm_restore=None
         if self._attention_restore is not None:
             self._attention_restore()
             self._attention_restore = None

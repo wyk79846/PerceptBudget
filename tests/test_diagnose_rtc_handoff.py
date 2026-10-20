@@ -8,6 +8,14 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_fused_norm_requires_flash_and_forwards_audit(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
+              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
+              '--checkpoint-profile','h50','--exact-flash-attention','--fused-norm','--audit-norm-inputs']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',exact_flash=True,fused_norm=True,audit_norm=True)
+
     def test_suffix_only_vjp_is_explicit_and_forwarded_with_audit(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
               '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',

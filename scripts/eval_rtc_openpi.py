@@ -129,6 +129,8 @@ def rollout(config, run, gate, task_id):
                       attention_backend=('experimental_eager_suffix_vjp' if config.get('rtc_suffix_only_vjp') else
                                          'experimental_flash_exact' if config.get('rtc_exact_flash_attention') else 'reference_default'),
                       attention_same_input_audit=getattr(adapter,'attention_same_input_audit',None),
+                      norm_same_input_audit=getattr(adapter,'norm_same_input_audit',None),
+                      norm_fusion=getattr(adapter,'norm_metadata',None),
                       scope=('fixed-observation full-request timing; no async episode' if config.get('original_timing_only')
                              else 'fixed five simulated delay steps; pauses simulation if inference late; not real-time async' if config.get('controlled_delay_steps') == 5
                              else 'actual-delay async, no fixed simulation wait; actual Hz measured'))

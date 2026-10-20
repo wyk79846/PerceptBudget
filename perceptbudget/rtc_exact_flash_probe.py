@@ -51,10 +51,19 @@ def audit_attention_same_input(expert, *, beta=5., seed=20261020, backend='flash
     Both paths run the full original source-order solver, changing attention
     only. This preflight is not a rollout or an all-phase quality guarantee.
     """
-    import torch
-    from perceptbudget.openpi_reference import sample_original_rtc
     if backend not in ('flash','suffix_vjp'):
         raise ValueError('unknown attention audit backend')
+    def install():
+        if backend=='flash':return enable_exact_flash_probe(expert)
+        from perceptbudget.rtc_suffix_vjp import enable_suffix_vjp
+        return enable_suffix_vjp(expert)
+    return audit_expert_change(expert,install,beta=beta,seed=seed,backend=backend)
+
+
+def audit_expert_change(expert,install,*,beta=5.,seed=20261020,backend):
+    """Paired solver inputs for one reversible expert change; preserve RNG."""
+    import torch
+    from perceptbudget.openpi_reference import sample_original_rtc
     if expert.horizon < 10:
         raise ValueError('attention audit requires H>=10')
     with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
@@ -67,11 +76,7 @@ def audit_attention_same_input(expert, *, beta=5., seed=20261020, backend='flash
         for _,old,d,s in cases:
             raw,norms=sample_original_rtc(expert,noise,old,d,s,beta=beta,author_order=True)
             reference.append((raw.clone(),norms))
-        if backend=='flash':
-            restore=enable_exact_flash_probe(expert)
-        else:
-            from perceptbudget.rtc_suffix_vjp import enable_suffix_vjp
-            restore=enable_suffix_vjp(expert)
+        restore=install()
         records=[]
         try:
             for (name,old,d,s),(raw,norms) in zip(cases,reference):
