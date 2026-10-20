@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户指定H恢复10/q5试，诊断入口新增显式--horizon10/20默认20及q+d<=H验证，17定向测试通过；同task0/N5/state80/β5/固定d5/seed7init0，父run M1/20261020T063906.796745Z-rtc-handoff-comparison-097c8525，worker7cc61a4b：78步success/9.692s/median571.95ms/夹爪指令切1次，0断供/回退；14已提交后台d5，每次旧队列刚耗尽，385审计过，8长度图/eager门禁过。与H20d5/198步23.207s切5次相比动作效率明显改善，初sim/modelstate差0；H变noise/raw shape不同，不声称bootstrap同。仅一例，H10同时改变预测分布/软重叠尾段，不能唯一因果归因或宣称十任务成功率；仍受控等待非真实20Hz/250ms，未自动扩测/切全局H/改FlashRT。详细父run/结论.md。
+
 - 用户指定q8/固定推理5步，同task0H20N5state80β5seed7init0；rollout及独立审计去q5硬编码、diagnostic增加显式--q（默认5），17定向CPU测过。父run M1/20261020T061740.872011Z-rtc-handoff-comparison-0640bcfc，worker9d2fc1e4：210步success/21.096s/median571.49ms/夹爪指令切5次/0断供与回退；26请求间隔全8，25后台已提交actual5，737记录审计通过。观测8→提交13→下次观测16→提交21，不是commit后执行8步才请求。对照q5d5为198步/23.207s/40请求，本轮27请求，耗时少但动作多，不称成功率或能耗提升。未追加新实验/FlashRT修改，详细父run/结论.md。
 
 - 用户指定β10，显式CLI增加10（默认仍5）/τ0测试增加10，15定向CPU测试通过。父run M1/20261020T061148.961341Z-rtc-handoff-comparison-92795af5，workerfb7f8806 task0H20N5q5state80固定d8仍220timeout/17.262s/median581.73ms，夹爪指令切12次/碗maxlift0.0077cm，0断供/回退；8形状gate通过/845独立记录检查通过，26后台实际d8。beta10全部请求生效，bootstrap与β5相同、首guided噪声相同/raw差0.00224343。beta2/5/10本任务各一次均超时，不能据此宣布全局最优或公式错误，不自动追加，默认5保留；详细父run/结论.md。
