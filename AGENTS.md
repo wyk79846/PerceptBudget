@@ -1,5 +1,7 @@
 # 协作规则
 
+- β2试验已完成：父run M1/20261020T060623.787243Z-rtc-handoff-comparison-fe3a4be3，worker6b5a419f，task0/H20N5q5state80固定d8/估计8仍220timeout/17.322s/median583.42ms，夹爪指令切14次、碗maxlift0.22cm；β5对照切8次/maxlift1.11cm，均未抓稳完成。0断供/图回退，26已提交d均8，845独立检查通过；8长度beta2图/eager输出与VJP全0；所有requests beta2，bootstrap相同，首guided noise相同/raw差0.0480076，确认参数真实生效。未自动追加β1/更多任务，默认仍5，不因两档单次失败宣称公式错。详细父run/结论.md。
+
 - 用户批准同task0固定d8降低β试验，本轮只试β2（H20N5q5state80seed7init0其余不变），不自行扩β1/十任务。原source-step beta写死5，新增可选rtc_beta/diagnostic --beta，默认5不变，step图与eager回退/准备gate均传同β并记录request；legacy完整图禁止非5。14项CPU定向测试通过（含τ0 beta1/2/5逐值对参考及非法值），GPU现场各长度beta2参考/图gate通过后才可执行任务。FlashRT/模型/调度未改，无训练/子agent。
 
 - 用户允许同task0固定d5补充，父run M1/20261020T054745.609999Z-rtc-handoff-comparison-deca92a5，workerbcf86118：198步success/23.207s/median566.37ms/夹爪指令切5次/0断供与长度回退；38后台已提交d/actual5，独立985检查通过。与先前d8 bootstrap raw/noise/modelstate差0。同步同task0为87步成功/21.977s，d8为220timeout。缩短延迟恢复本次成功但多111动作步，仍不能宣称RTC质量已解决或单独定位β/延迟根因；延迟与对应掩码一起变。未自动追加β扫描/更多任务，无代码或FlashRT修改，服务已结束。详细父run/结论.md。
