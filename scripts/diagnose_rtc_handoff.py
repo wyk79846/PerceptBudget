@@ -121,7 +121,7 @@ def main():
     parser.add_argument('--conditions', nargs='+', choices=MODES, default=DEFAULT_MODES)
     parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
-    parser.add_argument('--beta',type=float,choices=(1.,2.,5.),default=5.,help='explicit RTC guidance cap; default unchanged')
+    parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
     args = parser.parse_args()
     if args.worker:
         return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta)

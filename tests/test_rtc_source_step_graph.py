@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import pytest
 
 
-@pytest.mark.parametrize('beta',[1.,2.,5.])
+@pytest.mark.parametrize('beta',[1.,2.,5.,10.])
 def test_step_beta_matches_eager_reference_at_zero_time(beta):
     import math
     import torch
