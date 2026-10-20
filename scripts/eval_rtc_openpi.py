@@ -114,7 +114,8 @@ def rollout(config, run, gate, task_id):
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
         timing = timed(torch, infer, count=3)
         initial_delay = (config['rtc_fixed_delay_estimate'] if config.get('rtc_fixed_delay_estimate') is not None else
-                         5 if config.get('controlled_delay_steps') == 5 else math.ceil(timing['median_ms']/50))
+                         5 if config.get('controlled_delay_steps') == 5 else
+                         math.ceil(timing['median_ms']/1000/config.get('rtc_initial_control_period_seconds',.05)))
         config['rtc_initial_delay_steps'] = initial_delay
         record = json.loads((run/'run.json').read_text())
         record['config_snapshot'] = config

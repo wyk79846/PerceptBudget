@@ -8,6 +8,13 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_actual_history_has_no_controlled_wait_or_fixed_estimate(self):
+        c=diag.configuration({'controlled_delay_steps':5,'rtc_fixed_delay_estimate':8},'actual_history')
+        self.assertNotIn('controlled_delay_steps',c)
+        self.assertIsNone(c['rtc_fixed_delay_estimate'])
+        self.assertTrue(c['rtc_paper_schedule'])
+        self.assertTrue(c['explicit_actual_delay_experiment'])
+
     def test_worker_forwards_q8_independently_of_delay(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--worker','controlled_d5',
               '--parent','/tmp/results','--task-id','0','--q','8']

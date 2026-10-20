@@ -21,7 +21,7 @@ from scripts import eval_rtc_openpi as runner
 from scripts import probe_delay_buffer as probe
 
 DEFAULT_MODES = ('sync_no_rtc', 'controlled_d5', 'actual_est8')
-MODES = DEFAULT_MODES + ('controlled_d8',)
+MODES = DEFAULT_MODES + ('controlled_d8','actual_history')
 
 
 def sync_episode(original, *args, **kwargs):
@@ -40,9 +40,9 @@ def sync_episode(original, *args, **kwargs):
 def configuration(reference, mode):
     config = copy.deepcopy(reference)
     config.pop('controlled_delay_steps', None)
-    config.update(rtc_paper_schedule=mode in ('actual_est8', 'controlled_d8'),
+    config.update(rtc_paper_schedule=mode in ('actual_est8', 'controlled_d8','actual_history'),
                   rtc_fixed_delay_estimate=8 if mode in ('actual_est8', 'controlled_d8') else None,
-                  explicit_actual_delay_experiment=mode == 'actual_est8',
+                  explicit_actual_delay_experiment=mode in ('actual_est8','actual_history'),
                   execution_mode='diagnostic_' + mode,
                   diagnostic_condition=mode)
     if mode == 'controlled_d5':
@@ -64,6 +64,17 @@ def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, che
     if checkpoint_profile=='h50':
         from perceptbudget.h50_checkpoint import configure
         configure(config)
+        if mode=='actual_history':
+            # Initial prior from the same model/task's measured unpaused ticks;
+            # online history thereafter contains actual consumed control steps.
+            import numpy as np
+            source=Path(config['output_root'])/'M1/20261020T074138.621142Z-rtc-diag-controlled_d5-c11f6716'
+            controls=[json.loads(x) for x in (source/'rtc/trace.jsonl').open()]
+            controls=[r for r in controls if r['event']=='control_step']
+            intervals=[b['tick_monotonic']-a['tick_monotonic'] for a,b in zip(controls,controls[1:])
+                       if a['step']%5!=0]
+            config['rtc_initial_control_period_seconds']=float(np.median(intervals))
+            config['rtc_initial_control_period_source']=str(source)
     if horizon != reference['H']:
         config['reference_horizon_transfer'] = dict(reference_H=25,experiment_H=horizon,
             limitation='explicit diagnostic horizon change; live exact-length graph/eager gate, not independent author-body horizon validation')
@@ -135,7 +146,7 @@ def main():
     parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
     args = parser.parse_args()
     selected=[args.worker] if args.worker else args.conditions
-    delay=max({'sync_no_rtc':0,'controlled_d5':5,'controlled_d8':8,'actual_est8':8}[mode] for mode in selected)
+    delay=max({'sync_no_rtc':0,'controlled_d5':5,'controlled_d8':8,'actual_est8':8,'actual_history':0}[mode] for mode in selected)
     if args.q+delay>args.horizon:
         parser.error('q plus fixed delay exceeds horizon')
     if args.worker:
