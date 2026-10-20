@@ -75,5 +75,10 @@ def test_h50_source_horizon_transfer_requires_explicit_opt_in():
     args.allow_horizon_transfer=True
     assert horizon_transfer_allowed(args,25)
     assert not horizon_transfer_allowed(args,20)
+    args.horizon=20
+    assert horizon_transfer_allowed(args,25)
+    args.allow_horizon_transfer=False
+    assert not horizon_transfer_allowed(args,25)
+    args.allow_horizon_transfer=True
     args.actual_delay=False
     assert not horizon_transfer_allowed(args,25)

@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户接着询问H20，按上一轮用户亲自执行方式提供命令：保持真实异步/固定估计8/N5q5/state80/task2，显式--allow-horizon-transfer现同时允许H25 gate转H20/H50（仍需现场图/eager门禁）；CLI7测试过，未替用户启动H20。上一H50 de6ca41a为220timeout/629.61ms/actual10–11步/0断供回退等待，两审计过，碗未抬起；不能说单独H导致退化，因为延迟也增加。
+
 - 用户要自行跑H50命令：保留上轮固定引导估计8、真实异步、N5/q5/state80/task2/seed7，仅H25→50。eval_rtc_openpi新增显式--allow-horizon-transfer，只有H50 source-step author-order actual合法，允许H25 gate来源转移；不是H50独立作者body验证，setup仍逐exact长度做图/eager数值门禁，768MiB保护保留。CLI7测试过，尚未运行本次H50 GPU；不得换旧varlen或取消内存保护，等用户执行日志。
 
 - 用户“固定8试试”在延迟估计讨论下已明确按真实异步、仅固定guidance estimate8解释并执行。新增CLI --fixed-delay-estimate（仅author-order actual合法），初始化8，history真实继续记录，裁切仍actual，不等待；默认historymax未改，去噪/FlashRT不改。aaeb19ab task2H25N5q5state80 220timeout/16.365s/median584.38ms/14.25Hz，25后台估计全8，24提交actual7x1/8x7/9x10/10x6，0断供/回退/受控等待/保护。两个审计通过。夹爪翻转13，最后碗提起20.39cm仍未放置，不能支持多估2步就是失败原因。CLI/system/算法1定向15过。详见RTC_CORRECTNESS_RECHECK第7节；未自动跑固定实际d8或估计10。
