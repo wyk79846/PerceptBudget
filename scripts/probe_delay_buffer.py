@@ -386,6 +386,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
             delay = config.get('controlled_delay_steps', rtc_adapter.estimate_delay_steps(period_estimate))
             if delay_queue is not None:
                 delay = delay_queue.estimate
+            if config.get('rtc_fixed_delay_estimate') is not None:
+                delay=config['rtc_fixed_delay_estimate']
             feasible = (0 <= delay <= config['H'] - executed if delay_queue is not None
                         else delay <= executed <= config['H'] - delay)
             if not feasible:
@@ -412,6 +414,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 'control_period_estimate_seconds': period_estimate,
                 'predicted_inference_seconds': rtc_adapter.latency_estimate_seconds,
                 'old_chunk_origin_step': old_origin,
+                'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'history_max' if delay_queue is not None else 'latency'),
             }
             if delay_queue is not None:
                 request['rtc_guidance']['delay_history_steps'] = list(delay_queue.values)

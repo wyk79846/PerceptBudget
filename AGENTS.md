@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户“固定8试试”在延迟估计讨论下已明确按真实异步、仅固定guidance estimate8解释并执行。新增CLI --fixed-delay-estimate（仅author-order actual合法），初始化8，history真实继续记录，裁切仍actual，不等待；默认historymax未改，去噪/FlashRT不改。aaeb19ab task2H25N5q5state80 220timeout/16.365s/median584.38ms/14.25Hz，25后台估计全8，24提交actual7x1/8x7/9x10/10x6，0断供/回退/受控等待/保护。两个审计通过。夹爪翻转13，最后碗提起20.39cm仍未放置，不能支持多估2步就是失败原因。CLI/system/算法1定向15过。详见RTC_CORRECTNESS_RECHECK第7节；未自动跑固定实际d8或估计10。
+
 - 用户要求整套RTC核查，本轮新增audit_rtc_system（独立索引/history，不调用生产commit/DelayQueue），Spatial慢10+缓存d5+actual共12run/1967控制步/9510约束全过，state/归一化/时序/算法1counter/oldtarget/crop/动作来源未见不一致。输出actual1013a9fa/system_audit_all.json；6小记录测试能拒绝注入state/target/decode/source/crop错误，定向22过。GPU49e2bd01重放actual第8轮观测68 d12s7，同双图/state/noise/previous经完整context，eager/plain/packed及线上raw逐值同，五步VJP等全0，仅一实际请求重复核对，不是新成功任务。实际24个已提交请求21高估，平均2.04最大5步，历史max保守导致，未证实失败因果，不先改算法。前文“可能小异步bug”仍假设，当前未发现明确系统链路错误，也不证明全系统所有情况正确。详见RTC_CORRECTNESS_RECHECK.md第6节；未动FlashRT/推理/调度/功耗，未擅自追加固定d8/10任务。
 
 - 用户固定d5 LeRobot54558bf7已160success/38.732s/1263ms/0断供，30交接d/actual/crop全5。与我方5384eecc初始图/before/noise全同，bootstrap未RTC已有raw.00374055差。后用户ok授权同KV核对：新增audit_rtc_lerobot，c620bb7f用同冻结原expert/三KV570563557、实际参考noise/previous、d=s5，逐同输入velocity差0，但LeRobot修正等于自身weightederror、相对fullVJP差.399–.402，最终raw差.241–.246，非FlashRT浮点误差。官方v0.4.4 RTC先算velocity再requires_grad输入，丢velocity-input Jacobian；CPU非线性解析测试确认。作者原函数体窄Torch桥（非JAX）在同3case五步input/velocity/clean/error/VJP/output/raw与我们源顺序参考差0。未改任一边算法，不把这个版本当fullRTC数值基准；也不证明我方真实异步调度正确/谁成功率高。新环境CPU3测试过。详见LEROBOT_RTC_COMPARISON.md最后一节，原始GPU差异run533ffccf保留。

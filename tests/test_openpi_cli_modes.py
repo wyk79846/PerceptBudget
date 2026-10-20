@@ -50,3 +50,17 @@ def test_source_step_actual_mode_accepts_new_backend_but_still_requires_gate():
         cwd=root,capture_output=True,text=True)
     assert result.returncode==2
     assert '--actual-delay cannot combine with controlled delay' in result.stderr
+
+
+def test_fixed_guidance_estimate_is_not_a_controlled_wait():
+    root=Path(__file__).resolve().parents[1]
+    for flags in (['--fixed-delay-estimate','8'],
+                  ['--actual-delay','--author-order-reference','--fixed-delay-estimate','25','--horizon','25']):
+        result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],cwd=root,capture_output=True,text=True)
+        assert result.returncode==2
+        assert '--fixed-delay-estimate requires' in result.stderr
+    flags=['--actual-delay','--author-order-reference','--horizon','25',
+           '--source-step-prefixes','566','567','568','--fixed-delay-estimate','8']
+    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],cwd=root,capture_output=True,text=True)
+    assert result.returncode==2
+    assert 'require --verify-only or a passed --verified-run' in result.stderr

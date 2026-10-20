@@ -70,7 +70,9 @@ def audit(run):
             check('no_overlapping_inference',request['inference_started_monotonic']>=old['inference_ended_monotonic'],pid)
             check('guidance_delay_matches_solver',solver['delay']==g['delay_estimate_steps'],pid)
             if cfg.get('rtc_paper_schedule'):
-                check('independent_history_max',g['delay_estimate_steps']==max(history)
+                estimate=cfg.get('rtc_fixed_delay_estimate')
+                check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
+                      g['delay_estimate_steps']==(max(history) if estimate is None else estimate)
                       and g['delay_history_steps']==history,pid)
             else:
                 check('controlled_d5',g['delay_estimate_steps']==cfg['controlled_delay_steps'],pid)

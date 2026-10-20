@@ -28,7 +28,8 @@ def audit(run):
         origin=r['observation_step']
         s=g['executed_steps']
         prior=by_observation[g['old_chunk_origin_step']]
-        checks=dict(delay_history=g['delay_estimate_steps']==history.estimate,
+        estimate=cfg.get('rtc_fixed_delay_estimate')
+        checks=dict(delay_history=g['delay_estimate_steps']==(history.estimate if estimate is None else estimate),
             target_length=len(prior['actions_raw'][s:])==cfg['H']-s,
             old_origin=origin-s==prior['observation_step'],
             committed_actions_match=True)

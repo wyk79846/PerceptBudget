@@ -112,7 +112,8 @@ def rollout(config, run, gate, task_id):
         def infer():
             adapter.predict(snapshot, task['instruction'], previous, delay=5, executed=5, request={})
         timing = timed(torch, infer, count=3)
-        initial_delay = 5 if config.get('controlled_delay_steps') == 5 else math.ceil(timing['median_ms']/50)
+        initial_delay = (config['rtc_fixed_delay_estimate'] if config.get('rtc_fixed_delay_estimate') is not None else
+                         5 if config.get('controlled_delay_steps') == 5 else math.ceil(timing['median_ms']/50))
         config['rtc_initial_delay_steps'] = initial_delay
         record = json.loads((run/'run.json').read_text())
         record['config_snapshot'] = config
@@ -211,6 +212,7 @@ def main():
     parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
+    parser.add_argument('--fixed-delay-estimate',type=int,help='Actual async only: fixed guidance estimate; crop still uses actual elapsed control steps')
     parser.add_argument('--author-order-reference',action='store_true',help='Original attention/expert and author-source order; controlled audit or explicit source-step async')
     parser.add_argument('--source-step-prefixes',nargs='+',type=int,help='Opt-in original single-step graphs for up to eight exact lengths; miss falls back slow')
     parser.add_argument('--source-step-profile',type=Path,help='Read this task prefix lengths from a matched slow-batch summary; unseen lengths use slow fallback')
@@ -221,6 +223,9 @@ def main():
     parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()
+    if args.fixed_delay_estimate is not None and (not args.actual_delay or not args.author_order_reference
+            or not 0<=args.fixed_delay_estimate<args.horizon):
+        parser.error('--fixed-delay-estimate requires author-order actual-delay and 0 <= estimate < horizon')
     step_profile=None
     if args.source_step_profile:
         if args.source_step_prefixes:
@@ -276,6 +281,7 @@ def main():
     config['source_packed_conditioning']=args.source_packed_conditioning
     config['release_unused_native_expert']=args.release_unused_native_expert
     config['explicit_actual_delay_experiment']=args.actual_delay
+    config['rtc_fixed_delay_estimate']=args.fixed_delay_estimate
     if args.reference_fixture:
         config['original_reference_fixture'] = str(args.reference_fixture.resolve())
     config['rtc_suite']=args.suite
