@@ -7,6 +7,17 @@ import copy
 import math
 
 
+def h50_state_prefix_lengths(initial_valid):
+    """8 varying state bins (-1..255), each 2..4 tokenizer tokens.
+
+    The other 24 padded state values and task text stay fixed. No padding or
+    altered model inputs: enumerate exact shapes before the timed episode.
+    """
+    if type(initial_valid) is not int or not 512<=initial_valid<=712:
+        raise ValueError('invalid H50 dual-view initial prefix')
+    return list(range(max(512,initial_valid-16),min(712,initial_valid+16)+1))
+
+
 def lengths_from_reference_profile(profile,*,task_id,suite,horizon):
     """Use historical lengths only for prewarming, never for action decisions."""
     import hashlib
@@ -221,13 +232,15 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
         lengths=tuple(sorted(set(lengths)))
-        if not lengths or len(lengths)>8 or any(type(n) is not int or not 1<=n<=712 for n in lengths):
-            raise ValueError('prepare between one and eight exact prefix lengths')
+        if type(max_lengths) is not int or not 1<=max_lengths<=33:
+            raise ValueError('invalid exact prefix bank size limit')
+        if not lengths or len(lengths)>max_lengths or any(type(n) is not int or not 1<=n<=712 for n in lengths):
+            raise ValueError('prepare between one and eight exact prefix lengths by default; explicit limit up to33')
         self.fallback=expert
         self.entries={}
         self.audits=[]

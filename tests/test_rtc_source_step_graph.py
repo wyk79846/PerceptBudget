@@ -2,6 +2,27 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_h50_state_bank_covers_full_numeric_token_variation():
+    from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
+    lengths=h50_state_prefix_lengths(657)
+    assert lengths==list(range(641,674)) and 653 in lengths
+    assert h50_state_prefix_lengths(712)[-1]==712
+    assert h50_state_prefix_lengths(512)[0]==512
+    for bad in (True,511,713,657.0):
+        with pytest.raises(ValueError):h50_state_prefix_lengths(bad)
+
+
+def test_h50_number_token_width_bound_matches_installed_tokenizer():
+    from pathlib import Path
+    path=Path('/home/wyk/.cache/flash_rt/paligemma_tokenizer.model')
+    if not path.exists():pytest.skip('local tokenizer unavailable')
+    import sentencepiece as sp
+    tokenizer=sp.SentencePieceProcessor(model_file=str(path))
+    widths=[len(tokenizer.encode(' '+str(i))) for i in range(-1,256)]
+    assert min(widths)==2 and max(widths)==4
+
+
+
 @pytest.mark.parametrize('beta',[1.,2.,5.,10.])
 def test_step_beta_matches_eager_reference_at_zero_time(beta):
     import math

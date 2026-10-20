@@ -40,6 +40,7 @@ class OriginalOpenPiRTCAdapter:
             from perceptbudget.rtc_condition_cache import enable_condition_cache
             conditioning=enable_condition_cache(self.expert,graph_live=True)
         self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
+            max_lengths=33 if self.config.get('source_prefix_coverage_rule')=='h50_state8_bins_v1' else 8,
             progress=lambda r:print('step_graph_prepared='+json.dumps(r),flush=True))
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
