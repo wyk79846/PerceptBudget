@@ -20,7 +20,8 @@ from perceptbudget.experiment import create_run
 from scripts import eval_rtc_openpi as runner
 from scripts import probe_delay_buffer as probe
 
-MODES = ('sync_no_rtc', 'controlled_d5', 'actual_est8')
+DEFAULT_MODES = ('sync_no_rtc', 'controlled_d5', 'actual_est8')
+MODES = DEFAULT_MODES + ('controlled_d8',)
 
 
 def sync_episode(original, *args, **kwargs):
@@ -39,13 +40,15 @@ def sync_episode(original, *args, **kwargs):
 def configuration(reference, mode):
     config = copy.deepcopy(reference)
     config.pop('controlled_delay_steps', None)
-    config.update(rtc_paper_schedule=mode == 'actual_est8',
-                  rtc_fixed_delay_estimate=8 if mode == 'actual_est8' else None,
+    config.update(rtc_paper_schedule=mode in ('actual_est8', 'controlled_d8'),
+                  rtc_fixed_delay_estimate=8 if mode in ('actual_est8', 'controlled_d8') else None,
                   explicit_actual_delay_experiment=mode == 'actual_est8',
                   execution_mode='diagnostic_' + mode,
                   diagnostic_condition=mode)
     if mode == 'controlled_d5':
         config['controlled_delay_steps'] = 5
+    if mode == 'controlled_d8':
+        config['controlled_delay_steps'] = 8
     if mode == 'sync_no_rtc':
         # Preflight only; synchronous episodes have no delay history or guidance.
         config['rtc_fixed_delay_estimate'] = 0
@@ -74,6 +77,14 @@ def worker(reference_run, mode, parent):
                 result['scope'] = 'synchronous original expert, no RTC; simulation waits for every inference'
             else:
                 result = runner.rollout(config, run, gate, 2)
+            if mode == 'controlled_d8':
+                result['scope'] = 'fixed eight simulated delay steps; pauses simulation if inference late; not real-time async'
+                req = json.loads((run / 'rtc/q5_requests.json').read_text())
+                committed = {c['prediction_id'] for c in result['episode']['commits'][1:]}
+                for request in req:
+                    if request['prediction_id'] in committed:
+                        guidance = request['rtc_guidance']
+                        assert guidance['delay_estimate_steps'] == guidance['actual_delay_steps'] == 8
             result.update(diagnostic_condition=mode, reference_run=str(reference_run))
             print(json.dumps(result), flush=True)
             return 0 if result['status'] == 'completed' else 2
@@ -91,6 +102,7 @@ def main():
     parser.add_argument('--reference-run', type=Path, required=True)
     parser.add_argument('--worker', choices=MODES)
     parser.add_argument('--parent', type=Path)
+    parser.add_argument('--conditions', nargs='+', choices=MODES, default=DEFAULT_MODES)
     args = parser.parse_args()
     if args.worker:
         return worker(args.reference_run, args.worker, args.parent)
@@ -100,7 +112,7 @@ def main():
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
-    for mode in MODES:
+    for mode in args.conditions:
         command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
                    sys.executable, '-u', str(Path(__file__).resolve()),
                    '--reference-run', str(args.reference_run), '--worker', mode, '--parent', str(parent)]
@@ -111,7 +123,7 @@ def main():
         if path.exists():
             item.update(json.loads(path.read_text()))
         results.append(item)
-        status = 'running' if code == 0 and len(results) < len(MODES) else 'completed' if code == 0 else 'stopped_invalid'
+        status = 'running' if code == 0 and len(results) < len(args.conditions) else 'completed' if code == 0 else 'stopped_invalid'
         runner.base._write_json_atomic(parent / 'summary.json', dict(status=status, conditions=results))
         runner.base._save_run_status(parent, status)
         print(json.dumps(item), flush=True)
