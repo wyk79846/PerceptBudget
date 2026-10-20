@@ -1,5 +1,7 @@
 # 协作规则
 
+- 上述三组诊断已完成：父run M1/20261020T043133.957776Z-rtc-handoff-comparison-5b05d68b；同步c6e7b6c0为112步成功/夹爪指令符号切1次，固定d5 682febd8为123步成功/切1次，实际异步a3865a07为220timeout/切21次/median582.60ms。三组首态/首noise/首raw逐值同；均0断供/图形状回退。actual已提交d8x5/9x9/10x9，相对估计8平均低估1.17步，7交接旧队列刚耗尽，碗maxlift20.13cm未放置。两RTC记录独立审计1413检查全过；不能把审计通过等同全系统正确，也不能因单次成功/失败归因β或RTC公式。受控d5非真实异步，固定实际d8尚未测。详细结论在父run/结论.md。独立服务已正常完成，没有继续扩测或改FlashRT/β。
+
 - 2026-10-20 用户授权定位H20/task2视频动作偏差：diagnose_rtc_handoff.py仅单任务三条件（同步无RTC、受控实际d5 RTC、真实异步估计8 RTC），均H20/N5/q5/state80/seed7/init0，同原始expert/作者顺序。同步每轮bootstrap无引导，通过仅episode内临时替换infer保留正式warmup；不改生产调度/FlashRT/β、不训练、不使用子agent。逐worker768MiB保护/共享GPU锁，错误即停。控制延迟组和真实组d不同，不能用三组直接单因素归因；需结合请求/轨迹定位。结果统一独立rtc-handoff-comparison目录，不覆盖视频源cfaef1e3。
 
 - 用户接着询问H20，按上一轮用户亲自执行方式提供命令：保持真实异步/固定估计8/N5q5/state80/task2，显式--allow-horizon-transfer现同时允许H25 gate转H20/H50（仍需现场图/eager门禁）；CLI7测试过，未替用户启动H20。上一H50 de6ca41a为220timeout/629.61ms/actual10–11步/0断供回退等待，两审计过，碗未抬起；不能说单独H导致退化，因为延迟也增加。
