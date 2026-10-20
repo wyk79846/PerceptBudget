@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户ok授权固定实际d8补充，diagnose_rtc_handoff新增显式--conditions controlled_d8（默认仍原三组），父run M1/20261020T043754.313653Z-rtc-handoff-comparison-af29b922，worker dd50a031：171步success/13.529s/median575.50ms/夹爪指令切1次/0断供；20已提交后台d估计和actual均8，独立658检查通过。与前actual a3865a07的bootstrap和首guided raw逐值同，首次后台交接本组8步、actual10步，之后闭环分化；不证明所有后续raw等价。固定d8也成功，所以重点是实际9–10延迟/估计错配/余量，但未单独因果隔离。仍受控等待非真实20Hz，未调β/FlashRT/权重，无在途任务，不自动扩测。详情父run/结论.md。
+
 - 上述三组诊断已完成：父run M1/20261020T043133.957776Z-rtc-handoff-comparison-5b05d68b；同步c6e7b6c0为112步成功/夹爪指令符号切1次，固定d5 682febd8为123步成功/切1次，实际异步a3865a07为220timeout/切21次/median582.60ms。三组首态/首noise/首raw逐值同；均0断供/图形状回退。actual已提交d8x5/9x9/10x9，相对估计8平均低估1.17步，7交接旧队列刚耗尽，碗maxlift20.13cm未放置。两RTC记录独立审计1413检查全过；不能把审计通过等同全系统正确，也不能因单次成功/失败归因β或RTC公式。受控d5非真实异步，固定实际d8尚未测。详细结论在父run/结论.md。独立服务已正常完成，没有继续扩测或改FlashRT/β。
 
 - 2026-10-20 用户授权定位H20/task2视频动作偏差：diagnose_rtc_handoff.py仅单任务三条件（同步无RTC、受控实际d5 RTC、真实异步估计8 RTC），均H20/N5/q5/state80/seed7/init0，同原始expert/作者顺序。同步每轮bootstrap无引导，通过仅episode内临时替换infer保留正式warmup；不改生产调度/FlashRT/β、不训练、不使用子agent。逐worker768MiB保护/共享GPU锁，错误即停。控制延迟组和真实组d不同，不能用三组直接单因素归因；需结合请求/轨迹定位。结果统一独立rtc-handoff-comparison目录，不覆盖视频源cfaef1e3。
