@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -78,7 +79,7 @@ def rollout(config, run, gate, task_id):
         from scripts.eval_seam_sync import get_tasks
         task=get_tasks([task_id])[0]
     else:
-        task = base._load_tasks([task_id], ['libero_spatial'])[0]
+        task = base._load_tasks([task_id], [config.get('rtc_suite','libero_spatial')])[0]
     stats = load_libero_norm_stats(config['norm_stats_path'])
     model = base._load_and_check_model(config, torch)
     mem('after_model_load')
@@ -89,6 +90,26 @@ def rollout(config, run, gate, task_id):
     env._pb_lock_fixtures = True
     try:
         obs, _ = base._prepare_env_episode(env, task, np)
+        if config.get('rtc_calibrate_control_period'):
+            # Same zero-action warmup rule for every q; reset before model inputs.
+            samples=[]
+            from scripts.probe_delay_buffer import snapshot_scene
+            for _ in range(12):
+                started=time.monotonic()
+                snapshot_scene(env,obs)
+                np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1)
+                obs,_,_,_=env.step(np.zeros(7,dtype=np.float32))
+                snapshot_scene(env,obs)
+                env.check_success()
+                elapsed=time.monotonic()-started
+                time.sleep(max(0.,.05-elapsed))
+                samples.append(time.monotonic()-started)
+            config['rtc_initial_control_period_seconds']=float(np.median(samples))
+            config['rtc_initial_control_period_source']='same-environment preflight 12 zero-action ticks; reset before episode'
+            base._write_json_atomic(run/'control_period_calibration.json',dict(
+                samples_seconds=samples,median_seconds=config['rtc_initial_control_period_seconds'],
+                suite=task['suite'],task_id=task_id,rule=config['rtc_initial_control_period_source']))
+            obs,_=base._prepare_env_episode(env,task,np)
         snapshot = base._make_snapshot(obs, stats, True)
         # Warm native context only; this native action is never executed.
         base._infer_actions(model, snapshot, task['instruction'], config['H'], {})
@@ -234,7 +255,7 @@ def main():
     parser.add_argument('--source-packed-conditioning',action='store_true',help='Opt-in exact fixed-time results with source-step graph bank')
     parser.add_argument('--release-unused-native-expert',action='store_true',help='One-way context-only FlashRT in this process; free duplicate BF16 expert')
     parser.add_argument('--task-id', type=int, choices=range(10), default=0)
-    parser.add_argument('--suite',choices=('libero_spatial','libero_10'),default='libero_spatial')
+    parser.add_argument('--suite',choices=('libero_spatial','libero_object','libero_goal','libero_10'),default='libero_spatial')
     parser.add_argument('--horizon',type=int,choices=(20,25,50),default=20,
                         help='Experimental prediction horizon; does not change q=5 or N=5')
     args = parser.parse_args()

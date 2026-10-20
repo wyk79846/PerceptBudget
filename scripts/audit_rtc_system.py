@@ -28,6 +28,7 @@ def decode_raw(raw,stats,profile=None):
 def audit(run):
     import numpy as np
     cfg=json.loads((run/'run.json').read_text())['config_snapshot']
+    synchronous=cfg.get('diagnostic_condition')=='sync_no_rtc' or cfg.get('execution_mode')=='diagnostic_sync_no_rtc'
     stats=json.loads(Path(cfg['norm_stats_path']).read_text())
     stats=stats.get('norm_stats',stats)
     q=cfg.get('candidate_q',[5])[0]
@@ -49,12 +50,18 @@ def audit(run):
     check('unique_request_ids',len(by_id)==len(requests))
     check('unique_commit_ids',len(committed)==len(commits))
     check('single_bootstrap',requests[0]['observation_step']==0 and commits[0]['commit_step']==0)
-    history=[cfg['rtc_initial_delay_steps']]
+    history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
     previous=None
     slacks=[]
     for request in requests:
         pid=request['prediction_id'];origin=request['observation_step']
         g=request['rtc_guidance'];solver=request['rtc_solver_inputs']
+        if synchronous or not origin:
+            check('bootstrap_without_guidance',g.get('guidance_enabled') is False
+                  and solver['previous_raw'] is None and solver['delay']==solver['executed']==0
+                  and g['delay_estimate_steps']==g['executed_steps']==0,pid)
+            if synchronous:
+                check('sync_without_delay_history','delay_history_steps' not in g,pid)
         check('finite_raw32',np.asarray(request['actions_raw']).shape==(cfg['H'],32)
               and np.isfinite(request['actions_raw']).all(),pid)
         check('finite_noise32',np.asarray(solver['noise']).shape==(cfg['H'],32)
@@ -78,12 +85,16 @@ def audit(run):
             check('observation_after_previous_action',request['observation_monotonic']>=by_step[origin-1]['action_end_monotonic'],pid)
             old=by_id[previous['prediction_id']]
             s=origin-old['observation_step']
-            check('old_target_alignment',solver['executed']==s==g['executed_steps']
-                and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
+            if not synchronous:
+                check('old_target_alignment',g.get('guidance_enabled') is True
+                    and solver['executed']==s==g['executed_steps']
+                    and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
             check('next_request_counter_rule',origin==max(old['observation_step']+q,previous['commit_step']),pid)
             check('no_overlapping_inference',request['inference_started_monotonic']>=old['inference_ended_monotonic'],pid)
             check('guidance_delay_matches_solver',solver['delay']==g['delay_estimate_steps'],pid)
-            if cfg.get('rtc_paper_schedule'):
+            if synchronous:
+                check('sync_request_interval',origin==old['observation_step']+q,pid)
+            elif cfg.get('rtc_paper_schedule'):
                 estimate=cfg.get('rtc_fixed_delay_estimate')
                 check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
                       g['delay_estimate_steps']==(max(history) if estimate is None else estimate)
@@ -97,28 +108,64 @@ def audit(run):
         check('commit_after_ready',c['commit_monotonic']>=request['ready_monotonic'],pid)
         check('exact_absolute_crop',c['expired_new_actions']==actual
               and c['new_prediction_remaining_actions']==cfg['H']-actual,pid)
-        check('reported_actual_delay',g['actual_delay_steps']==actual,pid)
-        if origin:
+        if synchronous:
+            check('sync_zero_control_delay',actual==0,pid)
+            if 'actual_delay_steps' in g:
+                check('reported_actual_delay',g['actual_delay_steps']==actual,pid)
+        else:
+            check('reported_actual_delay',g['actual_delay_steps']==actual,pid)
+        if origin and not synchronous:
             for step in range(origin,at):
-                check('old_actions_during_inference',by_step[step]['source']['prediction_id']==previous['prediction_id'],(pid,step))
+                source=by_step[step]['source']
+                old=by_id[previous['prediction_id']]
+                exhausted=step>=old['observation_step']+cfg['H']
+                check('old_actions_during_inference',source is None if exhausted else
+                      source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
             history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         previous=c
+    underflows=[]
     for step,row in by_step.items():
         candidates=[c for c in commits if c['commit_step']<=step]
         active=max(candidates,key=lambda c:c['commit_step'])
         request=by_id[active['prediction_id']]
         offset=step-request['observation_step']
+        check('control_timestamp_order',row['tick_monotonic']<=row['action_start_monotonic']<=row['action_end_monotonic'],step)
+        if step:
+            check('sequential_action_timestamps',by_step[step-1]['action_end_monotonic']<=row['tick_monotonic'],step)
+        check('commit_before_action',active['commit_monotonic']<=row['action_start_monotonic'],step)
+        if offset>=cfg['H']:
+            underflows.append(step)
+            check('exhausted_chunk_zero_underflow',row['source'] is None
+                  and eq(row['action'],np.zeros(7)) and row['applied_arm_gain']==1
+                  and not row.get('late_hold',False),step)
+            continue
         check('action_is_latest_committed_chunk',row['source'] is not None
             and row['source']['prediction_id']==active['prediction_id']
             and row['source']['offset']==offset
             and row['source']['origin_step']==request['observation_step']
             and row['applied_arm_gain']==1 and eq(row['action'],request['actions'][offset]),step)
+    summary_path=run/'summary.json'
+    if summary_path.exists():
+        summary=json.loads(summary_path.read_text())
+        episode=summary.get('episode',summary)
+        if 'underflow_steps' in episode:
+            check('reported_underflow_steps',episode['underflow_steps']==underflows)
+        if 'initial_raw_state' in episode:
+            check('initial_raw_state',eq(episode['initial_raw_state'],controls[0]['before']['raw_state']))
+        if 'initial_sim_state_sha256' in episode:
+            import hashlib
+            digest=hashlib.sha256(np.asarray(controls[0]['before']['sim_state'],dtype=np.float64).tobytes()).hexdigest()
+            check('initial_sim_state_sha256',episode['initial_sim_state_sha256']==digest)
     controlled=cfg.get('controlled_delay_steps')
     check('no_controlled_wait_in_actual',controlled is not None or all('controlled_wait_seconds' not in r for r in requests))
     return dict(run=str(run),passed=not failures,checks=count,failures=failures,
         controls=len(controls),requests=len(requests),commits=len(commits),
         estimate_minus_actual=slacks,
+        audit_mode='sync_no_rtc' if synchronous else 'async_rtc',
+        scope_id='m1_sync_no_rtc_records_v1' if synchronous else 'm1_async_rtc_records_v1',
+        supply_quality=dict(passed=not underflows,underflow_steps=underflows,
+                            classification='supply_quality_issue' if underflows else 'no_underflow'),
         scope='recorded state/normalization/inference timestamps/Algorithm1 counters/crop/physical actions; not all-input or full-model proof')
 
 

@@ -283,6 +283,25 @@ def device_state():
     return result
 
 
+def _drain_executor(executor, monitor, start, stop):
+    """Keep sampling through worker completion; exclude subsequent artifact work."""
+    try:
+        executor.shutdown(wait=True)
+        drain_stop = time.monotonic()
+    finally:
+        monitor.stop()
+    return {
+        'drain_start_monotonic': stop,
+        'drain_stop_monotonic': drain_stop,
+        'drain_seconds': drain_stop - stop,
+        'drain_power': base._power_result(monitor, stop, drain_stop),
+        'including_drain_start_monotonic': start,
+        'including_drain_stop_monotonic': drain_stop,
+        'including_drain_seconds': drain_stop - start,
+        'including_drain_power': base._power_result(monitor, start, drain_stop),
+    }
+
+
 def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
                 prefix_adapter=None, *, trial_index=1, condition='crop_overwrite',
                 action_blend_enabled=False, rtc_fusion_enabled=False, rtc_adapter=None,
@@ -748,8 +767,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
         if active_pause is not None:
             active_pause.update(end_step=len(rows), end_monotonic=stop,
                                 wall_seconds=stop - active_pause['start_monotonic'])
-        monitor.stop()
-        executor.shutdown(wait=True)
+        drain = _drain_executor(executor, monitor, start, stop)
+        base._trace(stream, 'episode_drain', task_id=task['task_id'], q=q,
+                    trial_index=trial_index, condition=condition, **drain)
         if env_audit is not None:
             env_context.__exit__(None, None, None)
         if rtc_adapter is not None and config.get('release_rtc_graph_before_artifacts'):
@@ -810,6 +830,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream,
               'underflow_nominal_seconds': len(underflows) * period,
               'underflow_env_step_real_seconds': sum(r['action_end_monotonic'] - r['action_start_monotonic'] for r in rows if r['source'] is None),
               'power': base._power_result(monitor, start, stop),
+              **drain,
               'field_checks': {'full_predictions': all(len(r.get('actions', [])) == config['H'] for r in requests),
                                'pre_post_state': all('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows),
                                'scene_contacts': all('contacts' in r['after'] for r in rows),

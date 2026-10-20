@@ -20,7 +20,8 @@ def fixture(tmp_path):
             inference_started_monotonic=origin*10.+.2,inference_ended_monotonic=origin*10.+.3,
             ready_monotonic=origin*10.+.4,rtc_solver_inputs=dict(noise=np.zeros((25,32)).tolist(),
                 previous_raw=np.zeros((20,32)).tolist() if pid else None,executed=5 if pid else 0,delay=5 if pid else 0),
-            rtc_guidance=dict(delay_estimate_steps=5 if pid else 0,executed_steps=5 if pid else 0,actual_delay_steps=5 if pid else 0)))
+            rtc_guidance=dict(guidance_enabled=bool(pid),delay_estimate_steps=5 if pid else 0,
+                executed_steps=5 if pid else 0,actual_delay_steps=5 if pid else 0)))
     events=[]
     for pid,origin,at in ((0,0,0),(1,5,10)):
         events.append(dict(event='prediction_committed',prediction_id=pid,observation_step=origin,
@@ -29,6 +30,7 @@ def fixture(tmp_path):
     for step in range(11):
         pid=int(step>=10);offset=step-(5 if pid else 0)
         events.append(dict(event='control_step',step=step,before={'raw_state':[0]*8},
+            tick_monotonic=step*10.,action_start_monotonic=step*10.+.6,
             action_end_monotonic=step*10.+1,applied_arm_gain=1,action=requests[pid]['actions'][offset],
             source=dict(prediction_id=pid,offset=offset,origin_step=5 if pid else 0)))
     def save():

@@ -8,6 +8,16 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_m1_suite_q40_autotune_and_calibration_forwarded(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
+              '--parent','/tmp/results','--task-id','9','--q','40','--horizon','50',
+              '--checkpoint-profile','h50','--suite','libero_goal','--calibrate-control-period',
+              '--exact-flash-attention','--fused-norm','--gemm-policy','autotune']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),9,5.,40,50,'h50',
+            exact_flash=True,fused_norm=True,gemm_policy='autotune',suite='libero_goal',calibrate_control_period=True)
+
     def test_fused_norm_requires_flash_and_forwards_audit(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
               '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
