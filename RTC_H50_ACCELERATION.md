@@ -174,3 +174,20 @@ H50/N5、新模型、有效prefix665、d12/s15、同KV/旧目标，3个固定噪
 复现：前述guarded_run命令把 `--suffix-vjp-probe` 换成 `--exact-flash-probe`。
 本轮CPU全套374 passed、10 skipped、178 subtests passed；GPU测量如上独立报告。
 
+### 首个同任务真实异步验证
+
+用户批准后，显式 `diagnose_rtc_handoff.py --exact-flash-attention` 接入原专家适配器，
+默认关闭；bootstrap、图银行、慢回退均用同一候选后端，退出恢复模块函数。
+不再把同候选eager/graph门禁冒称原始eager数值等价。每种长度预热时检查全有效mask。
+
+父run `M1/20261020T112222.434191Z-rtc-handoff-comparison-936c5902`；
+worker `M1/20261020T112222.834800Z-rtc-diag-actual_history-b5349bd5`。
+同task0/H50N5q15/state/beta5/seed7init0，真实异步78步成功、6.2769s，完整请求
+稳态606.07ms、固定观测预检559.86ms，14.44Hz，0断供/回退/受控等待，夹爪切换1。
+8长度候选自身gate全0，独立202项系统记录审计通过。参考f7c12c37为76步/6.1734s/
+713.72ms；初始sim/首帧同，bootstrap state/noise同，raw差.002818。
+推理中位快15.1%，但任务耗时未改善，不能从单回合宣布总体质量不退化或节能成功。
+推理占空比62.36%→56.44%，尚非控制功耗后的实际节能比例。
+源码c893419（元数据启动时afd0ca2+dirty，运行文件此后未改）；375pass10skip178subtests。
+详细条件、原始目录和复现命令见父run/结论.md。未自动切全局默认/扩测M1。
+
