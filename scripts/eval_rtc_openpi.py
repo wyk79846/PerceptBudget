@@ -201,6 +201,13 @@ def rollout(config, run, gate, task_id):
         env.close()
 
 
+def horizon_transfer_allowed(args,reference_h):
+    legacy=(args.actual_delay and args.experimental_varlen and args.horizon in (25,50) and reference_h==20)
+    source=(args.allow_horizon_transfer and args.actual_delay and args.author_order_reference
+            and args.source_step_prefixes and args.horizon==50 and reference_h==25)
+    return bool(legacy or source)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--verify-only', action='store_true')
@@ -213,6 +220,7 @@ def main():
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
     parser.add_argument('--fixed-delay-estimate',type=int,help='Actual async only: fixed guidance estimate; crop still uses actual elapsed control steps')
+    parser.add_argument('--allow-horizon-transfer',action='store_true',help='Explicit H25 gate provenance transfer to H50 source-step actual experiment; live graph parity still required')
     parser.add_argument('--author-order-reference',action='store_true',help='Original attention/expert and author-source order; controlled audit or explicit source-step async')
     parser.add_argument('--source-step-prefixes',nargs='+',type=int,help='Opt-in original single-step graphs for up to eight exact lengths; miss falls back slow')
     parser.add_argument('--source-step-profile',type=Path,help='Read this task prefix lengths from a matched slow-batch summary; unseen lengths use slow fallback')
@@ -238,6 +246,9 @@ def main():
             parser.error(str(exc))
     if args.source_packed_conditioning and not args.source_step_prefixes:
         parser.error('--source-packed-conditioning requires source-step-prefixes or profile')
+    if args.allow_horizon_transfer and not (args.actual_delay and args.author_order_reference
+            and args.source_step_prefixes and args.horizon==50):
+        parser.error('--allow-horizon-transfer requires H50 source-step author-order actual-delay')
     if args.source_step_prefixes and (not args.author_order_reference or not (args.controlled_delay_five or args.actual_delay)
             or len(set(args.source_step_prefixes))>8 or any(not 1<=n<=592 for n in args.source_step_prefixes)):
         parser.error('--source-step-prefixes requires author-order-reference, controlled-delay-five or actual-delay, and at most eight lengths')
@@ -321,10 +332,10 @@ def main():
                     if config.get(key) != gate_config.get(key):
                         raise RuntimeError('reference gate config mismatch: '+key)
                 if config['H'] != gate_config.get('H'):
-                    if not (args.actual_delay and args.experimental_varlen and config['H'] in (25,50) and gate_config.get('H')==20):
+                    if not horizon_transfer_allowed(args,gate_config.get('H')):
                         raise RuntimeError('reference gate config mismatch: H')
-                    config['reference_horizon_transfer']=dict(reference_H=20,experiment_H=config['H'],
-                        limitation='source/checkpoint provenance only; independent numerical parity at changed horizon not established')
+                    config['reference_horizon_transfer']=dict(reference_H=gate_config.get('H'),experiment_H=config['H'],
+                        limitation='source/checkpoint provenance transfer; live exact-shape graph/eager parity required for source-step path; not independent author-body horizon validation')
                 config['verified_reference_run'] = str(args.verified_run.resolve())
                 result = rollout(config, run, gate, args.task_id)
             print(json.dumps(result), flush=True)
