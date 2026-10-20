@@ -38,6 +38,24 @@ __global__ void geglu_dx(const __nv_bfloat16* gate, const __nv_bfloat16* up,
     du[j]=__float2bfloat16_rn(d*g*p);
 }
 
+// tanh-form GELU VJP: matches transformers' gelu_pytorch_tanh used by the
+// pi05 suffix (the sigmoid variant above belongs to the old experimental path
+// and is kept only for its historical gate records).
+__global__ void geglu_tanh_dx(const __nv_bfloat16* gate, const __nv_bfloat16* up,
+                              const __nv_bfloat16* dy, __nv_bfloat16* dg,
+                              __nv_bfloat16* du, int n) {
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if(j>=n) return;
+    float g=__bfloat162float(gate[j]), u=__bfloat162float(up[j]), d=__bfloat162float(dy[j]);
+    const float c=0.7978845608028654f;
+    float z=c*g*(1.f+0.044715f*g*g);
+    float t=tanhf(z);
+    float act=0.5f*g*(1.f+t);
+    float dact=0.5f*(1.f+t)+0.5f*g*(1.f-t*t)*c*(1.f+3.f*0.044715f*g*g);
+    dg[j]=__float2bfloat16_rn(d*u*dact);
+    du[j]=__float2bfloat16_rn(d*act);
+}
+
 extern "C" int rtc_ada_dx(const void* x,const void* style,const void* dy,
                           void* dx,int rows,int dim,void* stream) {
     ada_dx<<<rows,256,0,(cudaStream_t)stream>>>((const __nv_bfloat16*)x,
@@ -47,6 +65,13 @@ extern "C" int rtc_ada_dx(const void* x,const void* style,const void* dy,
 extern "C" int rtc_geglu_dx(const void* gate,const void* up,const void* dy,
                             void* dg,void* du,int n,void* stream) {
     geglu_dx<<<(n+255)/256,256,0,(cudaStream_t)stream>>>((const __nv_bfloat16*)gate,
+        (const __nv_bfloat16*)up,(const __nv_bfloat16*)dy,
+        (__nv_bfloat16*)dg,(__nv_bfloat16*)du,n);
+    return (int)cudaGetLastError();
+}
+extern "C" int rtc_geglu_tanh_dx(const void* gate,const void* up,const void* dy,
+                                 void* dg,void* du,int n,void* stream) {
+    geglu_tanh_dx<<<(n+255)/256,256,0,(cudaStream_t)stream>>>((const __nv_bfloat16*)gate,
         (const __nv_bfloat16*)up,(const __nv_bfloat16*)dy,
         (__nv_bfloat16*)dg,(__nv_bfloat16*)du,n);
     return (int)cudaGetLastError();

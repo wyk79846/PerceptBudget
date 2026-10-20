@@ -165,6 +165,7 @@ class SourceStepGraph:
             raise ValueError('per-step trace requires the single-step graph')
         raw,norms=self.full_outputs
         return raw.clone(),norms.clone()
+
     def _step(self):
         import torch
         with torch.enable_grad():

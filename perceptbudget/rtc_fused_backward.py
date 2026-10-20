@@ -25,10 +25,12 @@ def load(output_root):
     p,i = ctypes.c_void_p,ctypes.c_int
     lib.rtc_ada_dx.argtypes = [p,p,p,p,i,i,p]
     lib.rtc_geglu_dx.argtypes = [p,p,p,p,p,i,p]
+    lib.rtc_geglu_tanh_dx.argtypes = [p,p,p,p,p,i,p]
     lib.rtc_residual.argtypes = [p,p,p,p,i,i,i,p]
     lib.rtc_qkv_rope.argtypes = [p,p,p,p,p,i,p]
     lib.rtc_qkv_rope_dx.argtypes = [p,p,p,p,p,i,p]
     lib.rtc_ada_dx.restype = lib.rtc_geglu_dx.restype = i
+    lib.rtc_geglu_tanh_dx.restype = i
     _LIB = lib
 
 
@@ -66,6 +68,21 @@ def geglu_backward(gate,up,dy):
                              du.data_ptr(),gate.numel(),torch.cuda.current_stream().cuda_stream)
     if code:
         raise RuntimeError(f'GeGLU VJP CUDA launch failed: {code}')
+    return dg,du
+
+
+def geglu_tanh_backward(gate,up,dy):
+    """tanh-form GELU VJP matching the pi05 suffix's gelu_pytorch_tanh."""
+    import torch
+    dy = dy.contiguous()
+    _validate(gate,up,dy)
+    if gate.shape!=up.shape or gate.shape!=dy.shape:
+        raise ValueError('invalid GeGLU tanh VJP shapes')
+    dg,du = torch.empty_like(gate),torch.empty_like(up)
+    code = _LIB.rtc_geglu_tanh_dx(gate.data_ptr(),up.data_ptr(),dy.data_ptr(),dg.data_ptr(),
+                                  du.data_ptr(),gate.numel(),torch.cuda.current_stream().cuda_stream)
+    if code:
+        raise RuntimeError(f'GeGLU tanh VJP CUDA launch failed: {code}')
     return dg,du
 
 
