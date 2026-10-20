@@ -234,3 +234,28 @@ bootstrap noise/raw也同。继续优先快速注意力；**目前两实现替�
 未修改FlashRT/编码器/默认配置，379pass10skip178subtests，未扩5任务或M1。
 详细原始目录、比较口径和命令见父run/结论.md。
 
+## 快速注意力继续优化：AdaRMS融合（2026-10-20）
+
+实现提交 `2e5d040`。项目侧新增 rtc_fused_norm.py/.cu，合并归一化前向与输入反向；
+保留FP32调制、BF16隐藏层、完整动作输入梯度，未改RTC算法、FlashRT、编码器或autotune。
+显式 `--exact-flash-attention --fused-norm --audit-norm-inputs`，默认关闭。
+
+固定输入探针 `M1/20261020T145602.068309Z-rtc-stage-profile-h50-4b4d35be`：
+同KV/旧目标，H50/N5/d12/s15，交错测量10次，专家中位179.28→159.60ms，省19.68ms（11%）。
+三组噪声的7维归一化动作相对L2差0.251%–0.275%；不是逐值一致。
+
+真实异步父run `M1/20261020T150122.421275Z-rtc-handoff-comparison-fb45d4d8`，
+worker `M1/20261020T150122.819161Z-rtc-diag-actual_history-4331ef4e`：
+新模型/task0/H50N5q15/state/seed7init0，79步成功，6.320s，完整请求中位591.56ms，
+预热547.01ms，实际14.44Hz，0断供/图回退，201项独立记录审计通过。
+历史快速注意力task0为77步/6.127s/597.53ms；初始sim、图像、state相同。
+完整请求跨run仅观察到约6ms改善，任务时间略增，不能由专家省20ms推断整体省20ms。
+初始同输入bootstrap/guided增量7维误差0.142%/0.367%，最大绝对差0.01244。
+8长度候选eager/图误差0。独立小张量4档输入幅度（0/.001/1/20），归一化前向与输入VJP
+均与Torch参考逐值相同；不代表整个模型所有输入逐值相同。
+
+381 tests passed / 10 skipped / 178 subtests passed；仅一次任务验证，不沿用此前快注意力5/5作为
+新融合版本成功率。作为可选候选保留，未切默认、未启动M1扫描。
+QKV/FFN矩阵合并无收益且额外占90–378MiB，已从主代码移除；实验快照留在
+`M1/20261020T144614.596825Z-rtc-stage-profile-h50-2bc78f5f`。
+
