@@ -102,7 +102,11 @@ def main():
                         help='Compare constant-prefix gradient elimination; probe only, no production change')
     parser.add_argument('--requests-only', action='store_true',
                         help='Skip legacy expert split/full-graph experiments after request timing')
+    parser.add_argument('--exact-flash-probe', action='store_true',
+                        help='Attention-only experiment, preserving original FP32 projections and conditioning')
     args = parser.parse_args()
+    if args.suffix_vjp_probe and args.exact_flash_probe:
+        parser.error('compare one candidate at a time')
     if args.iterations < 5 or args.warmup < 1 or not 0 < args.delay <= 45 \
             or not 0 <= args.executed <= 50 or args.executed + 5 > 50:
         parser.error('invalid iteration/guidance parameters')
@@ -131,6 +135,9 @@ def main():
         if args.suffix_vjp_probe:
             dest = run / 'source/perceptbudget/rtc_suffix_vjp.py'
             shutil.copy2(ROOT / 'perceptbudget/rtc_suffix_vjp.py', dest)
+        if args.exact_flash_probe:
+            dest = run / 'source/perceptbudget/rtc_exact_flash_probe.py'
+            shutil.copy2(ROOT / 'perceptbudget/rtc_exact_flash_probe.py', dest)
         result = dict(status='running', reference_run=str(args.reference_run),
                       iterations=args.iterations, warmup=args.warmup,
                       delay=args.delay, executed=args.executed, seed=args.seed)
@@ -278,18 +285,22 @@ def run_once(config, gate, run, args):
 
     mem('after_steady_loop')
     aggregate_out = aggregate(rows)
-    if args.suffix_vjp_probe or args.requests_only:
-        result = (compare_suffix_vjp_variants(adapter, previous, args, rows[-1]['valid'],run)
+    if args.suffix_vjp_probe or args.exact_flash_probe or args.requests_only:
+        result = (compare_exact_flash(adapter, previous, args, rows[-1]['valid'],run)
+                  if args.exact_flash_probe else
+                  compare_suffix_vjp_variants(adapter, previous, args, rows[-1]['valid'],run)
                   if args.suffix_vjp_probe else None)
         (run / 'stage_rows.json').write_text(json.dumps(rows, indent=1))
         if result is not None:
-            (run / 'suffix_vjp.json').write_text(json.dumps(result, indent=1))
+            (run / ('exact_flash.json' if args.exact_flash_probe else 'suffix_vjp.json')).write_text(json.dumps(result, indent=1))
         adapter.release_graph()
         del env, model, adapter
         import gc
         gc.collect()
         torch.cuda.empty_cache()
-        return dict(summary=dict(total_ms=aggregate_out['total_ms'], suffix_vjp=result,
+        return dict(summary=dict(total_ms=aggregate_out['total_ms'],
+                                 candidate_kind='exact_flash' if args.exact_flash_probe else 'suffix_vjp',
+                                 candidate=result,
                                  graph_audit=graph_audit),
                     aggregate=aggregate_out)
     # Forward-only vs full-step split: run the same velocity forward without
@@ -444,6 +455,53 @@ def run_once(config, gate, run, args):
     gc.collect()
     torch.cuda.empty_cache()
     return dict(summary=summary, aggregate=aggregate_out)
+
+
+def compare_exact_flash(adapter, previous, args, valid, run):
+    import torch
+    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+    from perceptbudget.rtc_exact_flash_probe import enable_exact_flash_probe
+    bound,reference = adapter.step_bank.select(valid)
+    old=torch.as_tensor(previous,device='cuda',dtype=torch.float32)
+    torch.cuda.manual_seed(args.seed)
+    noise=torch.randn(adapter.horizon,32,device='cuda')
+    restore=enable_exact_flash_probe(bound)
+    try:
+        candidate=SourceStepGraph(bound,noise,beta=adapter.beta)
+    finally:
+        restore()
+    records=[]
+    for seed in (args.seed,args.seed+1,args.seed+2):
+        torch.cuda.manual_seed(seed)
+        noise=torch.randn_like(noise)
+        a,b=[],[]
+        raw,norms=reference.replay(noise,old,args.delay,args.executed,trace=a)
+        raw,norms=raw.clone(),norms.clone()
+        got,gn=candidate.replay(noise,old,args.delay,args.executed,trace=b)
+        stages=[{k:dict(max_abs=float((p[k]-q[k]).abs().max()),
+                       relative_l2=float((p[k]-q[k]).norm()/p[k].norm().clamp_min(1e-12)))
+                 for k in p} for p,q in zip(a,b)]
+        row=dict(seed=seed,raw_max_abs=float((got-raw).abs().max()),
+                 raw_relative_l2=float((got-raw).norm()/raw.norm().clamp_min(1e-12)),
+                 norm_max_abs=float((gn-norms).abs().max()),stages=stages)
+        records.append(row)
+        (run/'exact_flash_partial.json').write_text(json.dumps(records,indent=1))
+        print('exact_flash_parity='+json.dumps(row),flush=True)
+        del a,b
+    times={'reference':[],'candidate':[]}
+    for rep in range(14):
+        order=(('reference',reference),('candidate',candidate))
+        for name,graph in (order if rep%2==0 else reversed(order)):
+            torch.cuda.synchronize();start=time.monotonic()
+            graph.replay(noise,old,args.delay,args.executed)
+            torch.cuda.synchronize()
+            if rep>=4: times[name].append((time.monotonic()-start)*1000)
+    result=dict(records=records,timing_ms={k:summarize(v) for k,v in times.items()},
+                bit_exact=all(r['raw_max_abs']==0 and r['norm_max_abs']==0
+                    and all(v['max_abs']==0 for s in r['stages'] for v in s.values()) for r in records),
+                scope='original projections/time/conditioning; attention-only numerical backend experiment, no rollout')
+    print('exact_flash_result='+json.dumps(result),flush=True)
+    return result
 
 
 def compare_suffix_vjp_variants(adapter, previous, args, valid, run):
