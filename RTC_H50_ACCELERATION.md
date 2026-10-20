@@ -278,3 +278,29 @@ QKV/FFN矩阵合并无收益且额外占90–378MiB，已从主代码移除；�
 
 候选阶段全套381pass/10skip/178subtests；回退后主代码恢复到2e5d040实现。未切默认、未启动M1。
 
+## 最终组合：快速注意力 + 归一化融合 + autotune（2026-10-20）
+
+用户决定停止专家优化、启用autotune。9bd157b仅给diagnostic补充
+`--gemm-policy {heuristic-first,autotune}`，父/worker均落盘、子进程传递一致；
+省略时继承原配置，不改全局旧config。FlashRT源码未改，使用其已有算法筛选接口。
+
+父run `M1/20261020T154440.311596Z-rtc-handoff-comparison-38f581a8`，
+worker `M1/20261020T154440.748865Z-rtc-diag-actual_history-fbeb88cd`。
+同新模型/task0/H50N5q15/state/seed7init0真实异步：80步成功，6.138s，
+完整请求中位492.82ms（上次非autotune591.56ms，跨run约省98.74ms/16.7%），
+固定观测预热460.75ms，实际14.88Hz，0断供，8个长度eager/graph门禁误差0，
+197系统记录检查通过。算法筛选日志显示实测多个候选；不是只写配置而未启用。
+仅单任务，不推断总体成功率，也未单独重测expert分段或宣称专家因autotune提速。
+启动源为f19080b+本次CLI改动，9bd157b保存同一实现在途代码；381pass10skip178subtests。
+
+后续使用此组合须显式带三个选项，不能只依赖旧全局配置：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python -u scripts/diagnose_rtc_handoff.py \
+  --reference-run /home/wyk/workspace/任务产出/perceptbudget/M1/20261020T035931.024165Z-openpi-rtc-actual-cfaef1e3 \
+  --conditions actual_history --task-ids 0 --q 15 --horizon 50 \
+  --checkpoint-profile h50 --exact-flash-attention --fused-norm --gemm-policy autotune
+```
+
+停止继续专家优化，不自动启动M1或扩大样本。后续同步/异步实验均应冻结上述同一后端和autotune策略。
+

@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-20用户决定停止专家优化、最后启用autotune。9bd157b仅增diagnose_rtc_handoff --gemm-policy并父/worker传递落盘，默认仍继承，不碰旧全局config/FlashRT。最终组合显式--exact-flash-attention --fused-norm --gemm-policy autotune。父154440.311596Z-rtc-handoff-comparison-38f581a8/worker154440.748865Z-rtc-diag-actual_history-fbeb88cd（M1根目录）同新模型task0H50N5q15state种子7init0真实异步80success/6.138s/492.82ms（上次591.56跨run省98.74ms），warm460.75ms，14.88Hz/0underflow/8长度gate0/197审计过。381pass10skip178subtests，FlashRT源码clean。仅单任务非整体成功率，未重测expert段，不扩大样本或继续优化。完整复现命令见RTC_H50_ACCELERATION最新首节。当前所有测试已结束。
+
 - 2026-10-20用户指定只优化expert，不动FlashRT。续试门控残差融合159.684→158.784ms（仅0.900ms）和norm warp求和158.376→159.178ms（退化0.802ms）；固定KV665/H50N5d12s15，3seed动作/逐步VJP全0差，10次ABBA重放，仅探针无新episode。无明显收益，所有本轮候选代码已用apply_patch移出主线、恢复原实现；源码可从153906-6e07ce1b与154120-553f0c16结果目录source恢复。首probe candidate_kind误标suffix_vjp，以fused_residual.json为准。生产保持2e5d040快注意力+norm可选，默认不改；FlashRT clean，381pass10skip178subtests。详见RTC_H50_ACCELERATION首节。无后台任务需续跑。
 
 - 2026-10-20继续优化快速注意力：2e5d040增加显式--fused-norm/--audit-norm-inputs（须配--exact-flash-attention），FP32调制/BF16隐藏/完整VJP不变，FlashRT/编码器/autotune/默认不改。固定输入专家179.28→159.60ms，动作7维relL2 .251–.275%；真实task0H50N5q15state/seed7init0为79success/6.320s/591.56ms/14.44Hz，0断供/回退，201审计过。历史快77步6.127s597.53ms，故整次请求只观察约6ms跨run改善，不能宣称整体省20ms或五任务成功率。初sim/frame/state同；初始同输入增量误差bootstrap .142%/guided .367%。381pass10skip178subtests。父run M1/20261020T150122.421275Z-rtc-handoff-comparison-fb45d4d8，worker4331ef4e；详见RTC_H50_ACCELERATION新增首节。无收益矩阵合并已移除主代码，快照在144614探针目录。任务已结束，无需重复启动。
