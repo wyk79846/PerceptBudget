@@ -8,6 +8,12 @@ class OriginalOpenPiRTCAdapter:
         self.model, self.torch, self.config = model, torch, config
         self.pipe, self.pipeline = model._pipe, model._pipe.pipeline
         self.horizon, self.num_steps = config['H'], config['N']
+        import math
+        self.beta=float(config.get('rtc_beta',5.))
+        if not math.isfinite(self.beta) or self.beta <= 0:
+            raise ValueError('RTC beta must be finite and positive')
+        if self.beta != 5. and config.get('original_cuda_graph'):
+            raise ValueError('non-default beta requires source-step graph or eager solver')
         self.expert = OriginalOpenPiExpert(config, self.horizon, self.num_steps,
             context_capacity=592 if config.get('experimental_original_varlen') else None)
         self.latency_estimate_seconds = 0.
@@ -27,7 +33,7 @@ class OriginalOpenPiRTCAdapter:
         if self.config.get('source_packed_conditioning'):
             from perceptbudget.rtc_condition_cache import enable_condition_cache
             conditioning=enable_condition_cache(self.expert,graph_live=True)
-        self.step_bank=SourceStepBank(self.expert,lengths,noise,
+        self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
             progress=lambda r:print('step_graph_prepared='+json.dumps(r),flush=True))
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
@@ -117,7 +123,7 @@ class OriginalOpenPiRTCAdapter:
             raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
             norms = corrections.norm(dim=(1,2)).cpu().tolist()
         else:
-            raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed,
+            raw, norms = sample_original_rtc(self.expert, noise, previous, delay, executed,beta=self.beta,
                 author_order=self.config.get('rtc_author_order',False))
         if self.config.get('rtc_audit_inputs'):
             request['rtc_solver_inputs']=dict(noise=noise.detach().cpu().tolist(),
@@ -133,7 +139,7 @@ class OriginalOpenPiRTCAdapter:
             solver_backend=('original_source_step_graph' if step_graph is not None and previous is not None else
                 'original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp'),
             expert_backend='original_openpi_source',
-            valid_prefix_length=valid, vjp_norms=norms, beta=5.,
+            valid_prefix_length=valid, vjp_norms=norms, beta=self.beta,
             context_graph_rebuilt=False, context_prepare_seconds=0.,
             variable_length_fallback=(self.step_bank is not None and step_graph is None) or (self.graph is not None and not use_graph),
             attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',

@@ -37,8 +37,11 @@ def lengths_from_reference_profile(profile,*,task_id,suite,horizon):
 
 
 class SourceStepGraph:
-    def __init__(self,expert,noise,*,pool=None,stream=None):
+    def __init__(self,expert,noise,*,pool=None,stream=None,beta=5.):
         import torch
+        if not math.isfinite(beta) or beta <= 0:
+            raise ValueError('beta must be finite and positive')
+        self.beta_value=float(beta)
         if expert.context_capacity is not None or getattr(expert,'varlen_attention_enabled',False):
             raise ValueError('source step graph requires exact original attention context')
         if noise.shape!=(expert.horizon,32) or noise.dtype!=torch.float32:
@@ -61,7 +64,7 @@ class SourceStepGraph:
         self.target=torch.zeros_like(noise)
         self.mask=torch.zeros(expert.horizon,1,device=noise.device)
         self.tau=torch.zeros((),device=noise.device)
-        self.beta=torch.tensor(5.,device=noise.device)
+        self.beta=torch.tensor(self.beta_value,device=noise.device)
         stream=stream if stream is not None else torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(stream):
@@ -82,7 +85,7 @@ class SourceStepGraph:
             residual=((self.target-clean)*self.mask).detach()
             correction,=torch.autograd.grad(clean,x,grad_outputs=residual)
             inv_r2=(self.tau**2+(1-self.tau)**2)/((1-self.tau)**2)
-            c=torch.nan_to_num((1-self.tau)/self.tau,posinf=5.)
+            c=torch.nan_to_num((1-self.tau)/self.tau,posinf=self.beta_value)
             gain=torch.minimum(c*inv_r2,self.beta)
             updated=(x+(1/self.expert.num_steps)*(velocity+gain*correction)).detach()
         return updated,-velocity.detach(),clean.detach(),residual,correction.detach()
@@ -128,7 +131,7 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
@@ -149,13 +152,13 @@ class SourceStepBank:
             count=min(valid,expert.keys.shape[-2])
             bound.keys[...,:count,:].copy_(expert.keys[...,:count,:])
             bound.values[...,:count,:].copy_(expert.values[...,:count,:])
-            reference,reference_norms=sample_original_rtc(bound,noise,noise[5:].clone(),5,5,author_order=True)
-            graph=SourceStepGraph(bound,noise,pool=pool,stream=stream)
+            reference,reference_norms=sample_original_rtc(bound,noise,noise[5:].clone(),5,5,beta=beta,author_order=True)
+            graph=SourceStepGraph(bound,noise,pool=pool,stream=stream,beta=beta)
             got,norms=graph.replay(noise,noise[5:].clone(),5,5)
             raw_error=float((reference-got).abs().max())
             norm_error=float((norms-torch.tensor(reference_norms,device=noise.device)).abs().max())
             passed=math.isfinite(raw_error) and math.isfinite(norm_error) and max(raw_error,norm_error)<1e-4
-            record=dict(valid=valid,raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,
+            record=dict(valid=valid,beta=float(beta),raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,
                 passed=passed,prepare_seconds=time.monotonic()-started,
                 allocated_mib=torch.cuda.memory_allocated()/2**20,reserved_mib=torch.cuda.memory_reserved()/2**20)
             self.audits.append(record)

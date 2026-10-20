@@ -2,6 +2,37 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize('beta',[1.,2.,5.])
+def test_step_beta_matches_eager_reference_at_zero_time(beta):
+    import math
+    import torch
+    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+    from perceptbudget.openpi_reference import sample_original_rtc
+    expert=SimpleNamespace(horizon=20,num_steps=1,velocity=lambda x,k: .1*x)
+    noise=torch.ones(20,32)
+    previous=torch.zeros(15,32)
+    graph=SourceStepGraph.__new__(SourceStepGraph)
+    graph.expert=expert
+    graph.x=noise.clone().requires_grad_(True)
+    graph.target=torch.zeros_like(noise)
+    i=torch.arange(20,dtype=torch.float32)
+    weights=((5-1-i)/(15-5+1)+1).clamp(0,1)
+    graph.mask=torch.where(i>=15,0,weights*torch.expm1(weights)/(math.e-1))[:,None]
+    graph.tau=torch.tensor(0.)
+    graph.beta_value=beta
+    graph.beta=torch.tensor(beta)
+    got=graph._step()[0]
+    ref,_=sample_original_rtc(expert,noise,previous,5,5,beta=beta,author_order=True)
+    torch.testing.assert_close(got,ref,rtol=0,atol=0)
+
+
+@pytest.mark.parametrize('beta',[0.,-1.,float('nan'),float('inf')])
+def test_step_beta_rejects_invalid_values_before_capture(beta):
+    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+    with pytest.raises(ValueError,match='beta'):
+        SourceStepGraph(None,None,beta=beta)
+
+
 def test_step_bank_miss_returns_slow_reference_without_capture():
     from perceptbudget.rtc_source_step_graph import SourceStepBank
     bank=SourceStepBank.__new__(SourceStepBank)

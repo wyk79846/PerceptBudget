@@ -55,9 +55,10 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2):
+def worker(reference_run, mode, parent, task_id=2, beta=5.):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
+    config['rtc_beta'] = beta
     config['screen']['task_ids'] = [task_id]
     if task_id != 2:
         config['diagnostic_prefix_bank'] = 'initial valid length minus3 through plus4; unseen lengths use slow reference'
@@ -120,12 +121,14 @@ def main():
     parser.add_argument('--conditions', nargs='+', choices=MODES, default=DEFAULT_MODES)
     parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
+    parser.add_argument('--beta',type=float,choices=(1.,2.,5.),default=5.,help='explicit RTC guidance cap; default unchanged')
     args = parser.parse_args()
     if args.worker:
-        return worker(args.reference_run, args.worker, args.parent, args.task_id)
+        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta)
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
+    config['rtc_beta']=args.beta
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
@@ -136,7 +139,7 @@ def main():
         command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
                    sys.executable, '-u', str(Path(__file__).resolve()),
                    '--reference-run', str(args.reference_run), '--worker', mode,
-                   '--parent', str(directory), '--task-id', str(task_id)]
+                   '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta)]
         with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
         item = {'condition': mode, 'task_id': task_id, 'exit_code': code}
