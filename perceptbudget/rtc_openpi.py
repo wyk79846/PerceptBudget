@@ -22,6 +22,7 @@ class OriginalOpenPiRTCAdapter:
         self.graph_expert = None
         self.fallback_expert = None
         self.step_bank = None
+        self._exact_flash_restore = None
 
     def prepare_step_bank(self,lengths):
         from perceptbudget.rtc_source_step_graph import SourceStepBank
@@ -111,6 +112,9 @@ class OriginalOpenPiRTCAdapter:
         else:
             use_graph = self._select_expert(valid)
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
+        if self.config.get('rtc_exact_flash_attention') and self._exact_flash_restore is None:
+            from perceptbudget.rtc_exact_flash_probe import enable_exact_flash_probe
+            self._exact_flash_restore = enable_exact_flash_probe(self.expert)
         if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
             from perceptbudget.openpi_varlen import enable_varlen_attention
             enable_varlen_attention(self.expert)
@@ -142,7 +146,8 @@ class OriginalOpenPiRTCAdapter:
             valid_prefix_length=valid, vjp_norms=norms, beta=self.beta,
             context_graph_rebuilt=False, context_prepare_seconds=0.,
             variable_length_fallback=(self.step_bank is not None and step_graph is None) or (self.graph is not None and not use_graph),
-            attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',
+            attention_backend=('experimental_flash_exact' if self.config.get('rtc_exact_flash_attention') else
+                'experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager'),
             state_in_prompt=snapshot.get('state') is not None))
         request['rtc_guidance']['author_source_order']=self.config.get('rtc_author_order',False)
         if self.config.get('checkpoint_profile')=='lerobot_h50_quantiles_v044':
@@ -162,6 +167,9 @@ class OriginalOpenPiRTCAdapter:
 
     def release_graph(self):
         import gc
+        if self._exact_flash_restore is not None:
+            self._exact_flash_restore()
+            self._exact_flash_restore = None
         used_step_bank = self.step_bank is not None
         used_graph = self.graph is not None or used_step_bank
         self.graph = None

@@ -8,6 +8,14 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_exact_flash_is_explicit_and_forwarded(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
+              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
+              '--checkpoint-profile','h50','--exact-flash-attention']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',exact_flash=True)
+
     def test_actual_new_h50_q15_forwarded_without_controlled_delay(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
               '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50','--checkpoint-profile','h50']

@@ -1,4 +1,4 @@
-"""Probe-only exact-context FlashAttention in the original frozen suffix.
+"""Opt-in experimental exact-context FlashAttention in the frozen suffix.
 
 No KV permutation/padding, projection/conditioning changes or missing VJP.
 Attention's numerical backend changes: not a bit-exact replacement for eager.
@@ -25,12 +25,13 @@ def enable_exact_flash_probe(expert):
             raise ValueError('eval attention only')
         # Validate every layer during warmup, before capture; never inspect a
         # device value on the host inside CUDA capture.
-        if id(module) not in checked:
+        signature=(id(module),tuple(query.shape),tuple(key.shape))
+        if signature not in checked:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError('attention mask must be checked before capture')
             if attention_mask is not None and bool(torch.any(attention_mask != 0)):
                 raise ValueError('cannot omit a nontrivial attention mask')
-            checked.add(id(module))
+            checked.add(signature)
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             out = F.scaled_dot_product_attention(query, key, value,
                 attn_mask=None, dropout_p=0.0, is_causal=False,
