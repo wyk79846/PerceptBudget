@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户允许同task0固定d5补充，父run M1/20261020T054745.609999Z-rtc-handoff-comparison-deca92a5，workerbcf86118：198步success/23.207s/median566.37ms/夹爪指令切5次/0断供与长度回退；38后台已提交d/actual5，独立985检查通过。与先前d8 bootstrap raw/noise/modelstate差0。同步同task0为87步成功/21.977s，d8为220timeout。缩短延迟恢复本次成功但多111动作步，仍不能宣称RTC质量已解决或单独定位β/延迟根因；延迟与对应掩码一起变。未自动追加β扫描/更多任务，无代码或FlashRT修改，服务已结束。详细父run/结论.md。
+
 - 用户授权取失败任务做同步无RTC：Spatial task0/H20N5q5state80seed7init0，父run M1/20261020T054248.004291Z-rtc-handoff-comparison-30359053，worker6eea8ede87步成功/21.977s/夹爪指令切1次/0断供/请求间隔全5且全无引导；对照十任务固定d8的task0 2e52a52a为220timeout/17.241s，首sim/noise/raw差全0。说明该任务同模型配置能成功，问题集中在延迟执行+RTC引导，不单独证明β、延迟或实现根因；task0固定d5尚未测，不自动追加。原Spatial d8十任务已最终2/10（task2/7成功，其余超时）。无新代码/FlashRT/训练变更，服务已完成。详细父run/结论.md。
 
 - 用户要求提供Spatial十任务命令自行运行，按最近固定实际d8/估计8解释，仅10任务各一次（不是d5+d8共20）。diagnose_rtc_handoff新增--task-ids 0..9与独立worker task-id，逐任务目录/保护进程/共享锁、错误即停；除task2保留已验证565–572，其余任务从bootstrap有效长度L预建L-3..L+4共至多8图，未知长度明确慢参考回退，不能承诺全批无回退或固定延迟测试为真实异步。两项配置/十worker命令与持久汇总CPU测试通过；未启动GPU，等用户执行。FlashRT不改。
