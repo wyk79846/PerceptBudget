@@ -141,8 +141,8 @@ def main():
     parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
     parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
-    parser.add_argument('--q',type=int,choices=(5,8),default=5,help='minimum control-step interval between inference starts')
-    parser.add_argument('--horizon',type=int,choices=(10,20),default=20,help='explicit action horizon experiment; does not change defaults')
+    parser.add_argument('--q',type=int,choices=(5,8,15),default=5,help='minimum control-step interval between inference starts')
+    parser.add_argument('--horizon',type=int,choices=(10,20,50),default=20,help='explicit action horizon experiment; does not change defaults')
     parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
     args = parser.parse_args()
     selected=[args.worker] if args.worker else args.conditions
