@@ -4,12 +4,15 @@ import pytest
 
 def test_h50_state_bank_covers_full_numeric_token_variation():
     from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
-    lengths=h50_state_prefix_lengths(657)
-    assert lengths==list(range(641,674)) and 653 in lengths
-    assert h50_state_prefix_lengths(712)[-1]==712
-    assert h50_state_prefix_lengths(512)[0]==512
+    class Tokenizer:
+        def encode(self,text,add_bos):
+            return [0]*(133 if 'State: 0 ' in text else 149)
+    tokenizer=Tokenizer()
+    lengths=h50_state_prefix_lengths(657,'task',tokenizer)
+    assert lengths==list(range(645,662)) and 653 in lengths
     for bad in (True,511,713,657.0):
-        with pytest.raises(ValueError):h50_state_prefix_lengths(bad)
+        with pytest.raises(ValueError):h50_state_prefix_lengths(bad,'task',tokenizer)
+    with pytest.raises(ValueError):h50_state_prefix_lengths(640,'task',tokenizer)
 
 
 def test_h50_number_token_width_bound_matches_installed_tokenizer():
@@ -20,6 +23,9 @@ def test_h50_number_token_width_bound_matches_installed_tokenizer():
     tokenizer=sp.SentencePieceProcessor(model_file=str(path))
     widths=[len(tokenizer.encode(' '+str(i))) for i in range(-1,256)]
     assert min(widths)==2 and max(widths)==4
+    from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
+    lengths=h50_state_prefix_lengths(657,'pick up the ketchup and place it in the basket',tokenizer)
+    assert lengths==list(range(645,662))
 
 
 

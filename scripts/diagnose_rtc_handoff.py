@@ -115,9 +115,10 @@ def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, che
                 valid = int(adapter.expert.prefix_mask.shape[1])
                 if checkpoint_profile=='h50':
                     from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
-                    exact=h50_state_prefix_lengths(valid)
-                    adapter.config['source_prefix_coverage_rule']='h50_state8_bins_v1'
-                    adapter.config['diagnostic_prefix_bank']='8 varying state bins, each token length spread2; initial prefix plus/minus16, exact shapes'
+                    prompt=runner.base._load_tasks([task_id],[suite])[0]['instruction']
+                    exact=h50_state_prefix_lengths(valid,prompt)
+                    adapter.config['source_prefix_coverage_rule']='h50_state8_tokenizer_bounds_v1'
+                    adapter.config['diagnostic_prefix_bank']='task tokenizer state-bin min/max; at most17 exact shapes'
                 else:
                     exact = list(range(max(1, valid-3), min(712, valid+4)+1))
                 adapter.config['source_step_prefixes'] = exact
