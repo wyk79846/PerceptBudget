@@ -271,6 +271,32 @@ def run_once(config, gate, run, args):
 
     mem('after_steady_loop')
     aggregate_out = aggregate(rows)
+    # Forward-only vs full-step split: run the same velocity forward without
+    # grad to see how much of the 5x56ms is backward/VJP. Uses the same bound
+    # expert/KV as the step graph; pure measurement, no production change.
+    split = {}
+    valid = rows[-1]['valid']
+    bound, step_graph = adapter.step_bank.select(valid)
+    torch.cuda.manual_seed(args.seed)
+    noise = torch.randn(config['H'], 32, device='cuda', dtype=torch.float32)
+    previous_t = torch.as_tensor(previous, device='cuda', dtype=torch.float32)
+    for name, count in (('full_step_replay', 10), ('forward_only', 10)):
+        times = []
+        for rep in range(count):
+            torch.cuda.synchronize()
+            started = time.monotonic()
+            if name == 'full_step_replay':
+                step_graph.replay(noise, previous_t, args.delay, args.executed)
+                torch.cuda.synchronize()
+            else:
+                with torch.no_grad():
+                    x = noise
+                    for step in range(config['N']):
+                        x = x - bound.velocity(x, step) / config['N']
+                torch.cuda.synchronize()
+            times.append((time.monotonic() - started) * 1000)
+        split[name] = summarize(times[2:])
+        print('%s median=%.2fms' % (name, split[name]['median']), flush=True)
     expert_profile = {}
     if args.profile_expert > 0:
         import torch.profiler
@@ -297,6 +323,7 @@ def run_once(config, gate, run, args):
         total_ms=aggregate_out['total_ms'],
         stages=aggregate_out,
         eager_bootstrap_ms=eager,
+        expert_split=split,
         expert_profile=expert_profile,
         determinism=dict(raw_max_abs_across_iterations=max(
             r['raw_max_diff_vs_first'] for r in rows if not r['warmup']),
