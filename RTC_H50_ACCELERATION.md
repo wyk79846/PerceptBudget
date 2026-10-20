@@ -213,3 +213,24 @@ worker `M1/20261020T112222.834800Z-rtc-diag-actual_history-b5349bd5`。
 同步与异步一致使用，不能混用旧后端同步对照。377pass10skip178subtests。
 详细五行结果与复现方式见父run/对照结果.md。
 
+### 约26ms分支的闭环补测
+
+用户要求尝试此前常量KV梯度裁减分支，2617127增加显式diagnostic
+`--suffix-only-vjp`，与 `--exact-flash-attention` 互斥；共同初始同输入审计可选
+suffix_vjp后端。eager、图银行和慢回退用同一个候选数值后端，保留完整动作VJP，
+不是将原始eager的严格等价门禁偷偷放宽。默认均不启用，不影响已保留快速注意力。
+
+父 `M1/20261020T143441.511516Z-rtc-handoff-comparison-5c42eee3`；
+worker `M1/20261020T143441.922403Z-rtc-diag-actual_history-a9d9b9d3`。
+同新模型/task0/H50N5q15/state32text200/beta5/seed7init0真实异步，77步成功/6.232s，
+完整请求687.24ms、固定观测649.43ms，14.62Hz，0断供/回退，205记录审计通过。
+初始prefix665上的bootstrap/guided同KV/noise/旧目标7维及32维误差均0，
+不能推翻此前prefix662等数值反例或证明所有任务逐值等价。
+
+历史同配置task0原版624b3724为77步/714.55ms，快速注意力458d0ff4为77步/597.53ms；
+本次确实少约27ms，但仍慢于快速注意力约90ms。三者初sim/首帧同，原版与本次
+bootstrap noise/raw也同。继续优先快速注意力；**目前两实现替换同一attention函数，
+不能直接叠加收益**，不声称FlashAttention内部不再存在可优化的prefix梯度成本。
+未修改FlashRT/编码器/默认配置，379pass10skip178subtests，未扩5任务或M1。
+详细原始目录、比较口径和命令见父run/结论.md。
+
