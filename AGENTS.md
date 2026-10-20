@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-20用户授权配置LeRobot并同任务试：独立venv /home/wyk/venvs/perceptbudget-lerobot约437MiB，.pth只读继承lutvla GPU库，原环境Torch2.7/TF4.53.2未变。/workspace/lerobot从原main146d847切到官方v0.4.4 8fff0fd（main需Py3.12），源码干净；新env官方TFfork dcddb970/4.53.3。新增eval_lerobot_rtc.py直接原生PI05/RTC/ActionQueue，外接LIBERO/低内存strict813项/本地SP80/state8/同动作适配，不是官方全管线CLI。5254a8ed加载及两次推理通过；a16ac148 task2H25N5q5seed7init0真实异步220timeout，median1543.28ms，官方例子ceil(wall/.05)=32–33>H25，新队列全裁空，25–219共195步断供，首次后台实际25控制步但旧队列只余20。不能当LeRobot动作质量失败/成功率/14秒速度优势；未改FlashRT和LeRobot核心源码，无OOM。详见LEROBOT_RTC_COMPARISON.md。未扩H或改官方延迟时基，等用户选择有效对照方案。环境只配推理链，未宣称全部extras/pipcheck绿色。
+
 - 用户要求给命令自行试新版真实异步：eval_rtc_openpi仅放开显式actual-delay+author-order-reference+source-step bank组合（可packed conditioning），禁止controlled同时开/混旧varlen/fullgraph。沿用原异步调度，不改RTC/FlashRT。命令Spatial2 H25N5q5state80，exact prefix565–572预热8种，768MiB保护，遇未知state长度慢fallback可能断供或infeasible，应原样报告。CLI/scheduler/stepbank定向11tests通过，尚无此新版实际异步GPU运行，不宣称成功率/20Hz。用户将自行跑，agent只分析日志。
 
 - 2026-10-20继续追114/115：新增camera-only audit_render_repeat.py，无模型加载。a6c0476f三个独立env回放原20动作到完全相同scene，在原sensor render内部simtime1.498固定重复20次，目标单像素RGB114→115分别4/1/1次，主要cam/geom/material/light哈希全同。1ec3af61同帧readback30次全同；GL_DITHER开/关/恢复各200次，115为6/4/1，关闭仍复现，正式GL状态恢复。已隔离到MuJoCo/NVIDIA重新绘制路径，不是保存/读取/RTC；offSamples4仅记录，未证明MSAA/具体shader根因，不声称关闭抖色修复。控制步末render与观测采样时刻不同，其大差异不可当114/115。仅新增诊断，未改FlashRT/模型/正式GL/推理。详见RTC_SOURCE_ACCELERATION.md图像端定位。
