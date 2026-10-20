@@ -1,4 +1,4 @@
-"""Three one-task diagnostics; original expert shared across all conditions.
+"""Explicit task/condition diagnostics; original expert shared across conditions.
 
 The synchronous condition calls bootstrap (no guidance) for every prediction.
 Only this diagnostic's episode call is patched; native warmup is unchanged.
@@ -55,9 +55,12 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent):
+def worker(reference_run, mode, parent, task_id=2):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
+    config['screen']['task_ids'] = [task_id]
+    if task_id != 2:
+        config['diagnostic_prefix_bank'] = 'initial valid length minus3 through plus4; unseen lengths use slow reference'
     gate = json.loads((Path(config['verified_reference_run']) / 'summary.json').read_text())
     if not gate.get('passed') or not gate.get('weights_frozen') or not gate.get('author_order'):
         raise RuntimeError('requires passed frozen author-order gate')
@@ -70,13 +73,25 @@ def worker(reference_run, mode, parent):
         (parent / (mode + '.json')).write_text(json.dumps({'run': str(run), 'status': 'running'}))
         result = {'status': 'invalid'}
         try:
+            from contextlib import ExitStack
+            from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+            prepare = OriginalOpenPiRTCAdapter.prepare_step_bank
+
+            def prepare_for_task(adapter, lengths):
+                valid = int(adapter.expert.prefix_mask.shape[1])
+                exact = list(range(max(1, valid-3), min(592, valid+4)+1))
+                adapter.config['source_step_prefixes'] = exact
+                return prepare(adapter, exact)
+
             original = probe.run_episode
+            with ExitStack() as stack:
+                if task_id != 2:
+                    stack.enter_context(patch.object(OriginalOpenPiRTCAdapter, 'prepare_step_bank', prepare_for_task))
+                if mode == 'sync_no_rtc':
+                    stack.enter_context(patch.object(probe, 'run_episode', lambda *a, **k: sync_episode(original, *a, **k)))
+                result = runner.rollout(config, run, gate, task_id)
             if mode == 'sync_no_rtc':
-                with patch.object(probe, 'run_episode', lambda *a, **k: sync_episode(original, *a, **k)):
-                    result = runner.rollout(config, run, gate, 2)
                 result['scope'] = 'synchronous original expert, no RTC; simulation waits for every inference'
-            else:
-                result = runner.rollout(config, run, gate, 2)
             if mode == 'controlled_d8':
                 result['scope'] = 'fixed eight simulated delay steps; pauses simulation if inference late; not real-time async'
                 req = json.loads((run / 'rtc/q5_requests.json').read_text())
@@ -103,28 +118,36 @@ def main():
     parser.add_argument('--worker', choices=MODES)
     parser.add_argument('--parent', type=Path)
     parser.add_argument('--conditions', nargs='+', choices=MODES, default=DEFAULT_MODES)
+    parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
+    parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
     args = parser.parse_args()
     if args.worker:
-        return worker(args.reference_run, args.worker, args.parent)
+        return worker(args.reference_run, args.worker, args.parent, args.task_id)
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
-    for mode in args.conditions:
+    combinations = [(task_id, mode) for task_id in args.task_ids for mode in args.conditions]
+    for task_id, mode in combinations:
+        directory = parent / f'task{task_id:02d}' if len(args.task_ids) > 1 else parent
+        directory.mkdir(exist_ok=True)
         command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
                    sys.executable, '-u', str(Path(__file__).resolve()),
-                   '--reference-run', str(args.reference_run), '--worker', mode, '--parent', str(parent)]
-        with (parent / (mode + '.log')).open('w') as log:
+                   '--reference-run', str(args.reference_run), '--worker', mode,
+                   '--parent', str(directory), '--task-id', str(task_id)]
+        with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
-        item = {'condition': mode, 'exit_code': code}
-        path = parent / (mode + '.json')
+        item = {'condition': mode, 'task_id': task_id, 'exit_code': code}
+        path = directory / (mode + '.json')
         if path.exists():
             item.update(json.loads(path.read_text()))
         results.append(item)
-        status = 'running' if code == 0 and len(results) < len(args.conditions) else 'completed' if code == 0 else 'stopped_invalid'
-        runner.base._write_json_atomic(parent / 'summary.json', dict(status=status, conditions=results))
+        status = 'running' if code == 0 and len(results) < len(combinations) else 'completed' if code == 0 else 'stopped_invalid'
+        successes = sum(r.get('episode', {}).get('status') == 'success' for r in results)
+        runner.base._write_json_atomic(parent / 'summary.json', dict(status=status, expected=len(combinations),
+                                       successes=successes, conditions=results))
         runner.base._save_run_status(parent, status)
         print(json.dumps(item), flush=True)
         if code:
