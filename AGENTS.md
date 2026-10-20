@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户指定β10，显式CLI增加10（默认仍5）/τ0测试增加10，15定向CPU测试通过。父run M1/20261020T061148.961341Z-rtc-handoff-comparison-92795af5，workerfb7f8806 task0H20N5q5state80固定d8仍220timeout/17.262s/median581.73ms，夹爪指令切12次/碗maxlift0.0077cm，0断供/回退；8形状gate通过/845独立记录检查通过，26后台实际d8。beta10全部请求生效，bootstrap与β5相同、首guided噪声相同/raw差0.00224343。beta2/5/10本任务各一次均超时，不能据此宣布全局最优或公式错误，不自动追加，默认5保留；详细父run/结论.md。
+
 - β2试验已完成：父run M1/20261020T060623.787243Z-rtc-handoff-comparison-fe3a4be3，worker6b5a419f，task0/H20N5q5state80固定d8/估计8仍220timeout/17.322s/median583.42ms，夹爪指令切14次、碗maxlift0.22cm；β5对照切8次/maxlift1.11cm，均未抓稳完成。0断供/图回退，26已提交d均8，845独立检查通过；8长度beta2图/eager输出与VJP全0；所有requests beta2，bootstrap相同，首guided noise相同/raw差0.0480076，确认参数真实生效。未自动追加β1/更多任务，默认仍5，不因两档单次失败宣称公式错。详细父run/结论.md。
 
 - 用户批准同task0固定d8降低β试验，本轮只试β2（H20N5q5state80seed7init0其余不变），不自行扩β1/十任务。原source-step beta写死5，新增可选rtc_beta/diagnostic --beta，默认5不变，step图与eager回退/准备gate均传同β并记录request；legacy完整图禁止非5。14项CPU定向测试通过（含τ0 beta1/2/5逐值对参考及非法值），GPU现场各长度beta2参考/图gate通过后才可执行任务。FlashRT/模型/调度未改，无训练/子agent。
