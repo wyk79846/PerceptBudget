@@ -76,6 +76,95 @@ class SourceStepGraph:
             self.outputs=self._step()
         torch.cuda.synchronize()
 
+    def capture_full(self,pool=None,stream=None):
+        """Capture all num_steps denoising iterations into one graph.
+
+        The per-step sequence is identical to replay(): same author arithmetic,
+        same per-step time upload and conditioning select. Only the Python loop
+        between step replays is removed; each step's kernels are unchanged.
+        Returns the captured graph; self.replay still uses the step graph.
+        """
+        import torch
+        if getattr(self,'full_graph',None) is not None:
+            raise RuntimeError('full graph already captured; duplicate capture is forbidden')
+        stream=stream if stream is not None else torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            for _ in range(2):
+                self.tau.zero_()
+                self._full_run(warm=True)
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
+        self.tau.zero_()
+        graph=torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph,pool=pool,stream=stream),torch.enable_grad():
+            self.full_outputs=self._full_run()
+        torch.cuda.synchronize()
+        self.full_graph=graph
+        return graph
+
+    def _full_run(self,warm=False):
+        """All num_steps iterations; capture-safe (no host reads inside).
+
+        tau advances on-device by 1/num_steps each iteration, matching the
+        author's accumulated flow time exactly; times[k] and conditioning row
+        k are uploaded from host before each step's kernels, same as replay().
+        """
+        import torch
+        steps=self.expert.num_steps
+        norms=[]
+        with torch.enable_grad():
+            x=self.x.detach().requires_grad_(True)
+            for k in range(steps):
+                self.expert.times[0].copy_(self.times[k])
+                if self.condition_cache is not None:
+                    self.condition_cache.select_step(k)
+                velocity=-self.expert.velocity(x,0)
+                clean=x+velocity*(1-self.tau)
+                residual=((self.target-clean)*self.mask).detach()
+                correction,=torch.autograd.grad(clean,x,grad_outputs=residual)
+                inv_r2=(self.tau**2+(1-self.tau)**2)/((1-self.tau)**2)
+                c=torch.nan_to_num((1-self.tau)/self.tau,posinf=self.beta_value)
+                gain=torch.minimum(c*inv_r2,self.beta)
+                updated=(x+(1/self.expert.num_steps)*(velocity+gain*correction)).detach()
+                norms.append(correction.norm())
+                if k+1<steps:
+                    x=updated.requires_grad_(True)
+                else:
+                    x=updated
+                self.tau.add_(1/self.expert.num_steps)
+            if warm:
+                return None
+        return x.detach(),torch.stack(norms)
+
+    def replay_full(self,noise,previous,delay,executed,*,trace=None):
+        """Replay the whole-denoising graph; one launch for all steps."""
+        import torch
+        if getattr(self,'full_graph',None) is None:
+            raise RuntimeError('full graph not captured')
+        h=self.expert.horizon
+        if not 0<=delay<=h-executed or previous.shape!=(h-executed,32):
+            raise ValueError('invalid source-step RTC overlap')
+        if tuple(x.data_ptr() for x in (self.expert.keys,self.expert.values,self.expert.prefix_mask))!=self.binding:
+            raise RuntimeError('source-step context replaced')
+        if noise.shape!=self.x.shape:
+            raise ValueError('invalid source-step noise shape')
+        i=torch.arange(h,device=noise.device,dtype=torch.float32)
+        end=h-executed
+        start=torch.minimum(torch.tensor(delay,device=noise.device),torch.tensor(end,device=noise.device))
+        weights=((start-1-i)/(end-start+1)+1).clamp(0,1)
+        weights=torch.where(i>=end,0,weights*torch.expm1(weights)/(math.e-1))[:,None]
+        with torch.no_grad():
+            self.x.copy_(noise)
+            self.target.zero_();self.target[:len(previous)].copy_(previous)
+            self.mask.copy_(weights);self.tau.zero_()
+            self.full_graph.replay()
+        if trace is not None:
+            # Full-graph mode cannot emit per-step traces; caller must use the
+            # step graph for per-step records. Refuse silently reduced records.
+            raise ValueError('per-step trace requires the single-step graph')
+        raw,norms=self.full_outputs
+        return raw.clone(),norms.clone()
     def _step(self):
         import torch
         with torch.enable_grad():

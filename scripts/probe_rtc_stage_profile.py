@@ -297,6 +297,80 @@ def run_once(config, gate, run, args):
             times.append((time.monotonic() - started) * 1000)
         split[name] = summarize(times[2:])
         print('%s median=%.2fms' % (name, split[name]['median']), flush=True)
+    # Whole-denoising graph candidate: one capture for all 5 steps, then
+    # parity-check against the step-graph path on the exact same inputs.
+    whole_parity = {}
+    try:
+        started = time.monotonic()
+        step_graph.capture_full()
+        capture_seconds = time.monotonic() - started
+        times = []
+        raw_whole = None
+        for rep in range(10):
+            torch.cuda.synchronize()
+            started = time.monotonic()
+            raw_whole, norms_whole = step_graph.replay_full(
+                noise, previous_t, args.delay, args.executed)
+            torch.cuda.synchronize()
+            times.append((time.monotonic() - started) * 1000)
+        split['whole_denoise_replay'] = summarize(times[2:])
+        raw_step, norms_step = step_graph.replay(noise, previous_t, args.delay, args.executed)
+        whole_parity = dict(
+            capture_seconds=capture_seconds,
+            raw_max_abs=float((raw_whole - raw_step).abs().max()),
+            vjp_norm_max_abs=float((norms_whole - norms_step).abs().max()),
+            limitation='same step kernels, Python inter-step loop removed; parity vs step graph on identical inputs')
+        print('whole_denoise_replay median=%.2fms raw_diff=%g norm_diff=%g' % (
+            split['whole_denoise_replay']['median'],
+            whole_parity['raw_max_abs'], whole_parity['vjp_norm_max_abs']), flush=True)
+    except BaseException as exc:
+        whole_parity = dict(error=f'{type(exc).__name__}: {exc}')
+        print('whole graph failed: %r' % exc, flush=True)
+    # Forward-only whole graph: how much of the 5 steps is backward/VJP?
+    try:
+        fwd_graph = torch.cuda.CUDAGraph()
+        fwd_x = torch.zeros_like(noise)
+        steps = config['N']
+
+        def fwd_run():
+            with torch.no_grad():
+                x = fwd_x
+                for step in range(steps):
+                    x = x - bound.velocity(x, step) / steps
+                return x.detach()
+
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(2):
+                fwd_x.copy_(noise); fwd_run()
+        torch.cuda.current_stream().wait_stream(side)
+        torch.cuda.synchronize()
+        with torch.cuda.graph(fwd_graph, stream=side):
+            fwd_out = fwd_run()
+        torch.cuda.synchronize()
+        times = []
+        for rep in range(10):
+            torch.cuda.synchronize()
+            started = time.monotonic()
+            with torch.no_grad():
+                fwd_x.copy_(noise)
+            fwd_graph.replay()
+            torch.cuda.synchronize()
+            times.append((time.monotonic() - started) * 1000)
+        split['forward_only_graph'] = summarize(times[2:])
+        # Parity: same arithmetic as bootstrap (no guidance) path.
+        eager_x = noise.clone()
+        with torch.no_grad():
+            for step in range(steps):
+                eager_x = eager_x - bound.velocity(eager_x, step) / steps
+        fwd_parity = float((fwd_out - eager_x).abs().max())
+        print('forward_only_graph median=%.2fms parity=%g' % (
+            split['forward_only_graph']['median'], fwd_parity), flush=True)
+        whole_parity['forward_only_parity'] = fwd_parity
+    except BaseException as exc:
+        whole_parity['forward_only_error'] = f'{type(exc).__name__}: {exc}'
+        print('forward-only graph failed: %r' % exc, flush=True)
     expert_profile = {}
     if args.profile_expert > 0:
         import torch.profiler
