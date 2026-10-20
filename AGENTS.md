@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户固定d5 LeRobot54558bf7已160success/38.732s/1263ms/0断供，30交接d/actual/crop全5。与我方5384eecc初始图/before/noise全同，bootstrap未RTC已有raw.00374055差。后用户ok授权同KV核对：新增audit_rtc_lerobot，c620bb7f用同冻结原expert/三KV570563557、实际参考noise/previous、d=s5，逐同输入velocity差0，但LeRobot修正等于自身weightederror、相对fullVJP差.399–.402，最终raw差.241–.246，非FlashRT浮点误差。官方v0.4.4 RTC先算velocity再requires_grad输入，丢velocity-input Jacobian；CPU非线性解析测试确认。作者原函数体窄Torch桥（非JAX）在同3case五步input/velocity/clean/error/VJP/output/raw与我们源顺序参考差0。未改任一边算法，不把这个版本当fullRTC数值基准；也不证明我方真实异步调度正确/谁成功率高。新环境CPU3测试过。详见LEROBOT_RTC_COMPARISON.md最后一节，原始GPU差异run533ffccf保留。
+
 - 用户接下来亲自跑LeRobot固定d5对照：eval_lerobot_rtc.py新增--controlled-delay-five，提前完成不早提交，执行5旧步后future.result暂停仿真，裁5步并assert consumed5；原actual模式仍不阻塞。此模式output feature配置32保留全raw32旧目标（执行仍7），避免把旧output7补零差异误认为公式错误；原生模型/RTC源码不改，noise显式保存、bootstrap及请求raw/previous/token保存。prediction_ready两项CPU测试通过，未运行此新模式GPU。给用户独立venv+guarded_run命令即可，跑后再分析；不要冒称真实异步或已通过成功率对照。
 
 - 2026-10-20用户授权配置LeRobot并同任务试：独立venv /home/wyk/venvs/perceptbudget-lerobot约437MiB，.pth只读继承lutvla GPU库，原环境Torch2.7/TF4.53.2未变。/workspace/lerobot从原main146d847切到官方v0.4.4 8fff0fd（main需Py3.12），源码干净；新env官方TFfork dcddb970/4.53.3。新增eval_lerobot_rtc.py直接原生PI05/RTC/ActionQueue，外接LIBERO/低内存strict813项/本地SP80/state8/同动作适配，不是官方全管线CLI。5254a8ed加载及两次推理通过；a16ac148 task2H25N5q5seed7init0真实异步220timeout，median1543.28ms，官方例子ceil(wall/.05)=32–33>H25，新队列全裁空，25–219共195步断供，首次后台实际25控制步但旧队列只余20。不能当LeRobot动作质量失败/成功率/14秒速度优势；未改FlashRT和LeRobot核心源码，无OOM。详见LEROBOT_RTC_COMPARISON.md。未扩H或改官方延迟时基，等用户选择有效对照方案。环境只配推理链，未宣称全部extras/pipcheck绿色。

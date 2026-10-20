@@ -69,3 +69,39 @@ cd /home/wyk/workspace/PerceptBudget
 没有修改上游RTC公式、模型或权重。记录bootstrap、每轮noise/previous/raw/token
 及控制/图像，供后续固定输入核对；闭环成败差异本身不等于算法错误。
 等待策略两项CPU单测通过，尚未执行该模式GPU回合，不声称已成功。
+
+## 用户执行的固定d5与后续同KV核对
+
+用户run `M1/20261020T032725.551115Z-lerobot-rtc-54558bf7`：160步success，
+38.732秒、推理中位1263.02ms，0断供；30次已提交请求的预测延迟/实际消费/裁切
+均为5。我们的缓存图参考5384eecc为124步success/14.589秒/551.49ms。
+初始画面、完整before场景和bootstrap噪声全同，但尚未RTC的bootstrap raw
+已最大差0.00374055；不能仅按闭环差异判断RTC实现。
+
+为进一步排除encoder，`scripts/audit_rtc_lerobot.py`在**同一个冻结原始专家**上
+向两套RTC提供相同KV、noise、previous，H25/N5/d5/s5；只调用LeRobot原模块，
+没有调用FlashRT encoder，也没有修改上游源码。三组有效长度570/563/557。
+最终证据：`M1/20261020T033514.839857Z-rtc-lerobot-fixed-kv-c620bb7f`；
+初轮533ffccf也保留。
+
+- 每个同输入去噪步的模型velocity差全0；mask最大差约5.96e-8，
+  clean/error差约1e-7级，属于次要浮点运算顺序差异。
+- LeRobot修正量与它自己的weighted error逐值同；与作者完整VJP修正
+  最大差约0.399–0.402。完整五步raw最大差0.24626/0.24241/0.24148。
+  **因此不是仅FlashRT算子选择或BF16舍入差异。**
+- 此官方v0.4.4的`RTCProcessor.denoise_step`先调用速度场，再执行
+  `x_t.requires_grad_(True)`，速度场计算没有输入梯度路径；之后对
+  `x_t - time*v_t`求输入梯度，只保留identity项。因此该版本的表现
+  等价于忽略速度场输入雅可比，而非作者完整输入VJP。
+- `test_lerobot_guidance_behavior.py`以v(x)=0.1*x²、time=0.5做CPU解析对照，
+  完整修正应为error*(1-0.1*x)，原模块返回error；CPU小例子通过。
+  联同控制等待测试在独立环境3项通过。该测试是行为刻画，不是替换算法。
+- 同时执行作者原函数体经既有窄Torch桥接器的对照（非JAX/XLA）：三组
+  每步input/velocity/clean/error/VJP/output及最终raw与我们的源顺序参考差全0。
+  证明边界是这三组共享专家/KV输入，不是独立官方encoder或所有任务等价证明。
+
+结论：不能把当前LeRobot版本当作与作者完整RTC数值等价的标准；
+也不应仅因LeRobot这一次成功便把项目的完整梯度改成其行为。
+此结果只定位去噪引导差异，**不证明项目真实异步调度无问题**，
+也不能由单次闭环结果判断完整VJP或identity修正谁成功率更高。
+本轮只核对，没有修改任何一边的推理、调度或上游算法。
