@@ -55,10 +55,11 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5.):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
     config['rtc_beta'] = beta
+    config['candidate_q'] = [q]
     config['screen']['task_ids'] = [task_id]
     if task_id != 2:
         config['diagnostic_prefix_bank'] = 'initial valid length minus3 through plus4; unseen lengths use slow reference'
@@ -95,7 +96,7 @@ def worker(reference_run, mode, parent, task_id=2, beta=5.):
                 result['scope'] = 'synchronous original expert, no RTC; simulation waits for every inference'
             if mode == 'controlled_d8':
                 result['scope'] = 'fixed eight simulated delay steps; pauses simulation if inference late; not real-time async'
-                req = json.loads((run / 'rtc/q5_requests.json').read_text())
+                req = json.loads((run / f'rtc/q{q}_requests.json').read_text())
                 committed = {c['prediction_id'] for c in result['episode']['commits'][1:]}
                 for request in req:
                     if request['prediction_id'] in committed:
@@ -122,13 +123,15 @@ def main():
     parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
     parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
+    parser.add_argument('--q',type=int,choices=(5,8),default=5,help='minimum control-step interval between inference starts')
     args = parser.parse_args()
     if args.worker:
-        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta)
+        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q)
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
     config['rtc_beta']=args.beta
+    config['candidate_q']=[args.q]
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
@@ -139,7 +142,7 @@ def main():
         command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
                    sys.executable, '-u', str(Path(__file__).resolve()),
                    '--reference-run', str(args.reference_run), '--worker', mode,
-                   '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta)]
+                   '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta),'--q',str(args.q)]
         with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
         item = {'condition': mode, 'task_id': task_id, 'exit_code': code}

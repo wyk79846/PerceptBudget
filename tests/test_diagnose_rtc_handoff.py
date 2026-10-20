@@ -8,6 +8,13 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_worker_forwards_q8_independently_of_delay(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','controlled_d5',
+              '--parent','/tmp/results','--task-id','0','--q','8']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,8)
+
     def test_fixed_eight_is_not_actual_async(self):
         c = diag.configuration({}, 'controlled_d8')
         self.assertEqual(c['controlled_delay_steps'], 8)

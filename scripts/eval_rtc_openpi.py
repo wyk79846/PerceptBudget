@@ -57,6 +57,7 @@ def verify(config, run):
 
 
 def rollout(config, run, gate, task_id):
+    q=config.get('candidate_q',[5])[0]
     import numpy as np
     from perceptbudget.libero_input import load_libero_norm_stats
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
@@ -162,7 +163,7 @@ def rollout(config, run, gate, task_id):
             result.update(status='completed', timing_only=True, episode_started=False,
                           note='same observation/full context + original guided expert; no task success rate')
             return result
-        if 5+initial_delay > config['H']:
+        if q+initial_delay > config['H']:
             adapter.release_graph()
             result.update(status='infeasible_before_episode', reason='measured full latency exceeds available H-s old tail; no clipping or horizon change')
             return result
@@ -173,10 +174,10 @@ def rollout(config, run, gate, task_id):
         torch.cuda.empty_cache()
         mem('before_episode_reset')
         with (directory/'trace.jsonl').open('w') as stream:
-            episode = probe.run_episode(env, task, 5, model, stats, config, np, torch,
+            episode = probe.run_episode(env, task, q, model, stats, config, np, torch,
                 directory, stream, rtc_adapter=adapter, condition='original_openpi_rtc',
                 refresh_policy='latest_due', pending_arm_gain=1.)
-        requests = json.loads((directory/'q5_requests.json').read_text())
+        requests = json.loads((directory/f'q{q}_requests.json').read_text())
         by_id = {r['prediction_id']: r for r in requests}
         audited = 0
         for line in (directory/'trace.jsonl').open():

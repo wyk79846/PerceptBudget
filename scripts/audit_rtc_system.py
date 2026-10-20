@@ -23,7 +23,8 @@ def audit(run):
     cfg=json.loads((run/'run.json').read_text())['config_snapshot']
     stats=json.loads(Path(cfg['norm_stats_path']).read_text())
     stats=stats.get('norm_stats',stats)
-    requests=json.loads((run/'rtc/q5_requests.json').read_text())
+    q=cfg.get('candidate_q',[5])[0]
+    requests=json.loads((run/f'rtc/q{q}_requests.json').read_text())
     events=[json.loads(s) for s in (run/'rtc/trace.jsonl').read_text().splitlines()]
     controls=[r for r in events if r['event']=='control_step']
     commits=[r for r in events if r['event']=='prediction_committed']
@@ -66,7 +67,7 @@ def audit(run):
             s=origin-old['observation_step']
             check('old_target_alignment',solver['executed']==s==g['executed_steps']
                 and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
-            check('next_request_counter_rule',origin==max(old['observation_step']+5,previous['commit_step']),pid)
+            check('next_request_counter_rule',origin==max(old['observation_step']+q,previous['commit_step']),pid)
             check('no_overlapping_inference',request['inference_started_monotonic']>=old['inference_ended_monotonic'],pid)
             check('guidance_delay_matches_solver',solver['delay']==g['delay_estimate_steps'],pid)
             if cfg.get('rtc_paper_schedule'):
