@@ -41,6 +41,14 @@ def load_model(config):
     if not pipe._force_bf16 or any((pipe._fp8_weights, pipe._int8_weights,
                                   pipe._use_int8_encoder, pipe._use_int8_vision)):
         raise RuntimeError("Requested full BF16 path did not take effect")
+    if config.get('checkpoint_profile')=='lerobot_h50_quantiles_v044':
+        # Mixed F32/BF16 source conversion can leave freed host arenas resident.
+        # Release only already-unused allocator pages, never weights or GPU data.
+        import gc
+        import ctypes
+        gc.collect()
+        trimmed=ctypes.CDLL(None).malloc_trim(0)
+        print('h50_host_allocator_trim='+str(trimmed),flush=True)
     return VLAModel(pipe, "torch")
 
 

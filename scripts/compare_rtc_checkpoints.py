@@ -31,6 +31,14 @@ def main():
             item=dict(profile=profile,q=q,exit_code=code)
             result=dest/'controlled_d5.json'
             if result.exists(): item.update(json.loads(result.read_text()))
+            if code and item.get('status')!='invalid':
+                item.update(status='invalid',error=f'worker exited {code}; not a task-quality failure')
+                if item.get('run'):
+                    worker_run=Path(item['run'])
+                    record=json.loads((worker_run/'summary.json').read_text())
+                    record.update(status='invalid',error=item['error'])
+                    base._write_json_atomic(worker_run/'summary.json',record)
+                    base._save_run_status(worker_run,'invalid')
             summary['conditions'].append(item)
             summary['status']='stopped_invalid' if code else 'completed' if len(summary['conditions'])==4 else 'running'
             base._write_json_atomic(parent/'summary.json',summary)
