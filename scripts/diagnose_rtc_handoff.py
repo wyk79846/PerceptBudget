@@ -1,0 +1,124 @@
+"""Three one-task diagnostics; original expert shared across all conditions.
+
+The synchronous condition calls bootstrap (no guidance) for every prediction.
+Only this diagnostic's episode call is patched; native warmup is unchanged.
+Each worker is isolated and RAM-guarded. No production defaults are changed.
+"""
+import argparse
+import copy
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from perceptbudget.experiment import create_run
+from scripts import eval_rtc_openpi as runner
+from scripts import probe_delay_buffer as probe
+
+MODES = ('sync_no_rtc', 'controlled_d5', 'actual_est8')
+
+
+def sync_episode(original, *args, **kwargs):
+    adapter = kwargs.pop('rtc_adapter')
+    kwargs.update(synchronous=True, condition='sync_original_expert_no_rtc')
+
+    def infer(model, snapshot, prompt, horizon, request):
+        if horizon != adapter.horizon:
+            raise ValueError('diagnostic horizon mismatch')
+        return adapter.bootstrap(snapshot, prompt, request)
+
+    with patch.object(runner.base, '_infer_actions', infer):
+        return original(*args, **kwargs)
+
+
+def configuration(reference, mode):
+    config = copy.deepcopy(reference)
+    config.pop('controlled_delay_steps', None)
+    config.update(rtc_paper_schedule=mode == 'actual_est8',
+                  rtc_fixed_delay_estimate=8 if mode == 'actual_est8' else None,
+                  explicit_actual_delay_experiment=mode == 'actual_est8',
+                  execution_mode='diagnostic_' + mode,
+                  diagnostic_condition=mode)
+    if mode == 'controlled_d5':
+        config['controlled_delay_steps'] = 5
+    if mode == 'sync_no_rtc':
+        # Preflight only; synchronous episodes have no delay history or guidance.
+        config['rtc_fixed_delay_estimate'] = 0
+    return config
+
+
+def worker(reference_run, mode, parent):
+    reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
+    config = configuration(reference, mode)
+    gate = json.loads((Path(config['verified_reference_run']) / 'summary.json').read_text())
+    if not gate.get('passed') or not gate.get('weights_frozen') or not gate.get('author_order'):
+        raise RuntimeError('requires passed frozen author-order gate')
+    os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0',
+                      PYOPENGL_PLATFORM='egl', CUBLAS_WORKSPACE_CONFIG=':4096:8')
+    with (Path(config['output_root']) / '.async_gpu.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        run = create_run(config, 'M1', 'rtc-diag-' + mode, repo_root=ROOT)
+        print('run_dir=' + str(run), flush=True)
+        (parent / (mode + '.json')).write_text(json.dumps({'run': str(run), 'status': 'running'}))
+        result = {'status': 'invalid'}
+        try:
+            original = probe.run_episode
+            if mode == 'sync_no_rtc':
+                with patch.object(probe, 'run_episode', lambda *a, **k: sync_episode(original, *a, **k)):
+                    result = runner.rollout(config, run, gate, 2)
+                result['scope'] = 'synchronous original expert, no RTC; simulation waits for every inference'
+            else:
+                result = runner.rollout(config, run, gate, 2)
+            result.update(diagnostic_condition=mode, reference_run=str(reference_run))
+            print(json.dumps(result), flush=True)
+            return 0 if result['status'] == 'completed' else 2
+        except BaseException as exc:
+            result.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
+            raise
+        finally:
+            runner.base._write_json_atomic(run / 'summary.json', result)
+            runner.base._save_run_status(run, result['status'])
+            runner.base._write_json_atomic(parent / (mode + '.json'), dict(run=str(run), **result))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--reference-run', type=Path, required=True)
+    parser.add_argument('--worker', choices=MODES)
+    parser.add_argument('--parent', type=Path)
+    args = parser.parse_args()
+    if args.worker:
+        return worker(args.reference_run, args.worker, args.parent)
+    config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
+    if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
+        raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
+    parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
+    print('comparison_dir=' + str(parent), flush=True)
+    results = []
+    for mode in MODES:
+        command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
+                   sys.executable, '-u', str(Path(__file__).resolve()),
+                   '--reference-run', str(args.reference_run), '--worker', mode, '--parent', str(parent)]
+        with (parent / (mode + '.log')).open('w') as log:
+            code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
+        item = {'condition': mode, 'exit_code': code}
+        path = parent / (mode + '.json')
+        if path.exists():
+            item.update(json.loads(path.read_text()))
+        results.append(item)
+        status = 'running' if code == 0 and len(results) < len(MODES) else 'completed' if code == 0 else 'stopped_invalid'
+        runner.base._write_json_atomic(parent / 'summary.json', dict(status=status, conditions=results))
+        runner.base._save_run_status(parent, status)
+        print(json.dumps(item), flush=True)
+        if code:
+            return code
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

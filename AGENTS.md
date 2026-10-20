@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-20 用户授权定位H20/task2视频动作偏差：diagnose_rtc_handoff.py仅单任务三条件（同步无RTC、受控实际d5 RTC、真实异步估计8 RTC），均H20/N5/q5/state80/seed7/init0，同原始expert/作者顺序。同步每轮bootstrap无引导，通过仅episode内临时替换infer保留正式warmup；不改生产调度/FlashRT/β、不训练、不使用子agent。逐worker768MiB保护/共享GPU锁，错误即停。控制延迟组和真实组d不同，不能用三组直接单因素归因；需结合请求/轨迹定位。结果统一独立rtc-handoff-comparison目录，不覆盖视频源cfaef1e3。
+
 - 用户接着询问H20，按上一轮用户亲自执行方式提供命令：保持真实异步/固定估计8/N5q5/state80/task2，显式--allow-horizon-transfer现同时允许H25 gate转H20/H50（仍需现场图/eager门禁）；CLI7测试过，未替用户启动H20。上一H50 de6ca41a为220timeout/629.61ms/actual10–11步/0断供回退等待，两审计过，碗未抬起；不能说单独H导致退化，因为延迟也增加。
 
 - 用户要自行跑H50命令：保留上轮固定引导估计8、真实异步、N5/q5/state80/task2/seed7，仅H25→50。eval_rtc_openpi新增显式--allow-horizon-transfer，只有H50 source-step author-order actual合法，允许H25 gate来源转移；不是H50独立作者body验证，setup仍逐exact长度做图/eager数值门禁，768MiB保护保留。CLI7测试过，尚未运行本次H50 GPU；不得换旧varlen或取消内存保护，等用户执行日志。
