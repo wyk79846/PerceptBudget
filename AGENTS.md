@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户指定q8/固定推理5步，同task0H20N5state80β5seed7init0；rollout及独立审计去q5硬编码、diagnostic增加显式--q（默认5），17定向CPU测过。父run M1/20261020T061740.872011Z-rtc-handoff-comparison-0640bcfc，worker9d2fc1e4：210步success/21.096s/median571.49ms/夹爪指令切5次/0断供与回退；26请求间隔全8，25后台已提交actual5，737记录审计通过。观测8→提交13→下次观测16→提交21，不是commit后执行8步才请求。对照q5d5为198步/23.207s/40请求，本轮27请求，耗时少但动作多，不称成功率或能耗提升。未追加新实验/FlashRT修改，详细父run/结论.md。
+
 - 用户指定β10，显式CLI增加10（默认仍5）/τ0测试增加10，15定向CPU测试通过。父run M1/20261020T061148.961341Z-rtc-handoff-comparison-92795af5，workerfb7f8806 task0H20N5q5state80固定d8仍220timeout/17.262s/median581.73ms，夹爪指令切12次/碗maxlift0.0077cm，0断供/回退；8形状gate通过/845独立记录检查通过，26后台实际d8。beta10全部请求生效，bootstrap与β5相同、首guided噪声相同/raw差0.00224343。beta2/5/10本任务各一次均超时，不能据此宣布全局最优或公式错误，不自动追加，默认5保留；详细父run/结论.md。
 
 - β2试验已完成：父run M1/20261020T060623.787243Z-rtc-handoff-comparison-fe3a4be3，worker6b5a419f，task0/H20N5q5state80固定d8/估计8仍220timeout/17.322s/median583.42ms，夹爪指令切14次、碗maxlift0.22cm；β5对照切8次/maxlift1.11cm，均未抓稳完成。0断供/图回退，26已提交d均8，845独立检查通过；8长度beta2图/eager输出与VJP全0；所有requests beta2，bootstrap相同，首guided noise相同/raw差0.0480076，确认参数真实生效。未自动追加β1/更多任务，默认仍5，不因两档单次失败宣称公式错。详细父run/结论.md。
