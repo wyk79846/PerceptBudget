@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户指定新模型纯异步q5，同task0/H20N5β5state32text200seed7init0。新增actual_history模式，无controlled/fixeddelay，初始d用已匹配c11f6716非暂停tick中位72.269ms与本次warm586.45ms估9，随后10项实际控制步historymax；19定向CPU测过，默认模式不变。父run M1/20261020T075334.633718Z-rtc-handoff-comparison-6898873a，worker3c25c8fa：68步success/5.721s/median631.23ms/实际14.25Hz，夹爪切1次/0断供/回退/controlledwait。后台已提交actual10,10,10,9,8,9；估计9,10,10,10,10,10；观测0,5,15,25,35,44,52,61，提交0,15,25,35,44,52,61，末次terminal未提交不造actual。241独立检查过，bootstrap raw与受控新q5 c11f逐值同。真实异步成功但非20Hz/非总体成功率，旧全局config与FlashRT未改，不自动扩任务。详细父run/结论.md。
+
 - 新旧四组已完成：父run M1/20261020T074138.229989Z-rtc-checkpoint-comparison-7e9b8d6c，H20N5/固定d5/β5/state/seed7init0/task0。h50q5 c11f6716=76success/10.053s/612.10ms/夹爪切1；h50q8 4c1e4010=74success/8.139s/609.71ms/切1；oldq5 a8b66d40=198success/23.098s/561.10ms/切5；oldq8 7522ec44=210success/20.917s/565.22ms/切5。全0断供/回退/初sim差0，2366独立记录检查过，全套365pass10skip178subtests。新模型单次推理略慢但动作效率大幅改善；仅一任务、四条件，不确认全局成功率或唯一训练长度因果。首次e9128d1d在0控制步内存保护701MiB退出已标invalid排除；模型加载后只malloc_trim释放空闲host页，重试全部完成，保护阈值不变。新权重未复制7GB，只名称映射；FlashRT与全局默认未改，不训练/不子agent/不再扩测。详见父run/对照结果.md与MODEL_H50_ADOPTION.md。
 
 - 用户要求新旧模型同task0/H20/q5与8四组RTC对照，沿用固定实际d5/估计5/N5/β5/seed7init0。新增h50_checkpoint显式profile：独立已校验新权重、配套量化分位统计、state正规化后补32/text容量200、float bilinear图像resize、新模型动作不clip/denom无1e-6；旧profile完全保留。source suffix支持model.命名空间，FlashRT本来自动识别无需修改上游。新prefix有效长度上限按双图+200扩至712、每形状仍图/eager门禁；masked第三相机不加入有效KV。26 CPU定向测试及原生LeRobot state/prompt独立CPU核对通过；未宣称原生模型全链路GPU一致。compare_rtc_checkpoints四独立worker顺序h50q5/q8→oldq5/q8，768MiB保护/锁/异常即停，不训练/不切全局默认。
