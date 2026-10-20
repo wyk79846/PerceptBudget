@@ -81,3 +81,22 @@ QKV/RoPE dx) 的 autograd 反向内核。优化候选：
 用户决定：**暂不接入 autotune**（保持 heuristic-first 数值口径），待其他优化
 完成后再评估是否切换（届时可配合 FlashRT 算法表导出接口锁定跨进程一致性）。
 
+## 阶段 2b-1：融合 GeGLU VJP 候选（已证伪，2026-10-20）
+
+按用户授权尝试修改专家侧运算逻辑（保留完整 VJP/步数/权重/精度，同输入对照）。
+实现：`rtc_fused_backward.cu` 新增 tanh-GELU VJP 内核（匹配 gelu_pytorch_tanh），
+`rtc_fused_vjp.py` 打包为 torch.autograd.Function 挂进 AST 后缀的 GemmaMLP。
+验证（run `20261020T104931Z-...-dd72d64f`，同噪声/旧目标/延迟）：
+
+- 单步 GPU：56.1 → 58.9ms（**更慢**：bf16 下逐元素内核带宽开销 > 省下的启动开销）
+- 同输入 raw 差 0.0047 > 1e-4（**parity 不过**：内核以 bf16 舍入 dg/du，autograd
+  原生在 FP32 组合；与 2026-10-18 fused FFN 失败同根因）
+
+结论：GeGLU 融合反向在此硬件/精度组合下被证伪，不接入生产。代码保留供复现。
+专家侧逐值一致的融合空间剩余：adaRMS dx（同样面临 bf16 舍入关，预期同样证伪）、
+attention VJP（历史已证伪 flash 路径）。**bit-exact 约束下专家 ~285ms 已接近下限。**
+
+当前 bit-exact 基线：稳态 663ms = context 370 + 专家 285 + 杂项 ~8。
+达到 400ms 需：autotune（−90，用户押后）+ FlashRT context 内核工作（需另行申请）
+或放宽逐值约束（需用户另行决定）。
+
