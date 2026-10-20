@@ -55,16 +55,19 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
     config['rtc_beta'] = beta
     config['candidate_q'] = [q]
     config['H'] = horizon
     config['rtc_exact_flash_attention'] = bool(exact_flash)
+    config['rtc_suffix_only_vjp'] = bool(suffix_vjp)
     config['rtc_audit_attention_same_input'] = bool(audit_attention)
     if exact_flash:
         config['attention_validation_scope'] = 'same Flash SDPA backend eager/graph gate; not original eager numerical parity'
+    if suffix_vjp:
+        config['attention_validation_scope'] = 'same suffix-only eager VJP backend eager/graph gate; not original VJP numerical parity'
     if checkpoint_profile=='h50':
         from perceptbudget.h50_checkpoint import configure
         configure(config)
@@ -149,10 +152,13 @@ def main():
     parser.add_argument('--horizon',type=int,choices=(10,20,50),default=20,help='explicit action horizon experiment; does not change defaults')
     parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
     parser.add_argument('--exact-flash-attention',action='store_true',help='experimental original expert with exact-context Flash SDPA')
+    parser.add_argument('--suffix-only-vjp',action='store_true',help='experimental eager attention with constant-prefix KV gradient elimination; not combined with Flash SDPA')
     parser.add_argument('--audit-attention-inputs',action='store_true',help='initial same-KV/noise/target comparison before candidate rollout')
     args = parser.parse_args()
-    if args.audit_attention_inputs and not args.exact_flash_attention:
-        parser.error('attention input audit requires --exact-flash-attention')
+    if args.exact_flash_attention and args.suffix_only_vjp:
+        parser.error('attention backends are alternatives; choose only one')
+    if args.audit_attention_inputs and not (args.exact_flash_attention or args.suffix_only_vjp):
+        parser.error('attention input audit requires an explicit candidate backend')
     selected=[args.worker] if args.worker else args.conditions
     delay=max({'sync_no_rtc':0,'controlled_d5':5,'controlled_d8':8,'actual_est8':8,'actual_history':0}[mode] for mode in selected)
     if args.q+delay>args.horizon:
@@ -160,7 +166,8 @@ def main():
     if args.worker:
         return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q,args.horizon,args.checkpoint_profile,
                       **dict((k,v) for k,v in (('exact_flash',args.exact_flash_attention),
-                                              ('audit_attention',args.audit_attention_inputs)) if v))
+                                              ('audit_attention',args.audit_attention_inputs),
+                                              ('suffix_vjp',args.suffix_only_vjp)) if v))
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
@@ -168,6 +175,7 @@ def main():
     config['candidate_q']=[args.q]
     config['H']=args.horizon
     config['rtc_exact_flash_attention']=bool(args.exact_flash_attention)
+    config['rtc_suffix_only_vjp']=bool(args.suffix_only_vjp)
     config['rtc_audit_attention_same_input']=bool(args.audit_attention_inputs)
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
@@ -184,6 +192,8 @@ def main():
         command+=['--checkpoint-profile',args.checkpoint_profile]
         if args.exact_flash_attention:
             command+=['--exact-flash-attention']
+        if args.suffix_only_vjp:
+            command+=['--suffix-only-vjp']
         if args.audit_attention_inputs:
             command+=['--audit-attention-inputs']
         with (directory / (mode + '.log')).open('w') as log:

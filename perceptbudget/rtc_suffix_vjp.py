@@ -4,7 +4,8 @@ Forward operations, softmax and query gradients retain the original eager
 implementation. Only dK/dV GEMMs are restricted to action rows; the prefix is
 detached in OriginalOpenPiExpert. This is NOT permission to omit action VJP.
 Different GEMM shapes can round differently: require a live full-solver gate.
-No production caller enables this module automatically.
+Only an explicit diagnostic flag enables this alternative backend. It does
+not combine with Flash SDPA, which replaces these same matmuls and softmax.
 """
 import torch
 

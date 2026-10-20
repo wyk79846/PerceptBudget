@@ -8,6 +8,19 @@ from scripts import diagnose_rtc_handoff as diag
 
 
 class DiagnosticBatchTests(unittest.TestCase):
+    def test_suffix_only_vjp_is_explicit_and_forwarded_with_audit(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
+              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
+              '--checkpoint-profile','h50','--suffix-only-vjp','--audit-attention-inputs']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',audit_attention=True,suffix_vjp=True)
+
+    def test_attention_backends_cannot_be_silently_stacked(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--exact-flash-attention','--suffix-only-vjp']
+        with patch('sys.argv',argv),self.assertRaises(SystemExit):
+            diag.main()
+
     def test_exact_flash_is_explicit_and_forwarded(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
               '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',

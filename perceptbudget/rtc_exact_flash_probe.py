@@ -45,7 +45,7 @@ def enable_exact_flash_probe(expert):
     return restore
 
 
-def audit_attention_same_input(expert, *, beta=5., seed=20261020):
+def audit_attention_same_input(expert, *, beta=5., seed=20261020, backend='flash'):
     """Initial live KV, identical noise/old target; never consume episode RNG.
 
     Both paths run the full original source-order solver, changing attention
@@ -53,6 +53,8 @@ def audit_attention_same_input(expert, *, beta=5., seed=20261020):
     """
     import torch
     from perceptbudget.openpi_reference import sample_original_rtc
+    if backend not in ('flash','suffix_vjp'):
+        raise ValueError('unknown attention audit backend')
     if expert.horizon < 10:
         raise ValueError('attention audit requires H>=10')
     with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
@@ -65,7 +67,11 @@ def audit_attention_same_input(expert, *, beta=5., seed=20261020):
         for _,old,d,s in cases:
             raw,norms=sample_original_rtc(expert,noise,old,d,s,beta=beta,author_order=True)
             reference.append((raw.clone(),norms))
-        restore=enable_exact_flash_probe(expert)
+        if backend=='flash':
+            restore=enable_exact_flash_probe(expert)
+        else:
+            from perceptbudget.rtc_suffix_vjp import enable_suffix_vjp
+            restore=enable_suffix_vjp(expert)
         records=[]
         try:
             for (name,old,d,s),(raw,norms) in zip(cases,reference):
@@ -84,5 +90,5 @@ def audit_attention_same_input(expert, *, beta=5., seed=20261020):
                     vjp_norm_max_abs=max((abs(a-b) for a,b in zip(norms,actual)),default=0.)))
         finally:
             restore()
-    return dict(seed=seed,records=records,
+    return dict(seed=seed,backend=backend,records=records,
         scope='initial live KV, identical FP32 noise and fixed old target; normalized action error, not physical trajectory error')
