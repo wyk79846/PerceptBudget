@@ -1,5 +1,7 @@
 # 协作规则
 
+- 2026-10-20接手GLM加速后，仅试常量prefix dK/dV裁减（新rtc_suffix_vjp，原attention前向与完整动作VJP）。18db4cd3有效665/实际旧目标3noise逐步全0，专家284.42→258.78ms；但eee5b58a长度662 gate失败，分支0dfc8a9f AV/QK也raw差.00826/.00701。不能交付25.6ms净收益/候选成功率。中间d94dd6ec多图探针触发768MiB保护739.7MiB/125已标invalid，后加逐图回收/逐项落盘复查正常完成。正式入口/rtc_openpi/SourceStepBank试验开关已撤回恢复原样，FlashRT干净，autotune保持用户押后。保留probe显式--suffix-vjp-probe/--requests-only、候选模块与CPU测试，详情RTC_H50_ACCELERATION.md新增节。没有启动M1或候选闭环，不宣称400ms；下一大收益路线需恢复autotune授权或上游修改授权。
+
 - 用户在“只检查M1、不启动整套”后单独要求测试q15，明确按前文新模型H50、同task0真实异步执行一次。显式CLI增加H50/q15，13定向CPU测过。父run M1/20261020T080811.060363Z-rtc-handoff-comparison-024e90bd，workerf7c12c37 H50N5q15β5state32text200seed7init0：76步success/6.173s/median713.72ms/实际14.54Hz，夹爪切1/0断供与图回退与controlledwait；raw50×32，观测0,15,30,45,60,75，已提交actual12,11,9,10，估计10,12,12,12，末次terminal未提交。初始d10由H20匹配模型非暂停period先验72.269ms与H50预热668.13ms得到，随后historymax；205审计通过/8形状门禁过。仅单任务、不宣称稳定20Hz或把相较H20q5的差异单归因q；没有启动M1全套/RTC加速，不训练/不改FlashRT/全局config，不自动扩测。详细父run/结论.md。
 
 - 用户指定新模型纯异步q5，同task0/H20N5β5state32text200seed7init0。新增actual_history模式，无controlled/fixeddelay，初始d用已匹配c11f6716非暂停tick中位72.269ms与本次warm586.45ms估9，随后10项实际控制步historymax；19定向CPU测过，默认模式不变。父run M1/20261020T075334.633718Z-rtc-handoff-comparison-6898873a，worker3c25c8fa：68步success/5.721s/median631.23ms/实际14.25Hz，夹爪切1次/0断供/回退/controlledwait。后台已提交actual10,10,10,9,8,9；估计9,10,10,10,10,10；观测0,5,15,25,35,44,52,61，提交0,15,25,35,44,52,61，末次terminal未提交不造actual。241独立检查过，bootstrap raw与受控新q5 c11f逐值同。真实异步成功但非20Hz/非总体成功率，旧全局config与FlashRT未改，不自动扩任务。详细父run/结论.md。

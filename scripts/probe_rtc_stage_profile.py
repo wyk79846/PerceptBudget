@@ -98,6 +98,10 @@ def main():
                         help='Profile N step-graph replays with torch.profiler after the steady loop')
     parser.add_argument('--gemm-policy', choices=('heuristic-first', 'autotune'), default=None,
                         help='Override native GEMM policy for this measurement run only')
+    parser.add_argument('--suffix-vjp-probe', action='store_true',
+                        help='Compare constant-prefix gradient elimination; probe only, no production change')
+    parser.add_argument('--requests-only', action='store_true',
+                        help='Skip legacy expert split/full-graph experiments after request timing')
     args = parser.parse_args()
     if args.iterations < 5 or args.warmup < 1 or not 0 < args.delay <= 45 \
             or not 0 <= args.executed <= 50 or args.executed + 5 > 50:
@@ -124,6 +128,9 @@ def main():
             dest = run / 'source' / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, dest)
+        if args.suffix_vjp_probe:
+            dest = run / 'source/perceptbudget/rtc_suffix_vjp.py'
+            shutil.copy2(ROOT / 'perceptbudget/rtc_suffix_vjp.py', dest)
         result = dict(status='running', reference_run=str(args.reference_run),
                       iterations=args.iterations, warmup=args.warmup,
                       delay=args.delay, executed=args.executed, seed=args.seed)
@@ -271,6 +278,20 @@ def run_once(config, gate, run, args):
 
     mem('after_steady_loop')
     aggregate_out = aggregate(rows)
+    if args.suffix_vjp_probe or args.requests_only:
+        result = (compare_suffix_vjp_variants(adapter, previous, args, rows[-1]['valid'],run)
+                  if args.suffix_vjp_probe else None)
+        (run / 'stage_rows.json').write_text(json.dumps(rows, indent=1))
+        if result is not None:
+            (run / 'suffix_vjp.json').write_text(json.dumps(result, indent=1))
+        adapter.release_graph()
+        del env, model, adapter
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        return dict(summary=dict(total_ms=aggregate_out['total_ms'], suffix_vjp=result,
+                                 graph_audit=graph_audit),
+                    aggregate=aggregate_out)
     # Forward-only vs full-step split: run the same velocity forward without
     # grad to see how much of the 5x56ms is backward/VJP. Uses the same bound
     # expert/KV as the step graph; pure measurement, no production change.
@@ -423,6 +444,64 @@ def run_once(config, gate, run, args):
     gc.collect()
     torch.cuda.empty_cache()
     return dict(summary=summary, aggregate=aggregate_out)
+
+
+def compare_suffix_vjp_variants(adapter, previous, args, valid, run):
+    """Separate QK and AV to locate shape-dependent BF16 gradient rounding."""
+    import torch
+    from perceptbudget.rtc_source_step_graph import SourceStepGraph
+    from perceptbudget.rtc_suffix_vjp import enable_suffix_vjp
+    import gc
+    results={}
+    for mode in ('av','qk'):
+        records=[]
+        timing={}
+        for length in adapter.step_bank.entries:
+            bound,reference=adapter.step_bank.select(length)
+            torch.cuda.manual_seed(args.seed+length)
+            noise=torch.randn(adapter.horizon,32,device='cuda')
+            restore=enable_suffix_vjp(bound,mode)
+            try:
+                candidate=SourceStepGraph(bound,noise,beta=adapter.beta)
+            finally:
+                restore()
+            cases=[(noise,noise[5:].clone(),5,5)]
+            if length==valid:
+                cases.append((noise,torch.as_tensor(previous,device='cuda'),args.delay,args.executed))
+            for x,old,d,s in cases:
+                a,b=[],[]
+                raw,norms=reference.replay(x,old,d,s,trace=a)
+                raw,norms=raw.clone(),norms.clone()
+                got,gn=candidate.replay(x,old,d,s,trace=b)
+                row=dict(valid=length,mode=mode,delay=d,executed=s,
+                         raw_max_abs=float((got-raw).abs().max()),
+                         norm_max_abs=float((gn-norms).abs().max()),
+                         stages={k:max(float((p[k]-q[k]).abs().max()) for p,q in zip(a,b)) for k in a[0]})
+                records.append(row)
+                (run/'suffix_vjp_partial.json').write_text(json.dumps(dict(completed=results,current=dict(mode=mode,records=records)),indent=1))
+                print('suffix_variant='+json.dumps(row),flush=True)
+                del a,b
+            failed=any(max(r['raw_max_abs'],r['norm_max_abs'],*r['stages'].values())>=1e-4 for r in records)
+            if length==valid:
+                times={'reference':[],'candidate':[]}
+                for rep in range(8):
+                    order=(('reference',reference),('candidate',candidate))
+                    for name,graph in (order if rep%2==0 else reversed(order)):
+                        torch.cuda.synchronize();start=time.monotonic()
+                        graph.replay(x,old,d,s)
+                        torch.cuda.synchronize()
+                        if rep>=2: times[name].append((time.monotonic()-start)*1000)
+                timing={k:summarize(v) for k,v in times.items()}
+                del graph,order
+            del candidate,raw,norms,got,gn,cases,x,old
+            gc.collect()
+            torch.cuda.empty_cache()
+            if failed:
+                break
+        results[mode]=dict(records=records,timing_ms=timing,
+            passed=all(max(r['raw_max_abs'],r['norm_max_abs'],*r['stages'].values())<1e-4 for r in records))
+        print('suffix_variant_summary='+json.dumps(dict(mode=mode,passed=results[mode]['passed'],timing_ms=timing)),flush=True)
+    return results
 
 
 if __name__ == '__main__':

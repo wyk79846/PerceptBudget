@@ -100,3 +100,44 @@ attention VJP（历史已证伪 flash 路径）。**bit-exact 约束下专家 ~2
 达到 400ms 需：autotune（−90，用户押后）+ FlashRT context 内核工作（需另行申请）
 或放宽逐值约束（需用户另行决定）。
 
+## Codex接手：常量前缀KV梯度裁减（2026-10-20）
+
+没有直接接受“专家已经接近下限”的判断，新增项目侧候选
+`perceptbudget/rtc_suffix_vjp.py`，通过原始eager attention前向，只计算动作部分的
+dK/dV；常量前缀的梯度最终本就被丢弃。保留对动作输入的完整VJP，不是RTC近似。
+候选改变反向GEMM形状，数学等价不代表BF16实现逐值等价，因此必须扩展检查。
+
+证据均在输出根目录的M1下：
+
+| run后缀（完整目录以时间+rtc-stage-profile-h50命名） | 结果 |
+|---|---|
+| `20261020T110451.148448Z-…-18db4cd3` | 同有效长度665、实际旧目标，3组噪声的5步input/velocity/clean/error/VJP/output全0差；专家284.42→258.78ms，10次交错稳态样本。完整参考请求中位670.69ms，**没有候选完整请求成绩**。 |
+| `20261020T110707.084996Z-…-eee5b58a` | 候选接入图准备时，长度662的raw差0.00498、norm差0.00543，门禁拒绝，未开始候选请求计时。 |
+| `20261020T110905.234186Z-…-d94dd6ec` | QK分支检查发现长度662不等；后续多图探针触发768MiB保护（实测739.7MiB），exit125，标无效，不算策略失败。 |
+| `20261020T111104.407781Z-…-0dfc8a9f` | 加逐图GC/缓存回收及逐项落盘；AV、QK单独在长度662仍分别raw差0.00826/0.00701，均未通过，首个失败即停止该分支；正常退出。 |
+
+**结论：局部确实能省约25.6ms，但不能作为通用保真加速交付。** 尚未定位具体
+底层数值内核，不把差异直接归因于某一种cuBLAS算法，也不靠放宽门禁宣称成功。
+未进行候选闭环任务；所有成功率及400ms目标均无新增结论。
+
+为保持主线清晰，已撤回本轮试加的正式入口/适配器/图银行开关，这些文件恢复接手时
+的内容，FlashRT未改。只保留候选模块、CPU解析对照及原探针的两个显式选项：
+`--suffix-vjp-probe`（分支诊断）和 `--requests-only`（跳过其他专家探针）。
+原生产默认仍是原始源顺序专家、heuristic-first及完整VJP。
+
+最终CPU回归：371 passed、10 skipped、178 subtests passed；GPU候选检查单独按上述
+原始run报告，不能把CPU通过等同候选GPU数值通过。
+
+复现分支诊断（需同机GPU；内存保护和互斥锁保留）：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python scripts/guarded_run.py -- \
+  /home/wyk/venvs/lutvla/bin/python -u scripts/probe_rtc_stage_profile.py \
+  --iterations 5 --warmup 1 --eager-reps 0 --suffix-vjp-probe
+```
+
+下一条已知有明显延迟收益的路径仍是此前押后的autotune；需要先获准恢复该实验，
+完成数值和闭环质量对照，再决定是否采用，不自动替换。约90ms是既有固定输入
+测量，不是保证的新闭环收益；不声称启用后即可达到400ms。
+
