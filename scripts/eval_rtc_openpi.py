@@ -127,6 +127,7 @@ def rollout(config, run, gate, task_id):
                       simulation_optimization=False,
                       experimental_attention_not_original_parity=bool(config.get('experimental_original_varlen') or config.get('rtc_exact_flash_attention')),
                       attention_backend='experimental_flash_exact' if config.get('rtc_exact_flash_attention') else 'reference_default',
+                      attention_same_input_audit=getattr(adapter,'attention_same_input_audit',None),
                       scope=('fixed-observation full-request timing; no async episode' if config.get('original_timing_only')
                              else 'fixed five simulated delay steps; pauses simulation if inference late; not real-time async' if config.get('controlled_delay_steps') == 5
                              else 'actual-delay async, no fixed simulation wait; actual Hz measured'))

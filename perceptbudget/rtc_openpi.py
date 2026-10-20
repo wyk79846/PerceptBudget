@@ -113,7 +113,9 @@ class OriginalOpenPiRTCAdapter:
             use_graph = self._select_expert(valid)
         self.expert.refresh_context(pl.attn.enc_K, pl.attn.enc_V, valid)
         if self.config.get('rtc_exact_flash_attention') and self._exact_flash_restore is None:
-            from perceptbudget.rtc_exact_flash_probe import enable_exact_flash_probe
+            from perceptbudget.rtc_exact_flash_probe import enable_exact_flash_probe, audit_attention_same_input
+            if self.config.get('rtc_audit_attention_same_input'):
+                self.attention_same_input_audit=audit_attention_same_input(self.expert,beta=self.beta)
             self._exact_flash_restore = enable_exact_flash_probe(self.expert)
         if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
             from perceptbudget.openpi_varlen import enable_varlen_attention

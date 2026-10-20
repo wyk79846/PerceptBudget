@@ -66,3 +66,21 @@ def test_exact_flash_probe_preserves_order_and_requests_full_attention(monkeypat
     assert seen['key'] is k and seen['value'] is v
     assert seen['enable_gqa'] and not seen['is_causal'] and seen['dropout_p']==0
     assert out.shape==(1,3,2,8)
+
+
+def test_same_input_audit_preserves_rng_and_uses_full_solver(monkeypatch):
+    import torch
+    from types import SimpleNamespace
+    from perceptbudget import rtc_exact_flash_probe as probe
+    original_fork=torch.random.fork_rng
+    monkeypatch.setattr(torch.cuda,'current_device',lambda:0)
+    monkeypatch.setattr(torch.random,'fork_rng',lambda devices:original_fork(devices=[]))
+    restored=[]
+    monkeypatch.setattr(probe,'enable_exact_flash_probe',lambda expert:lambda:restored.append(True))
+    expert=SimpleNamespace(horizon=10,num_steps=1,device='cpu',velocity=lambda x,k:.1*x)
+    before=torch.random.get_rng_state().clone()
+    result=probe.audit_attention_same_input(expert)
+    assert torch.equal(before,torch.random.get_rng_state())
+    assert restored==[True]
+    assert [r['case'] for r in result['records']]==['bootstrap','guided']
+    assert all(r['raw32']['max_abs']==0 for r in result['records'])
