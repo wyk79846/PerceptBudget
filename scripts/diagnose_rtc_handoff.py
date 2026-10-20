@@ -55,9 +55,11 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False, fused_norm=False, audit_norm=False):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False, fused_norm=False, audit_norm=False, gemm_policy=None):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
+    if gemm_policy is not None:
+        config['native_gemm_policy']=gemm_policy
     config['rtc_beta'] = beta
     config['candidate_q'] = [q]
     config['H'] = horizon
@@ -153,6 +155,8 @@ def main():
     parser.add_argument('--q',type=int,choices=(5,8,15),default=5,help='minimum control-step interval between inference starts')
     parser.add_argument('--horizon',type=int,choices=(10,20,50),default=20,help='explicit action horizon experiment; does not change defaults')
     parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
+    parser.add_argument('--gemm-policy',choices=('heuristic-first','autotune'),default=None,
+                        help='explicit native GEMM selection policy; inherited when omitted')
     parser.add_argument('--exact-flash-attention',action='store_true',help='experimental original expert with exact-context Flash SDPA')
     parser.add_argument('--suffix-only-vjp',action='store_true',help='experimental eager attention with constant-prefix KV gradient elimination; not combined with Flash SDPA')
     parser.add_argument('--fused-norm',action='store_true',help='opt-in FP32-style AdaRMS fusion on exact FlashAttention')
@@ -176,11 +180,14 @@ def main():
                       **dict((k,v) for k,v in (('exact_flash',args.exact_flash_attention),
                                               ('audit_attention',args.audit_attention_inputs),
                                               ('suffix_vjp',args.suffix_only_vjp),
-                                              ('fused_norm',args.fused_norm),('audit_norm',args.audit_norm_inputs)) if v))
+                                              ('fused_norm',args.fused_norm),('audit_norm',args.audit_norm_inputs),
+                                              ('gemm_policy',args.gemm_policy)) if v))
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
     config['rtc_beta']=args.beta
+    if args.gemm_policy is not None:
+        config['native_gemm_policy']=args.gemm_policy
     config['candidate_q']=[args.q]
     config['H']=args.horizon
     config['rtc_exact_flash_attention']=bool(args.exact_flash_attention)
@@ -201,6 +208,7 @@ def main():
                    '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta),'--q',str(args.q),
                    '--horizon',str(args.horizon)]
         command+=['--checkpoint-profile',args.checkpoint_profile]
+        if args.gemm_policy is not None:command+=['--gemm-policy',args.gemm_policy]
         if args.exact_flash_attention:
             command+=['--exact-flash-attention']
         if args.suffix_only_vjp:
