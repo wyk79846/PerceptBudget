@@ -5,6 +5,7 @@ Each subprocess is a diagnose parent (which owns guard/GPU locking). This
 module imports only the standard library and never acquires the GPU lock.
 """
 import argparse
+import copy
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -32,6 +33,19 @@ FROZEN = dict(H=50, N=5, seed=7, init_state_index=0, beta=5,
               exact_flash_attention=True, fused_norm=True, gemm_policy='autotune',
               calibrate_control_period=True, calibration_ticks=12,
               suites=SUITES, qs=QS, modes=MODES, ram_floor_mib=768)
+REPAIR_BATCH = '20261020T160525.143512Z-m1-h50-67126d0b'
+REPAIR_FILES = frozenset(('scripts/diagnose_rtc_handoff.py',
+                          'perceptbudget/rtc_source_step_graph.py',
+                          'perceptbudget/rtc_openpi.py', 'scripts/run_m1_h50.py'))
+REPAIR_CELLS = frozenset(key for key in (
+    'libero_spatial_task07_q5_actual_history', 'libero_spatial_task07_q10_actual_history'))
+REPAIR_REASON = ('H50 graph coverage repair: rule h50_state8_tokenizer_bounds_v1; '
+                 'tokenizer exact full range at most 17 lengths, '
+                 'computed from the real task text and tokenizer shortest/longest state prefixes; '
+                 '8 variable state numbers, tokenizer -1..255 uses 2..4 tokens per number '
+                 '(spread 2, total span 16; ketchup bounds 645..661). '
+                 'Explicit max_lengths cap is 17; '
+                 'default bank limit remains 8. No model/solver semantic change.')
 
 
 def read(path):
@@ -90,7 +104,18 @@ def command(cell, reference):
             '--gemm-policy', 'autotune', '--calibrate-control-period']
 
 
-def validate(parent, cell):
+def guided_fallbacks(run, cell):
+    if cell[3] != 'actual_history':
+        return []
+    requests = read(run / f'rtc/q{cell[2]}_requests.json')
+    if not isinstance(requests, list):
+        raise ValueError('invalid requests list')
+    return [r.get('prediction_id') for r in requests
+            if r.get('rtc_guidance', {}).get('guidance_enabled') is True
+            and r['rtc_guidance'].get('variable_length_fallback')]
+
+
+def validate(parent, cell, *, allow_guided_fallback=False):
     """Read small metadata only; return references plus initial-condition hashes."""
     s, t, q, m = cell
     summary = read(parent / 'summary.json')
@@ -150,10 +175,68 @@ def validate(parent, cell):
     for p in (run / 'rtc/trace.jsonl', run / f'rtc/q{q}_requests.json'):
         if not p.is_file() or not p.stat().st_size:
             raise ValueError(f'missing result artifact: {p}')
+    if not allow_guided_fallback and guided_fallbacks(run, cell):
+        raise ValueError('guided variable_length_fallback; refusing slow-path result')
     return dict(run=str(run), outcome=episode['status'], initial_hashes=hashes,
                 metadata_hashes={str(p): sha(p) for p in
                                  (parent / 'summary.json', run / 'summary.json', run / 'run.json',
                                   run / 'control_period_calibration.json')})
+
+
+def migrate_graph_coverage(index, current):
+    """Prepare one explicit migration in memory. Caller backs up before persisting."""
+    if index.get('runtime_repair_epochs'):
+        raise ValueError('graph coverage repair already accepted; new runtime hashes are strict')
+    saved = index['provenance']
+    if any(saved[k] != current[k] for k in ('frozen', 'reference', 'reference_hash')):
+        raise ValueError('repair cannot change frozen model/config/reference')
+    old, new = saved['source_hashes'], current['source_hashes']
+    if old.keys() != new.keys():
+        raise ValueError('repair cannot add/remove runtime files')
+    changed = {p: dict(before=old[p], after=new[p]) for p in old if old[p] != new[p]}
+    if not changed or not set(changed) <= REPAIR_FILES:
+        raise ValueError('repair contains non-permitted runtime hash changes (or no changes)')
+    contaminated = {}
+    initial = {}
+    # Read and verify every completed record before changing any in-memory evidence.
+    for name, record in index['cells'].items():
+        if record.get('status') != 'completed':
+            continue
+        cell = tuple(record['cell'])
+        if key(cell) != name or cell not in cells():
+            raise ValueError('invalid completed cell identity')
+        info = validate(Path(record['parent']), cell, allow_guided_fallback=True)
+        if info != record['result']:
+            raise ValueError('saved result metadata changed during repair')
+        audit_path = Path(record['audit'])
+        if read(audit_path).get('passed') is not True or sha(audit_path) != record['audit_sha256']:
+            raise ValueError('repair requires unchanged passed independent audits')
+        identity = cell[:2]
+        if identity in initial and initial[identity] != info['initial_hashes']:
+            raise ValueError('repair initial-condition mismatch')
+        initial[identity] = info['initial_hashes']
+        fallback = guided_fallbacks(Path(info['run']), cell)
+        if fallback:
+            contaminated[name] = fallback
+    if set(contaminated) != REPAIR_CELLS:
+        raise ValueError('repair requires exactly Spatial7 async q5/q10 fallback cells')
+    migrated = copy.deepcopy(index)
+    epoch = dict(epoch=1, at=datetime.now(timezone.utc).isoformat(), reason=REPAIR_REASON,
+                 source_commit=current['source_commit'], hashdiff=changed,
+                 provenance_before=copy.deepcopy(saved), provenance_after=copy.deepcopy(current),
+                 superseded_cells=sorted(contaminated), guided_fallback_requests=contaminated)
+    migrated['runtime_repair_epochs'] = [epoch]
+    for name in sorted(contaminated):
+        record = migrated['cells'][name]
+        migrated.setdefault('superseded_records', []).append(dict(
+            key=name, reason=REPAIR_REASON, source_epoch=0, superseded_by_epoch=1,
+            record=copy.deepcopy(record)))
+        # Keep attempts and old result references intact until the retry is written.
+        record.update(status='pending', pending_reason=REPAIR_REASON, source_epoch=1)
+    migrated['provenance'] = copy.deepcopy(current)
+    migrated['completed'] = sum(r.get('status') == 'completed' for r in migrated['cells'].values())
+    migrated['status'] = 'graph_coverage_repair_ready'
+    return migrated
 
 
 def independent_audit(run):
@@ -219,6 +302,7 @@ def run_batch(batch, index, reference, *, pilot_only, approved, min_free_gib):
         record = index['cells'].setdefault(name, dict(cell=list(cell), attempts=[]))
         log = batch / f'{name}.attempt{len(record["attempts"]) + 1}.log'
         attempt = dict(log=str(log), command=command(cell, reference), status='running')
+        attempt['source_epoch'] = len(index.get('runtime_repair_epochs', []))
         record['attempts'].append(attempt)
         record['status'] = 'running'
         index['status'] = 'running'
@@ -265,8 +349,16 @@ def main(argv=None):
     parser.add_argument('--resume', type=Path)
     parser.add_argument('--pilot-only', action='store_true')
     parser.add_argument('--pilot-approved', action='store_true')
+    parser.add_argument('--accept-graph-coverage-repair', action='store_true',
+                        help='one-time, allowlisted migration of the interrupted H50 batch')
+    parser.add_argument('--repair-only', action='store_true',
+                        help='persist repair migration and exit without launching subprocesses')
     parser.add_argument('--min-free-gib', type=float, default=10)
     args = parser.parse_args(argv)
+    if args.accept_graph_coverage_repair and not args.resume:
+        parser.error('--accept-graph-coverage-repair requires --resume')
+    if args.repair_only and (not args.accept_graph_coverage_repair or args.pilot_approved):
+        parser.error('--repair-only requires --accept-graph-coverage-repair and excludes --pilot-approved')
     if args.pilot_approved and (not args.resume or args.pilot_only):
         parser.error('--pilot-approved requires --resume and excludes --pilot-only')
     if not math.isfinite(args.min_free_gib) or args.min_free_gib <= 0:
@@ -283,6 +375,22 @@ def main(argv=None):
         current = json.loads(json.dumps(current))
         if args.resume:
             index = read(batch / 'index.json')
+            if args.accept_graph_coverage_repair:
+                if batch.name != REPAIR_BATCH:
+                    raise ValueError('graph coverage repair is scoped to ' + REPAIR_BATCH)
+                migrated = migrate_graph_coverage(index, current)
+                # Unique, exclusive backup of the entire original index, including provenance.
+                backup = batch / ('index.before-graph-coverage-repair-' + uuid.uuid4().hex + '.json')
+                with backup.open('x') as stream:
+                    json.dump(index, stream, indent=2, ensure_ascii=False)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                migrated['runtime_repair_epochs'][-1]['original_index_backup'] = str(backup)
+                write(batch / 'index.json', migrated)
+                index = migrated
+                print('graph_coverage_repair_completed=' + str(index['completed']), flush=True)
+                if args.repair_only:
+                    return 0
             saved = index['provenance']
             if any(saved[k] != current[k] for k in
                    ('source_hashes', 'reference', 'reference_hash', 'frozen')):
