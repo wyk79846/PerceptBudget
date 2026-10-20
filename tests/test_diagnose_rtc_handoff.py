@@ -13,7 +13,14 @@ class DiagnosticBatchTests(unittest.TestCase):
               '--parent','/tmp/results','--task-id','0','--q','8']
         with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
             self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,8)
+        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,8,20)
+
+    def test_h10_q5_d5_is_explicitly_forwarded(self):
+        argv=['diagnostic','--reference-run','/tmp/reference','--worker','controlled_d5',
+              '--parent','/tmp/results','--task-id','0','--q','5','--horizon','10']
+        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
+            self.assertEqual(diag.main(),0)
+        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,5,10)
 
     def test_fixed_eight_is_not_actual_async(self):
         c = diag.configuration({}, 'controlled_d8')

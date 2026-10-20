@@ -55,11 +55,15 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5., q=5):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
     config['rtc_beta'] = beta
     config['candidate_q'] = [q]
+    config['H'] = horizon
+    if horizon != reference['H']:
+        config['reference_horizon_transfer'] = dict(reference_H=25,experiment_H=horizon,
+            limitation='explicit diagnostic horizon change; live exact-length graph/eager gate, not independent author-body horizon validation')
     config['screen']['task_ids'] = [task_id]
     if task_id != 2:
         config['diagnostic_prefix_bank'] = 'initial valid length minus3 through plus4; unseen lengths use slow reference'
@@ -124,14 +128,20 @@ def main():
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
     parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
     parser.add_argument('--q',type=int,choices=(5,8),default=5,help='minimum control-step interval between inference starts')
+    parser.add_argument('--horizon',type=int,choices=(10,20),default=20,help='explicit action horizon experiment; does not change defaults')
     args = parser.parse_args()
+    selected=[args.worker] if args.worker else args.conditions
+    delay=max({'sync_no_rtc':0,'controlled_d5':5,'controlled_d8':8,'actual_est8':8}[mode] for mode in selected)
+    if args.q+delay>args.horizon:
+        parser.error('q plus fixed delay exceeds horizon')
     if args.worker:
-        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q)
+        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q,args.horizon)
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
     config['rtc_beta']=args.beta
     config['candidate_q']=[args.q]
+    config['H']=args.horizon
     parent = create_run(config, 'M1', 'rtc-handoff-comparison', repo_root=ROOT)
     print('comparison_dir=' + str(parent), flush=True)
     results = []
@@ -142,7 +152,8 @@ def main():
         command = [sys.executable, str(ROOT / 'scripts/guarded_run.py'), '--',
                    sys.executable, '-u', str(Path(__file__).resolve()),
                    '--reference-run', str(args.reference_run), '--worker', mode,
-                   '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta),'--q',str(args.q)]
+                   '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta),'--q',str(args.q),
+                   '--horizon',str(args.horizon)]
         with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
         item = {'condition': mode, 'task_id': task_id, 'exit_code': code}
