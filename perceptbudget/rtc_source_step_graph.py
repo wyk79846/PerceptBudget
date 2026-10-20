@@ -136,7 +136,7 @@ class SourceStepBank:
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
         lengths=tuple(sorted(set(lengths)))
-        if not lengths or len(lengths)>8 or any(type(n) is not int or not 1<=n<=592 for n in lengths):
+        if not lengths or len(lengths)>8 or any(type(n) is not int or not 1<=n<=712 for n in lengths):
             raise ValueError('prepare between one and eight exact prefix lengths')
         self.fallback=expert
         self.entries={}

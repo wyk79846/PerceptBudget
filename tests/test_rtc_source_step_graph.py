@@ -45,7 +45,7 @@ def test_step_bank_miss_returns_slow_reference_without_capture():
 
 def test_step_bank_rejects_unbounded_or_invalid_preparation():
     from perceptbudget.rtc_source_step_graph import SourceStepBank
-    for lengths in ([],[0],[593],range(10)):
+    for lengths in ([],[0],[713],range(10)):
         with pytest.raises(ValueError,match='eight exact prefix'):
             SourceStepBank(None,lengths,None)
 

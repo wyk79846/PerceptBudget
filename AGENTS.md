@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求新旧模型同task0/H20/q5与8四组RTC对照，沿用固定实际d5/估计5/N5/β5/seed7init0。新增h50_checkpoint显式profile：独立已校验新权重、配套量化分位统计、state正规化后补32/text容量200、float bilinear图像resize、新模型动作不clip/denom无1e-6；旧profile完全保留。source suffix支持model.命名空间，FlashRT本来自动识别无需修改上游。新prefix有效长度上限按双图+200扩至712、每形状仍图/eager门禁；masked第三相机不加入有效KV。26 CPU定向测试及原生LeRobot state/prompt独立CPU核对通过；未宣称原生模型全链路GPU一致。compare_rtc_checkpoints四独立worker顺序h50q5/q8→oldq5/q8，768MiB保护/锁/异常即停，不训练/不切全局默认。
+
 - 用户选定公开H50成品lerobot/pi05_libero_finetuned_quantiles_v044，固定SHA b6bfb493bc0f21c4ab24d816409ea3cebf5e43bd。独立缓存checkpoints/lerobot_pi05_libero_h50_quantiles_v044，fetch_libero_h50.py固定版本/断点/大小SHA256核对；7小文件已校验，7.47GB模型正在下载，状态manifest为准，不能宣称完成。后台perceptbudget-fetch-libero-h50-proxy-20261020/日志tmp同名不带proxy；初服务无代理已停止，替代进程仅继承终端代理未改系统。已从部分文件头确认新旧均812key、去model.前缀后key/shape相同，仅结构未证数值。新config/train明确H50/state8/QUANTILES，max_state_dim32/text200/emptycam1/N10必须按配套流程核对，不能沿用旧stats/state80。旧checkpoint/config/FlashRT未改，先下载校验→原生同步→项目侧适配对照→RTC，不训练/不子agent/不新增工作区。详见MODEL_H50_ADOPTION.md。
 
 - 用户指定H恢复10/q5试，诊断入口新增显式--horizon10/20默认20及q+d<=H验证，17定向测试通过；同task0/N5/state80/β5/固定d5/seed7init0，父run M1/20261020T063906.796745Z-rtc-handoff-comparison-097c8525，worker7cc61a4b：78步success/9.692s/median571.95ms/夹爪指令切1次，0断供/回退；14已提交后台d5，每次旧队列刚耗尽，385审计过，8长度图/eager门禁过。与H20d5/198步23.207s切5次相比动作效率明显改善，初sim/modelstate差0；H变noise/raw shape不同，不声称bootstrap同。仅一例，H10同时改变预测分布/软重叠尾段，不能唯一因果归因或宣称十任务成功率；仍受控等待非真实20Hz/250ms，未自动扩测/切全局H/改FlashRT。详细父run/结论.md。

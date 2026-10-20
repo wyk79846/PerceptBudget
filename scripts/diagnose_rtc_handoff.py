@@ -55,12 +55,15 @@ def configuration(reference, mode):
     return config
 
 
-def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20):
+def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old'):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
     config = configuration(reference, mode)
     config['rtc_beta'] = beta
     config['candidate_q'] = [q]
     config['H'] = horizon
+    if checkpoint_profile=='h50':
+        from perceptbudget.h50_checkpoint import configure
+        configure(config)
     if horizon != reference['H']:
         config['reference_horizon_transfer'] = dict(reference_H=25,experiment_H=horizon,
             limitation='explicit diagnostic horizon change; live exact-length graph/eager gate, not independent author-body horizon validation')
@@ -85,13 +88,13 @@ def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20):
 
             def prepare_for_task(adapter, lengths):
                 valid = int(adapter.expert.prefix_mask.shape[1])
-                exact = list(range(max(1, valid-3), min(592, valid+4)+1))
+                exact = list(range(max(1, valid-3), min(712, valid+4)+1))
                 adapter.config['source_step_prefixes'] = exact
                 return prepare(adapter, exact)
 
             original = probe.run_episode
             with ExitStack() as stack:
-                if task_id != 2:
+                if task_id != 2 or checkpoint_profile=='h50':
                     stack.enter_context(patch.object(OriginalOpenPiRTCAdapter, 'prepare_step_bank', prepare_for_task))
                 if mode == 'sync_no_rtc':
                     stack.enter_context(patch.object(probe, 'run_episode', lambda *a, **k: sync_episode(original, *a, **k)))
@@ -129,13 +132,14 @@ def main():
     parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
     parser.add_argument('--q',type=int,choices=(5,8),default=5,help='minimum control-step interval between inference starts')
     parser.add_argument('--horizon',type=int,choices=(10,20),default=20,help='explicit action horizon experiment; does not change defaults')
+    parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
     args = parser.parse_args()
     selected=[args.worker] if args.worker else args.conditions
     delay=max({'sync_no_rtc':0,'controlled_d5':5,'controlled_d8':8,'actual_est8':8}[mode] for mode in selected)
     if args.q+delay>args.horizon:
         parser.error('q plus fixed delay exceeds horizon')
     if args.worker:
-        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q,args.horizon)
+        return worker(args.reference_run, args.worker, args.parent, args.task_id,args.beta,args.q,args.horizon,args.checkpoint_profile)
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
@@ -154,6 +158,7 @@ def main():
                    '--reference-run', str(args.reference_run), '--worker', mode,
                    '--parent', str(directory), '--task-id', str(task_id),'--beta',str(args.beta),'--q',str(args.q),
                    '--horizon',str(args.horizon)]
+        command+=['--checkpoint-profile',args.checkpoint_profile]
         with (directory / (mode + '.log')).open('w') as log:
             code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
         item = {'condition': mode, 'task_id': task_id, 'exit_code': code}

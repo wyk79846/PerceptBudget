@@ -63,6 +63,15 @@ def load_original_suffix(config, horizon, device='cuda'):
     bridge.gemma_expert.model = gemma
     suffix.paligemma_with_expert = bridge
     with safe_open(config['model_path'], framework='pt', device='cpu') as checkpoint:
+        if config.get('checkpoint_key_prefix'):
+            original_checkpoint=checkpoint
+            namespace=config['checkpoint_key_prefix']
+            class NamespacedCheckpoint:
+                def keys(self):
+                    return [k[len(namespace):] for k in original_checkpoint.keys() if k.startswith(namespace)]
+                def get_tensor(self,key):
+                    return original_checkpoint.get_tensor(namespace+key)
+            checkpoint=NamespacedCheckpoint()
         prefix = 'paligemma_with_expert.gemma_expert.model.'
         weights = {k[len(prefix):]: checkpoint.get_tensor(k).to(device=device,
             dtype=torch.float32 if 'layernorm' in k or '.model.norm.' in k else torch.bfloat16)

@@ -8,8 +8,15 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 
-def decode_raw(raw,stats):
+def decode_raw(raw,stats,profile=None):
     import numpy as np
+    if profile=='lerobot_h50_quantiles_v044':
+        x=np.asarray(raw,dtype=np.float32)[...,:7]
+        lo=np.asarray(stats['actions']['q01'],dtype=np.float32)
+        hi=np.asarray(stats['actions']['q99'],dtype=np.float32)
+        delta=hi-lo
+        delta=np.where(delta==0,np.float32(1e-8),delta)
+        return (x+1)*delta/2+lo
     x=np.clip(np.asarray(raw,dtype=np.float32),-1,1)
     low=np.asarray(stats['actions']['q01'],dtype=np.float32)
     high=np.asarray(stats['actions']['q99'],dtype=np.float32)
@@ -52,12 +59,18 @@ def audit(run):
               and np.isfinite(request['actions_raw']).all(),pid)
         check('finite_noise32',np.asarray(solver['noise']).shape==(cfg['H'],32)
               and np.isfinite(solver['noise']).all(),pid)
-        check('action_postprocessing',eq(decode_raw(request['actions_raw'],stats),request['actions']),pid)
+        check('action_postprocessing',eq(decode_raw(request['actions_raw'],stats,cfg.get('checkpoint_profile')),request['actions']),pid)
         scene=by_step[origin]['before']
         check('observation_raw_state_matches_control',eq(request['observation_raw_state'],scene['raw_state']),pid)
         low=np.asarray(stats['state']['q01'],dtype=np.float32)
         high=np.asarray(stats['state']['q99'],dtype=np.float32)
-        normalized=(np.asarray(scene['raw_state'],dtype=np.float32)-low)/(high-low+1e-6)*2-1
+        if cfg.get('checkpoint_profile')=='lerobot_h50_quantiles_v044':
+            delta=high-low
+            delta=np.where(delta==0,np.float32(1e-8),delta)
+            normalized=2*(np.asarray(scene['raw_state'],dtype=np.float32)-low)/delta-1
+            normalized=np.pad(normalized,(0,32-len(normalized)))
+        else:
+            normalized=(np.asarray(scene['raw_state'],dtype=np.float32)-low)/(high-low+1e-6)*2-1
         check('state_normalization',eq(request['model_state'],normalized),pid)
         check('input_timestamp_order',request['observation_monotonic']<=request['input_ready_monotonic']
             <=request['inference_started_monotonic']<=request['inference_ended_monotonic']<=request['ready_monotonic'],pid)

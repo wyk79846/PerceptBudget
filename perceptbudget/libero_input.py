@@ -119,6 +119,13 @@ def prepare_libero_observation(observation, norm_stats, *, state_enabled):
     false and pi05 has no continuous state projection).
     """
     raw_state = raw_libero_state(observation)
+    if norm_stats.get('_profile')=='lerobot_h50_quantiles_v044':
+        from perceptbudget.h50_checkpoint import image_input,normalize_state
+        result={'images':[image_input(observation[k]) for k in ('agentview_image','robot0_eye_in_hand_image')],
+                'raw_state':raw_state}
+        if state_enabled:
+            result['state']=normalize_state(raw_state,norm_stats)
+        return result
     try:
         images = [
             _rotate_resize(observation["agentview_image"]),

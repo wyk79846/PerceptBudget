@@ -145,7 +145,11 @@ class OriginalOpenPiRTCAdapter:
             attention_backend='experimental_flash_varlen' if self.config.get('experimental_original_varlen') else 'original_eager',
             state_in_prompt=snapshot.get('state') is not None))
         request['rtc_guidance']['author_source_order']=self.config.get('rtc_author_order',False)
-        actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
+        if self.config.get('checkpoint_profile')=='lerobot_h50_quantiles_v044':
+            from perceptbudget.h50_checkpoint import decode_actions
+            actions=decode_actions(raw_actions,pipe.norm_stats)
+        else:
+            actions = unnormalize_actions(raw_actions, pipe.norm_stats)[:, :7]
         request['inference_ended_monotonic'] = time.monotonic()
         self.latency_estimate_seconds = request['inference_ended_monotonic']-request['inference_started_monotonic']
         return actions
