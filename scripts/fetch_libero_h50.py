@@ -29,7 +29,7 @@ def main():
 
     save()
     try:
-        info = HfApi().model_info(MODEL, revision=REVISION, files_metadata=True)
+        info = HfApi(token=False).model_info(MODEL, revision=REVISION, files_metadata=True, timeout=30)
         if info.sha != REVISION:
             raise RuntimeError('Hub revision mismatch')
         files = sorted((f for f in info.siblings if f.rfilename != '.gitattributes'),
@@ -39,7 +39,7 @@ def main():
             save()
             print('downloading=' + item.rfilename, flush=True)
             path = Path(hf_hub_download(MODEL, item.rfilename, revision=REVISION,
-                                       local_dir=str(DESTINATION)))
+                                       local_dir=str(DESTINATION), token=False))
             if path.stat().st_size != item.size:
                 raise RuntimeError('File size mismatch: ' + item.rfilename)
             sha = hashlib.sha256()
