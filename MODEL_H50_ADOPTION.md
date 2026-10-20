@@ -17,13 +17,22 @@
 
 下载入口：`scripts/fetch_libero_h50.py`。固定版本，可断点续传，逐文件大小/SHA256核对，状态写缓存中的`download_manifest.json`。后台服务`perceptbudget-fetch-libero-h50-proxy-20261020`，日志`/tmp/perceptbudget-fetch-libero-h50-20261020.log`。
 
-首次服务没有代理、停在元数据阶段，已仅停止该服务并让替代进程继承现有终端代理；没有改变系统代理。小文件已核对，权重大文件下载进行中。检查manifest为`download_verified`才算下载完整；不要由存在incomplete文件宣称完成。
+首次服务没有代理、停在元数据阶段，已仅停止该服务并让替代进程继承现有终端代理；没有改变系统代理。目前8文件全部下载校验完成，manifest为`download_verified`，模型LFS SHA256一致。
 
-## 后续顺序
+## 已完成接入与单任务验证
 
-1. 完成大文件SHA256核对。
-2. 先按配套LeRobot处理流程验证加载、观测和同步单任务，不借用旧归一化统计。
-3. 项目侧权重名映射与输入适配，必要时保存转换来源与校验；不修改FlashRT上游，不新增工作区。
-4. 同观测对照通过后，再做RTC固定延迟，最后才测真实异步。
+- `perceptbudget/h50_checkpoint.py`提供独立profile与配套统计/state/image/action适配；suffix加载器仅映射`model.`键名，无第二份7GB转换权重，无新工作区，不改FlashRT。
+- state正规化后补到32维，text容量200；图像使用float bilinear、不回舍入uint8；第三路相机原本mask=false，项目只保留有效双图；新模型反归一化不clip、不附加旧1e-6。
+- 原生LeRobot state/prompt独立CPU核对通过，当前权重每个exact长度图/eager核对通过；不是原生完整LeRobot模型GPU逐层对齐或H50/N10完整发布设置复现。
+- 四组同task0/H20/N5/β5/固定d5/seed7init0，q5与q8：新模型76步/10.053秒、74步/8.139秒；旧模型198步/23.098秒、210步/20.917秒，全成功，无断供/图回退。新模型单次推理约610–612ms，旧约561–565ms，任务提速来自动作效率而非模型计算更快。
+- 四组初sim逐值同，2366独立记录检查全过。全套365 passed/10 skipped/178 subtests。
+- 新模型首次在0控制步触发768MiB保护，该尝试标记invalid、排除。之后仅释放已空闲CPU分配器页重试成功，阈值不变；不声称全任务内存稳定。
+- 结果：`/home/wyk/workspace/任务产出/perceptbudget/M1/20261020T074138.229989Z-rtc-checkpoint-comparison-7e9b8d6c/对照结果.md`。
 
-旧权重和当前config保留，尚未切换默认模型、尚未运行新权重推理、不训练，不宣称新模型的RTC成功率。
+## 后续建议（尚未执行）
+
+1. 扩展新模型其他Spatial任务，不能从单任务推断成功率。
+2. 需要更强复现结论时，补原生完整模型GPU同观测核对。
+3. 再验证真实异步，不将受控d5成功冒充20Hz实时。
+
+旧权重和全局config保留，尚未切换默认模型，不训练，不宣称新模型的总体RTC成功率或唯一失败根因。
