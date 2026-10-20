@@ -398,6 +398,7 @@ def run_once(config, gate, run, args):
         stages=aggregate_out,
         eager_bootstrap_ms=eager,
         expert_split=split,
+        whole_denoise_parity=whole_parity,
         expert_profile=expert_profile,
         determinism=dict(raw_max_abs_across_iterations=max(
             r['raw_max_diff_vs_first'] for r in rows if not r['warmup']),
