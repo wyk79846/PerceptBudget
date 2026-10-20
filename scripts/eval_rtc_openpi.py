@@ -211,7 +211,7 @@ def main():
     parser.add_argument('--controlled-delay-five',action='store_true',help='Quality-only test with simulation waiting at d=5')
     parser.add_argument('--experimental-varlen',action='store_true',help='Attention-only candidate; not independently original-parity')
     parser.add_argument('--actual-delay',action='store_true',help='Explicit actual-delay async experiment; never pause simulation for inference')
-    parser.add_argument('--author-order-reference',action='store_true',help='Slow original attention/expert and author-source operation order; controlled audit only')
+    parser.add_argument('--author-order-reference',action='store_true',help='Original attention/expert and author-source order; controlled audit or explicit source-step async')
     parser.add_argument('--source-step-prefixes',nargs='+',type=int,help='Opt-in original single-step graphs for up to eight exact lengths; miss falls back slow')
     parser.add_argument('--source-step-profile',type=Path,help='Read this task prefix lengths from a matched slow-batch summary; unseen lengths use slow fallback')
     parser.add_argument('--source-packed-conditioning',action='store_true',help='Opt-in exact fixed-time results with source-step graph bank')
@@ -233,17 +233,19 @@ def main():
             parser.error(str(exc))
     if args.source_packed_conditioning and not args.source_step_prefixes:
         parser.error('--source-packed-conditioning requires source-step-prefixes or profile')
-    if args.source_step_prefixes and (not args.author_order_reference or not args.controlled_delay_five
+    if args.source_step_prefixes and (not args.author_order_reference or not (args.controlled_delay_five or args.actual_delay)
             or len(set(args.source_step_prefixes))>8 or any(not 1<=n<=592 for n in args.source_step_prefixes)):
-        parser.error('--source-step-prefixes requires author-order-reference controlled-delay-five and at most eight lengths')
-    if args.author_order_reference and (not args.controlled_delay_five or args.cuda_graph or args.experimental_varlen or args.actual_delay or args.verify_only):
-        parser.error('--author-order-reference requires controlled-delay-five and forbids acceleration/actual-delay/verify')
+        parser.error('--source-step-prefixes requires author-order-reference, controlled-delay-five or actual-delay, and at most eight lengths')
+    if args.author_order_reference and (not (args.controlled_delay_five or (args.actual_delay and args.source_step_prefixes))
+            or args.cuda_graph or args.experimental_varlen or args.verify_only):
+        parser.error('--author-order-reference requires controlled-delay-five or source-step actual-delay; forbids legacy cuda-graph/varlen/verify')
     if args.horizon != 20 and not (args.actual_delay or args.author_order_reference):
         parser.error('non-default horizon requires explicit --actual-delay experiment')
     if args.actual_delay and (args.controlled_delay_five or args.timing_only or args.verify_only):
         parser.error('--actual-delay cannot combine with controlled delay, timing-only or verify-only')
-    if args.actual_delay and not (args.experimental_varlen and args.cuda_graph):
-        parser.error('--actual-delay currently requires --experimental-varlen --cuda-graph')
+    if args.actual_delay and not ((args.experimental_varlen and args.cuda_graph)
+            or (args.author_order_reference and args.source_step_prefixes)):
+        parser.error('--actual-delay requires source-step author-order-reference or legacy experimental-varlen cuda-graph')
     if args.experimental_varlen and not (args.controlled_delay_five or args.actual_delay):
         parser.error('--experimental-varlen requires explicit controlled or actual-delay experiment')
     if args.cuda_graph and (not (args.timing_only or args.controlled_delay_five or args.actual_delay) or args.verify_only):

@@ -36,3 +36,17 @@ def test_packed_conditioning_requires_explicit_source_graph_bank():
         cwd=root,capture_output=True,text=True)
     assert result.returncode==2
     assert 'requires source-step-prefixes or profile' in result.stderr
+
+
+def test_source_step_actual_mode_accepts_new_backend_but_still_requires_gate():
+    root=Path(__file__).resolve().parents[1]
+    flags=['--actual-delay','--author-order-reference','--horizon','25',
+           '--source-step-prefixes','566','567','568','--source-packed-conditioning']
+    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],
+        cwd=root,capture_output=True,text=True)
+    assert result.returncode==2
+    assert 'require --verify-only or a passed --verified-run' in result.stderr
+    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags,'--controlled-delay-five'],
+        cwd=root,capture_output=True,text=True)
+    assert result.returncode==2
+    assert '--actual-delay cannot combine with controlled delay' in result.stderr

@@ -1,5 +1,7 @@
 # 协作规则
 
+- 用户要求给命令自行试新版真实异步：eval_rtc_openpi仅放开显式actual-delay+author-order-reference+source-step bank组合（可packed conditioning），禁止controlled同时开/混旧varlen/fullgraph。沿用原异步调度，不改RTC/FlashRT。命令Spatial2 H25N5q5state80，exact prefix565–572预热8种，768MiB保护，遇未知state长度慢fallback可能断供或infeasible，应原样报告。CLI/scheduler/stepbank定向11tests通过，尚无此新版实际异步GPU运行，不宣称成功率/20Hz。用户将自行跑，agent只分析日志。
+
 - 2026-10-20继续追114/115：新增camera-only audit_render_repeat.py，无模型加载。a6c0476f三个独立env回放原20动作到完全相同scene，在原sensor render内部simtime1.498固定重复20次，目标单像素RGB114→115分别4/1/1次，主要cam/geom/material/light哈希全同。1ec3af61同帧readback30次全同；GL_DITHER开/关/恢复各200次，115为6/4/1，关闭仍复现，正式GL状态恢复。已隔离到MuJoCo/NVIDIA重新绘制路径，不是保存/读取/RTC；offSamples4仅记录，未证明MSAA/具体shader根因，不声称关闭抖色修复。控制步末render与观测采样时刻不同，其大差异不可当114/115。仅新增诊断，未改FlashRT/模型/正式GL/推理。详见RTC_SOURCE_ACCELERATION.md图像端定位。
 
 - 首次分歧已做同观测端到端回放04b20286：第20帧腕部单个像素RGB114→115（非3个像素），两张画面各自原始eager/普通图/缓存图raw与历史raw均逐值同；五步缓存图VJP等差0。相同观测有效KV及重复输出均逐值同。首次action25差.0008505，state26分歧；故本次首次预测分歧由画面输入差异触发，不是时间缓存算错。渲染端为何跨run差1级未定位，不声称具体GPU舍入因果。初轮b3008cca对全KV容量含未写尾部测repeat=false不代表有效KV不确定；v2只克隆有效范围且同步拷贝，repeat=true。只新增离线诊断script，不改推理/FlashRT/任务设置。详见RTC_SOURCE_ACCELERATION.md“首次差异原因复查”。

@@ -155,4 +155,12 @@ clean/error/VJP/output与raw差全0。专家原1456–1458ms，图215–232ms。
 
 仍必须显式`--author-order-reference --controlled-delay-five`，不加
 `--cuda-graph`或`--experimental-varlen`；后两者属于历史其他路径。
-当前不开放此候选的actual-delay组合，先对十任务及回退情况进一步核对。
+2026-10-20用户要求自行试真实异步，现已显式开放此候选的`--actual-delay`组合。
+它替代`--controlled-delay-five`，两者互斥；仍要求source-order GPU gate、
+`--author-order-reference`及source-step bank，禁止混入旧varlen/full-graph。
+沿用既有真实延迟调度（历史延迟队列/实际裁切），没有改RTC公式、调度主体或FlashRT。
+任务内不固定等5步，日志检查不得含`controlled_wait_seconds`。
+预热565–572八种精确前缀形状可覆盖更多state变化，初始化成本另计；
+未准备长度仍慢回退，可能导致断供/不可行并报错，不能隐藏为纯551ms运行。
+首次试跑为Spatial task2，H25/N5/q5/state80，768MiB保护；
+尚未执行此新组合的GPU异步回合，不宣称已通过或稳定20Hz。
