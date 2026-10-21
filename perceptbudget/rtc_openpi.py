@@ -29,19 +29,26 @@ class OriginalOpenPiRTCAdapter:
         self._attention_restore = None
         self._norm_restore = None
 
-    def prepare_step_bank(self,lengths):
+    def prepare_step_bank(self,lengths,*,progress=None):
         from perceptbudget.rtc_source_step_graph import SourceStepBank
         torch=self.torch
         noise=torch.randn(self.horizon,32,device='cuda',dtype=torch.float32)
         import json
         started=time.monotonic()
         conditioning=None
-        if self.config.get('source_packed_conditioning'):
+        if self.config.get('source_packed_conditioning') and getattr(self.expert,'_condition_cache',None) is None:
             from perceptbudget.rtc_condition_cache import enable_condition_cache
             conditioning=enable_condition_cache(self.expert,graph_live=True)
+        elif self.config.get('source_packed_conditioning'):
+            if getattr(self.expert,'_packed_condition_cache',None) is None:
+                raise ValueError('resident graph preparation requires graph-live conditioning cache')
+            conditioning=dict(reused=True,scope='same frozen resident suffix and time schedule')
+        def report(record):
+            print('step_graph_prepared='+json.dumps(record),flush=True)
+            if progress is not None:progress(record)
         self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
             max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,
-            progress=lambda r:print('step_graph_prepared='+json.dumps(r),flush=True))
+            progress=report)
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
             packed_conditioning=conditioning,
