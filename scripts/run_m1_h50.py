@@ -259,16 +259,81 @@ def find_parent(log):
     raise ValueError('diagnose parent path absent from log')
 
 
+def compare_initial(reference, candidate):
+    """Exact physical state; permit only explicitly measured render LSB noise."""
+    a,b=reference['initial_hashes'],candidate['initial_hashes']
+    if a==b:return None
+    for name in ('initial_sim_state_sha256','initial_raw_state_sha256'):
+        if a[name]!=b[name]:raise ValueError('initial sim/frame/raw-state mismatch: physical state')
+    import numpy as np
+    def first(info):
+        directory=Path(info['run'])/'rtc'
+        with (directory/'trace.jsonl').open() as stream:
+            row=next(json.loads(line) for line in stream if '"control_step"' in line)
+        if row['step']!=0:raise ValueError('missing initial control record')
+        paths=list(directory.glob('*frames_spool.npy'))
+        if len(paths)!=1:raise ValueError('missing unambiguous saved frame spool')
+        frame=np.load(paths[0],mmap_mode='r')[0].copy()
+        if frame.shape!=(256,512,3) or frame.dtype!=np.uint8:
+            raise ValueError('unexpected initial render format')
+        if hashlib.sha256(frame.tobytes()).hexdigest()!=info['initial_hashes']['initial_frames_sha256']:
+            raise ValueError('saved initial frame hash changed')
+        return row['before'],frame
+    scene_a,frame_a=first(reference);scene_b,frame_b=first(candidate)
+    if scene_a!=scene_b:raise ValueError('initial sim/frame/raw-state mismatch: scene observations')
+    delta=np.abs(frame_a.astype(np.int16)-frame_b.astype(np.int16))
+    changed=int(np.any(delta!=0,axis=-1).sum());maximum=int(delta.max())
+    if maximum>1 or changed>4:
+        raise ValueError(f'initial sim/frame/raw-state mismatch: render pixels={changed}, max_delta={maximum}')
+    return dict(passed=True,rule='exact_physics_render_lsb_v1',changed_pixels=changed,
+                max_channel_delta=maximum,mae=float(delta.mean()),
+                reference_run=reference['run'],candidate_run=candidate['run'],
+                reference_hashes=a,candidate_hashes=b,
+                limitation='model images not bit-identical; physical scene exact, at most4 pixels differ by1/255')
+
+
+def migrate_render_review(index,current):
+    saved=index['provenance']
+    if index.get('render_lsb_review'):
+        raise ValueError('render review already accepted')
+    if any(saved[k]!=current[k] for k in ('frozen','reference','reference_hash')):
+        raise ValueError('render review cannot change model/config/reference')
+    old,new=saved['source_hashes'],current['source_hashes']
+    if old.keys()!=new.keys() or {k for k in old if old[k]!=new[k]}!={'scripts/run_m1_h50.py'}:
+        raise ValueError('render review permits only scheduler audit changes')
+    name='libero_goal_task06_q10_actual_history'
+    record=index['cells'][name]
+    if record['status']!='invalid' or 'initial sim/frame/raw-state mismatch' not in record.get('error',''):
+        raise ValueError('unexpected render-review interruption')
+    baseline=index['cells']['libero_goal_task06_q5_sync_no_rtc']['result']
+    info=validate(Path(record['parent']),tuple(record['cell']))
+    proof=compare_initial(baseline,info)
+    if proof is None:raise ValueError('expected explicit measured frame difference')
+    audited=independent_audit(Path(info['run']))
+    if not audited['passed']:raise ValueError('render review system audit failed')
+    migrated=copy.deepcopy(index)
+    migrated['render_lsb_review']=dict(at=datetime.now(timezone.utc).isoformat(),
+        provenance_before=copy.deepcopy(saved),provenance_after=copy.deepcopy(current),
+        original_record=copy.deepcopy(record),proof=proof,system_audit=audited,
+        outcome_policy='retain original recorded outcome, no retry or success selection')
+    migrated['cells'][name].update(status='completed',result=info,initial_pair_audit=proof)
+    migrated['cells'][name].pop('error',None)
+    migrated['provenance']=copy.deepcopy(current)
+    migrated['completed']=sum(r.get('status')=='completed' for r in migrated['cells'].values())
+    migrated['status']='render_lsb_review_ready'
+    return migrated
+
+
 def run_batch(batch, index, reference, *, pilot_only, approved, min_free_gib):
     # Validate existing completed cells before any new subprocess is launched.
     initial = {}
 
     def check_initial(cell, info):
         identity = f'{cell[0]}/{cell[1]}'
-        value = info['initial_hashes']
-        if identity in initial and initial[identity] != value:
-            raise ValueError(f'initial sim/frame/raw-state mismatch: {identity}')
-        initial[identity] = value
+        if identity in initial:
+            proof=compare_initial(initial[identity],info)
+            if proof is not None:index['cells'][key(cell)]['initial_pair_audit']=proof
+        else:initial[identity]=info
 
     valid = set()
     for cell in cells():
@@ -351,14 +416,18 @@ def main(argv=None):
     parser.add_argument('--pilot-approved', action='store_true')
     parser.add_argument('--accept-graph-coverage-repair', action='store_true',
                         help='one-time, allowlisted migration of the interrupted H50 batch')
+    parser.add_argument('--accept-render-lsb-review',action='store_true',
+                        help='record exact-physics single-LSB render review without retrying its outcome')
     parser.add_argument('--repair-only', action='store_true',
                         help='persist repair migration and exit without launching subprocesses')
     parser.add_argument('--min-free-gib', type=float, default=10)
     args = parser.parse_args(argv)
-    if args.accept_graph_coverage_repair and not args.resume:
-        parser.error('--accept-graph-coverage-repair requires --resume')
-    if args.repair_only and (not args.accept_graph_coverage_repair or args.pilot_approved):
-        parser.error('--repair-only requires --accept-graph-coverage-repair and excludes --pilot-approved')
+    if (args.accept_graph_coverage_repair or args.accept_render_lsb_review) and not args.resume:
+        parser.error('maintenance review requires --resume')
+    if args.accept_graph_coverage_repair and args.accept_render_lsb_review:
+        parser.error('accept one maintenance review at a time')
+    if args.repair_only and (not (args.accept_graph_coverage_repair or args.accept_render_lsb_review) or args.pilot_approved):
+        parser.error('--repair-only requires an explicit maintenance review and excludes --pilot-approved')
     if args.pilot_approved and (not args.resume or args.pilot_only):
         parser.error('--pilot-approved requires --resume and excludes --pilot-only')
     if not math.isfinite(args.min_free_gib) or args.min_free_gib <= 0:
@@ -375,6 +444,17 @@ def main(argv=None):
         current = json.loads(json.dumps(current))
         if args.resume:
             index = read(batch / 'index.json')
+            if args.accept_render_lsb_review:
+                if batch.name!=REPAIR_BATCH:raise ValueError('unexpected render-review batch')
+                migrated=migrate_render_review(index,current)
+                backup=batch/('index.before-render-lsb-review-'+uuid.uuid4().hex+'.json')
+                with backup.open('x') as stream:
+                    json.dump(index,stream,indent=2,ensure_ascii=False)
+                    stream.flush();os.fsync(stream.fileno())
+                migrated['render_lsb_review']['original_index_backup']=str(backup)
+                write(batch/'index.json',migrated);index=migrated
+                print('render_lsb_review_completed='+str(index['completed']),flush=True)
+                if args.repair_only:return 0
             if args.accept_graph_coverage_repair:
                 if batch.name != REPAIR_BATCH:
                     raise ValueError('graph coverage repair is scoped to ' + REPAIR_BATCH)
