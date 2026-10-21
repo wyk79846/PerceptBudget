@@ -134,7 +134,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5):
                   rtc_audit_inputs=False, rtc_audit_attention_same_input=False,
                   rtc_audit_fused_norm=False)
     directory, source_run = Path(directory), Path(source_run)
-    os.environ.update(MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='0')
+    os.environ.update(MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='0',
+                      CUBLAS_WORKSPACE_CONFIG=':4096:8')
     torch, _ = base._check_cuda_and_native(config)
     torch.use_deterministic_algorithms(True)
     task = base._load_tasks([0], ['libero_spatial'])[0]
