@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 最新pool排查2026-10-21：用户因低成功率要求停止pool24服务，已确认inactive/dead、无eval_pooled子进程；pool2批次3204975b完成7条Spatial0..6，task5success其余6timeout，pool4未开始，不重启。原批次stopped_by_user.json说明原running字段过期。新scripts/diagnose_pool_parity.py读取失败task0的观测步5/11/17（valid280/282/283），用同图/state/噪声/旧动作/延迟交替正反序6次，与git b9e7aef^独立KV老图、新共享KV图及无图RTC对照，动作/VJP范数/已保存动作误差全部0；原生池化与CPU逐元素误差0，两视角顺序/前缀valid=128+152/154/155正确。结果M2/20261021T111535.952274Z-pool-memory-parity-d756b3a2/summary.md；诊断退出0，无后台GPU实验。只排除这些记录中的内存优化数值错误；更支持持续75%token缩减的质量/适配问题，不声称唯一原因/否定交替Fast。FlashRT未改，未训练，不继续盲跑。
+
 - 最新双视角pool接入2026-10-21：备份archive/pre-m2-token-pool-20261021，scripts/eval_pooled_views.py --pool-factor2 4顺序两档，每档Spatial0..9各一次/单次模型加载，总20，尚未执行闭环10任务，用户要自己执行命令。H50N5stateq5seed7init0，实际异步完整RTC，持续固定pool而非动态Full/Fast。model.py仅M2显式双视角允许m2_vision_pool_factor2/4；baseline拒绝覆盖；h50_state_prefix_lengths新增pool_factor，visual512→128/32，state tokenizer不变。device_quality新增显式task_plan仅Full新run，复用已有内存修复/共享EGL/900/768保护/audit。固定输入probe e6cd97b2/44896b0a各2请求已completed，324.01/276.55ms，原生encoder容量328/232，valid281/185，动作/VJP范数图对照0，非质量/完整服务L。preflight服务已正常结束，不启动20任务。FlashRT未改/未训练/根配置未改。
 
 - 最新内存排查2026-10-21：备份archive/pre-m2-memory-fix-20261021。rtc_openpi常驻adapter复用建图流；SourceStepBank共享最大KV底层存储，每层仍精确连续前缀，无padding/改模型/改FlashRT。设备小矩阵新流每次留下32MiB，复用流7次无增长；新推理线程短测不增长。仅修流9713997e在第二任务构造环境外guard125（648.6MiB）已停止，invalid.json说明原running字段过期。无模型环境9周期c467d6ab无持续线性增涨。共享KV38abd424三Full task0闭环已正常完成退出0，模型/专家各1次，Spatial78/Object143/Goal122success，0underflow/fallback，3auditpass，51长度动作/VJP范数误差0；释放旧图allocated6916.81/6916.74MiB稳定，首任务185.78MiB节省，记录点minAvailable1186.52MiB，非绝对最小/非无限长保证；无GPU后台实验。用户认为长期单视角要求过严，Fast不限定减相机，下一候选保留两路+vision_pool_factor=2，尚未实现，先固定输入速度/数值后Full/Fast交替质量，不沿用3/3硬门槛否定所有动态Fast。详细见任务指导与相关参考/PerceptBudget_M2连续测试内存排查_20261021.md。

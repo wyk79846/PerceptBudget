@@ -69,6 +69,8 @@ M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）�
 
 第二条顺序测两档，各10任务，每档一轮模型加载，共20回合；H50/N5/state/q5/seed7/init0固定，全程使用指定pool，不是Full/Fast动态切换。两路SigLIP仍完整编码512个token，后续实际消费128/32个；不是缩短视觉编码器本身。原生RTC精确前缀bank随token数缩短。`--probe-only`为固定输入短测，默认2次请求，不能当成功率。20261021两档短测324.01/276.55ms，图与同输入参考的动作/VJP范数误差0，闭环10任务待用户执行。结果分别在外部`M2/*-token-pool2-*`、`M2/*-token-pool4-*`，父`summary.json`及日志`POOL_TERMINAL_STATUS`记录包括外guard失败的真实退出状态；子日志为`worker.log`。
 
+上述20回合计划已被用户叫停：pool2完成7条、1成功6超时，pool4未开始；不重启。失败task0固定输入正反序6次对照：内存修复前独立KV、当前共享KV、不使用图的RTC、已存动作均误差0，原生池化与CPU参考逐元素相同。证据在`M2/20261021T111535.952274Z-pool-memory-parity-d756b3a2/summary.md`。`scripts/diagnose_pool_parity.py --source-run <已记录pool回合>`只做诊断，不跑新闭环。该证据未发现内存优化数值错误，不代表pool质量通过或全部原因已排除。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```
