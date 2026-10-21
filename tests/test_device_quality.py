@@ -87,3 +87,21 @@ def test_shared_egl_factory_reuses_only_same_device_and_main_thread():
     factory.assert_called_once()
     with pytest.raises(RuntimeError):
         binding.GLContext(max_width=640, max_height=480, device_id=1)
+
+
+def test_completed_calibration_resume_does_not_load_a_model(tmp_path):
+    import json
+    from unittest.mock import patch
+    from perceptbudget.device_quality import resident_quality
+    from scripts import eval_q
+    saved = dict(status='invalid', kind='full', episodes=[
+        dict(suite=s, task_id=0, view='full', run=str(tmp_path/s)) for s in SUITES],
+        model_loads=3, suffix_loads=3, error='guard125')
+    (tmp_path/'full_quality.json').write_text(json.dumps(saved))
+    with patch('scripts.audit_rtc_system.audit', return_value={'passed': True}), \
+         patch.object(eval_q, '_check_cuda_and_native') as cuda:
+        result = resident_quality({}, tmp_path, 'full', resume=True, calibration_only=True)
+    cuda.assert_not_called()
+    assert result['model_loads'] == 3
+    assert result['status'] == 'completed' and result['calibration_only']
+    assert len(result['episodes']) == 3
