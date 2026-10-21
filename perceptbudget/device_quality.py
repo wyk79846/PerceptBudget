@@ -160,7 +160,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -176,6 +176,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
+    if split_delay_comparison and not recompute_comparison:
+        raise ValueError('Split-delay comparison requires expert recompute comparison')
     if recompute_comparison and (kind!='full' or task_plan is None or resume or
         config.get('m2_vision_pool_factor',1)!=1):
         raise ValueError('Expert recompute comparison requires Full geometry and explicit new tasks')
@@ -279,7 +281,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 views = (('full',) if kind == 'full' else
                          ('agent', 'wrist') if tid == 0 else (record['selection'],))
                 if recompute_comparison:
-                    views=('full','kv_reuse')
+                    views=('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -326,6 +328,26 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 timing = timed(torch, lambda: adapter.predict(prepared, task['instruction'], previous,
                                        delay=5, executed=5, request={}), count=3)
                 cfg['rtc_initial_delay_steps'] = math.ceil(timing['median_ms']/1000/calibration['median_seconds'])
+                if split_delay_comparison:
+                    adapter.bootstrap(prepared,task['instruction'],{})
+                    cfg['m2_reuse_enabled']=True
+                    def expert_probe():
+                        # Fixed-input calibration only: re-enable one reuse of
+                        # the same Full snapshot outside the measured episodes.
+                        adapter._recompute_context['reused']=False
+                        request={'observation_step':5}
+                        result=adapter.predict(prepared,task['instruction'],previous,
+                            delay=5,executed=5,request=request)
+                        if request['kv_recompute']['mode']!='expert_only':
+                            raise RuntimeError('Expert-only delay calibration ran Full')
+                        return result
+                    expert_timing=timed(torch,expert_probe,count=3)
+                    cfg['m2_reuse_enabled']=False
+                    cfg['rtc_initial_delays_by_mode']=dict(full=cfg['rtc_initial_delay_steps'],
+                        expert_only=math.ceil(expert_timing['median_ms']/1000/calibration['median_seconds']))
+                    record['mode_delay_calibration']=dict(full=timing,expert_only=expert_timing,
+                        initial_delays=cfg['rtc_initial_delays_by_mode'],
+                        control_period_seconds=calibration['median_seconds'])
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
@@ -333,7 +355,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
                     if recompute_comparison:
-                        child_cfg['m2_reuse_enabled']=view=='kv_reuse'
+                        child_cfg['m2_reuse_enabled']=view!='full'
+                        child_cfg['m2_split_delay']=view=='kv_reuse_split'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M2', 'fast-quality-'+label)

@@ -79,6 +79,8 @@ M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）�
 
 旧KV专家重算隔离入口：`scripts/eval_expert_recompute.py --suite libero_spatial --task-id 0`，默认只同任务两回合、一轮模型加载，正常RTC对照Full/仅专家交替；`--dry-run`不加载。bootstrap始终Full，不压缩token，复用轮次也复用旧state；运行时/独立审计限制原KV的H步名义有效期，不将它当已验证安全缓冲。首测各1次均成功，但77→197步、6.17→14.61秒；expert-only约170ms，Full约490ms。当前快慢模式共享延迟history，对expert实际2–3步估成8–9步，需分模式估计后才适合进一步评价，不直接认定stale KV为唯一减速原因、不自动扩测。[报告](../任务指导与相关参考/PerceptBudget_旧KV专家重算配对小测_20261021.md)。生产默认仍每次更新KV，FlashRT未改。
 
+后续已增加`--split-delay`：同一任务三回合分别为正常RTC、旧共享延迟交替、新分模式延迟交替；各模式单独初始化/更新实际延迟队列，expert估计3步、实际2–3步，独立审计重建两份history。首测三者均成功，77/197/176步、6.22/14.65/12.90秒；新方案有改善但仍慢于正常RTC，不宣称整体加速/节能。仍N5、不改FlashRT，不自动扩测；默认无此参数保留历史两回合模式。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```

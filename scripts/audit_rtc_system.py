@@ -51,6 +51,8 @@ def audit(run):
     check('unique_commit_ids',len(committed)==len(commits))
     check('single_bootstrap',requests[0]['observation_step']==0 and commits[0]['commit_step']==0)
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
+    mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in ('full','expert_only')}
+                    if cfg.get('m2_split_delay') else None)
     previous=None
     slacks=[]
     for request in requests:
@@ -112,9 +114,16 @@ def audit(run):
                 check('sync_request_interval',origin==old['observation_step']+q,pid)
             elif cfg.get('rtc_paper_schedule'):
                 estimate=cfg.get('rtc_fixed_delay_estimate')
+                expected_history=history
+                if mode_histories is not None:
+                    mode=request.get('kv_recompute',{}).get('mode')
+                    check('planned_delay_mode_matches_execution',request.get('planned_kv_mode')==mode,pid)
+                    check('delay_history_mode',g.get('delay_history_mode')==mode
+                        and g.get('delay_estimate_mode')=='mode_history_max',pid)
+                    expected_history=mode_histories.get(mode,[])
                 check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
-                      g['delay_estimate_steps']==(max(history) if estimate is None else estimate)
-                      and g['delay_history_steps']==history,pid)
+                      g['delay_estimate_steps']==(max(expected_history) if estimate is None else estimate)
+                      and g['delay_history_steps']==expected_history,pid)
             else:
                 check('controlled_d5',g['delay_estimate_steps']==cfg['controlled_delay_steps'],pid)
         if pid not in committed:
@@ -139,6 +148,9 @@ def audit(run):
                       source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
             history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
+            if mode_histories is not None:
+                mode=request['kv_recompute']['mode']
+                mode_histories[mode]=(mode_histories[mode]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         previous=c
     underflows=[]
     for step,row in by_step.items():

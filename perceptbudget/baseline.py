@@ -36,7 +36,7 @@ def apply_to_reference(reference, canonical):
 
 
 def validate(config):
-    if config.get('m2_expert_recompute') or config.get('m2_reuse_enabled'):
+    if config.get('m2_expert_recompute') or config.get('m2_reuse_enabled') or config.get('m2_split_delay'):
         raise ValueError('Expert recompute experiments cannot replace the deployment baseline')
     if config.get('m2_pool_view','both')!='both':
         raise ValueError('M2 mixed pooling cannot replace the deployment baseline')

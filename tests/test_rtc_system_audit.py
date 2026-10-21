@@ -45,6 +45,33 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_split_history_audit_rejects_full_delay_used_for_expert(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    metadata=json.loads((tmp_path/'run.json').read_text())
+    cfg=metadata['config_snapshot']
+    cfg.update(rtc_paper_schedule=True,m2_expert_recompute=True,m2_reuse_enabled=True,
+        m2_split_delay=True,rtc_initial_delays_by_mode={'full':9,'expert_only':5})
+    (tmp_path/'run.json').write_text(json.dumps(metadata))
+    for i,r in enumerate(requests):
+        mode='expert_only' if i else 'full'
+        r['planned_kv_mode']=mode
+        r['kv_recompute']=dict(mode=mode,source_prediction_id=0,source_raw_state=[0]*8,
+            source_observation_step=0,nominal_expiry_step=25,
+            current_images_encoded=not bool(i),current_state_encoded=not bool(i))
+        r['rtc_guidance']['valid_prefix_length']=657
+    guidance=requests[1]['rtc_guidance']
+    guidance.update(delay_history_steps=[5],delay_history_mode='expert_only',
+        delay_estimate_mode='mode_history_max')
+    save()
+    assert audit(tmp_path)['passed']
+    guidance.update(delay_history_steps=[9],delay_estimate_steps=9)
+    requests[1]['rtc_solver_inputs']['delay']=9
+    save()
+    result=audit(tmp_path)
+    assert not result['passed']
+    assert 'independent_history_max' in [x['check'] for x in result['failures']]
+
+
 @pytest.mark.parametrize('change,expected',[
     ('state','state_normalization'),('target','old_target_alignment'),
     ('decode','action_postprocessing'),('source','action_is_latest_committed_chunk'),

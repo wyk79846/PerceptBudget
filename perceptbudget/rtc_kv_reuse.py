@@ -4,15 +4,23 @@ from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
 class RecomputeRTCAdapter(OriginalOpenPiRTCAdapter):
+    def context_mode(self,prompt,step,*,guided):
+        old=getattr(self,'_recompute_context',None)
+        reuse=bool(guided and self.config.get('m2_reuse_enabled',False) and old is not None
+            and not old['reused'] and prompt==old['prompt']
+            and 0<=step-old['step']<self.horizon//2)
+        return 'expert_only' if reuse else 'full'
+
     def _prepare_context(self,snapshot,prompt,request,*,guided):
         if not self.config.get('m2_expert_recompute'):
             raise ValueError('Expert recompute requires explicit M2 experiment')
         start=time.monotonic()
         step=request.get('observation_step',0)
         old=getattr(self,'_recompute_context',None)
-        enabled=self.config.get('m2_reuse_enabled',False)
-        reuse=bool(guided and enabled and old is not None and not old['reused']
-                   and prompt==old['prompt'] and 0<=step-old['step']<self.horizon//2)
+        mode=self.context_mode(prompt,step,guided=guided)
+        if request.get('planned_kv_mode',mode)!=mode:
+            raise RuntimeError('Planned KV mode differs from executed mode')
+        reuse=mode=='expert_only'
         if reuse:
             valid=old['valid']
             old['reused']=True

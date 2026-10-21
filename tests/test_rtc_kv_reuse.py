@@ -57,3 +57,29 @@ def test_recompute_cli_is_two_full_view_unpooled_paired_episodes():
     assert plan['episodes']==2 and plan['model_loads']==1
     assert plan['num_views']==2 and plan['pool']==1 and plan['q']==5
     assert plan['original_kv_expiry_enforced']
+
+
+def test_mode_planning_is_pure_and_actual_execution_must_match(monkeypatch):
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'_prepare_context',lambda *a,**k:657)
+    adapter=RecomputeRTCAdapter.__new__(RecomputeRTCAdapter)
+    adapter.config=dict(m2_expert_recompute=True,m2_reuse_enabled=True);adapter.horizon=50
+    adapter._prepare_context(dict(raw_state=[0]*8),'task',dict(observation_step=0),guided=False)
+    assert adapter.context_mode('task',5,guided=True)=='expert_only'
+    assert adapter.context_mode('task',5,guided=True)=='expert_only'
+    with pytest.raises(RuntimeError,match='Planned KV mode'):
+        adapter._prepare_context(dict(raw_state=[1]*8),'task',
+            dict(observation_step=5,planned_kv_mode='full'),guided=True)
+    assert adapter.context_mode('task',5,guided=True)=='expert_only'
+    r=dict(observation_step=5,planned_kv_mode='expert_only')
+    adapter._prepare_context(dict(raw_state=[1]*8),'task',r,guided=True)
+    assert r['kv_recompute']['mode']=='expert_only'
+    assert adapter.context_mode('task',10,guided=True)=='full'
+
+
+def test_split_delay_comparison_is_three_episodes_without_changing_denoising():
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    r=subprocess.run([sys.executable,str(script),'--split-delay','--dry-run'],
+        capture_output=True,text=True,check=True)
+    plan=json.loads(r.stdout)
+    assert plan['episodes']==3 and plan['model_loads']==1
+    assert plan['N']==5 and plan['conditions']==['full','kv_reuse','kv_reuse_split']

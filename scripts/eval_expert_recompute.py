@@ -22,11 +22,13 @@ def main():
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--dry-run',action='store_true')
+    parser.add_argument('--split-delay',action='store_true',help='Three paired episodes: Full, shared-history reuse, per-mode-history reuse')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT);validate(config)
     if args.dry_run:
-        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,episodes=2,
-            conditions=['full','kv_reuse'],reuse='Full/expert-only alternating; bootstrap always Full',
+        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,episodes=3 if args.split_delay else 2,
+            conditions=['full','kv_reuse','kv_reuse_split'] if args.split_delay else ['full','kv_reuse'],reuse='Full/expert-only alternating; bootstrap always Full',
+            split_delay_comparison=args.split_delay,
             H=50,N=5,q=5,state=True,state_on_reuse='last Full state remains in cached KV',
             original_kv_expiry_enforced=True,num_views=2,pool=1,seed=7,init=0,model_loads=1)))
         return 0
@@ -35,29 +37,32 @@ def main():
             parser.error('Worker requires an M2 run directory')
         from perceptbudget.device_quality import resident_quality
         resident_quality(config,args.run_dir,'full',cleanup_gate=CLEANUP_GATE,
-            task_plan=[(args.suite,args.task_id)],recompute_comparison=True)
+            task_plan=[(args.suite,args.task_id)],recompute_comparison=True,split_delay_comparison=args.split_delay)
         return 0
     cfg=dict(config,m2_profile=True,m2_expert_recompute=True)
-    run=create_run(cfg,'M2','expert-recompute',repo_root=ROOT)
+    run=create_run(cfg,'M2','expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
     print('run_dir='+str(run),flush=True)
-    summary=dict(status='running',scope='two paired episodes, no population success-rate or energy claim')
+    summary=dict(status='running',split_delay_comparison=args.split_delay,
+        scope='paired single-task episodes, no population success-rate or energy claim')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             command=[config['python_executable'],str(ROOT/'scripts/guarded_run.py'),'--',
                 config['python_executable'],'-u',str(Path(__file__).resolve()),'--worker',
                 '--run-dir',str(run),'--suite',args.suite,'--task-id',str(args.task_id)]
+            if args.split_delay:command+=['--split-delay']
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode
             if completed.returncode:
                 raise RuntimeError('Worker failed or memory guard stopped it; do not count as task failure')
             record=json.loads((run/'full_quality.json').read_text())
-            if record['status']!='completed' or len(record['episodes'])!=2:
+            if record['status']!='completed' or len(record['episodes'])!=(3 if args.split_delay else 2):
                 raise RuntimeError('Incomplete paired output')
-            first,second=record['episodes']
+            first=record['episodes'][0]
             summary.update(model_loads=record['model_loads'],suffix_loads=record['suffix_loads'],
-                paired_initial_hashes_equal=first['initial']['initial_hashes']==second['initial']['initial_hashes'],
+                paired_initial_hashes_equal=all(first['initial']['initial_hashes']==e['initial']['initial_hashes'] for e in record['episodes']),
+                mode_delay_calibration=record.get('mode_delay_calibration'),
                 episodes=[])
             for e in record['episodes']:
                 requests=json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())
@@ -67,6 +72,8 @@ def main():
                     groups[mode]=dict(requests=len(rows),
                         inference_median_ms=statistics.median((r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000 for r in rows) if rows else None,
                         context_median_ms=statistics.median(r['kv_recompute']['context_seconds']*1000 for r in rows) if rows else None,
+                        estimated_delay_steps=[r['rtc_guidance']['delay_estimate_steps'] for r in rows],
+                        actual_delay_steps=[r['rtc_guidance'].get('actual_delay_steps') for r in rows],
                         max_age_steps=max((r['kv_recompute']['age_steps_at_request'] for r in rows),default=0))
                 summary['episodes'].append(dict(e,request_groups=groups))
             if not summary['paired_initial_hashes_equal']:

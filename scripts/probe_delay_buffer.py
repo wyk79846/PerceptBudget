@@ -299,6 +299,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     if config.get('rtc_paper_schedule'):
         from perceptbudget.rtc_schedule import DelayQueue
         delay_queue = DelayQueue(config['rtc_initial_delay_steps'], config['rtc_delay_buffer_size'])
+    mode_delay_queues=None
+    if config.get('m2_split_delay'):
+        if not config.get('m2_expert_recompute') or delay_queue is None or rtc_adapter is None:
+            raise ValueError('Split delay requires explicit expert-recompute RTC experiment')
+        mode_delay_queues={mode:DelayQueue(config['rtc_initial_delays_by_mode'][mode],config['rtc_delay_buffer_size'])
+                           for mode in ('full','expert_only')}
     current_request = None
     missed_triggers, underflows = [], []
     prefix_rejection = None
@@ -332,6 +338,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             'observation_raw_state': snapshot['raw_state'].tolist(),
             'queue_before_submit_actions': buffer_count(queue, step),
         }
+        selected_delay_queue=delay_queue
+        if mode_delay_queues is not None:
+            mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
+            request['planned_kv_mode']=mode
+            selected_delay_queue=mode_delay_queues[mode]
         rtc_previous_raw = None
         if rtc_adapter is not None and step > 0:
             executed = step - previous_request_step
@@ -340,8 +351,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                        for a, b in zip(recent_rows, recent_rows[1:])]
             period_estimate = float(np.median(periods)) if periods else period
             delay = config.get('controlled_delay_steps', rtc_adapter.estimate_delay_steps(period_estimate))
-            if delay_queue is not None:
-                delay = delay_queue.estimate
+            if selected_delay_queue is not None:
+                delay = selected_delay_queue.estimate
             if config.get('rtc_fixed_delay_estimate') is not None:
                 delay=config['rtc_fixed_delay_estimate']
             feasible = (0 <= delay <= config['H'] - executed if delay_queue is not None
@@ -370,10 +381,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'control_period_estimate_seconds': period_estimate,
                 'predicted_inference_seconds': rtc_adapter.latency_estimate_seconds,
                 'old_chunk_origin_step': old_origin,
-                'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'history_max' if delay_queue is not None else 'latency'),
+                'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'mode_history_max' if mode_delay_queues is not None else 'history_max' if delay_queue is not None else 'latency'),
             }
             if delay_queue is not None:
-                request['rtc_guidance']['delay_history_steps'] = list(delay_queue.values)
+                request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
+                if mode_delay_queues is not None:
+                    request['rtc_guidance']['delay_history_mode']=request['planned_kv_mode']
                 request['rtc_guidance']['initialization_d_exceeds_s'] = delay > executed
         requests.append(request)
 
@@ -415,7 +428,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
             if delay_queue is not None and not current_request.get('delay_queue_observed'):
-                current_request['delay_queue_observed'] = delay_queue.observe(
+                observed_queue=delay_queue
+                if mode_delay_queues is not None:
+                    mode=current_request['kv_recompute']['mode']
+                    if mode!=current_request['planned_kv_mode']:
+                        raise RuntimeError('Delay observation mode differs from planned inference')
+                    observed_queue=mode_delay_queues[mode]
+                current_request['delay_queue_observed'] = observed_queue.observe(
                     guidance['actual_delay_steps'],
                     observation_step=current_request['observation_step'])
                 if current_request['observation_step'] == 0:
