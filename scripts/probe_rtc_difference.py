@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from perceptbudget.experiment import create_run, load_config
 from scripts import eval_q as base
-from scripts import eval_seam_sync as sync
+from scripts import libero_tasks as sync
 
 OLD_RUN = Path('/home/wyk/workspace/任务产出/perceptbudget/M1/20261018T042446.603163Z-rtc-controlled-d5-q10-460587e9')
 NEW_RUN = Path('/home/wyk/workspace/任务产出/perceptbudget/M1/20261018T051321.472044Z-rtc-controlled-d5-q10-4d326938')

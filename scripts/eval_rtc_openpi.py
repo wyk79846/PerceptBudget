@@ -76,7 +76,7 @@ def rollout(config, run, gate, task_id):
     torch.use_deterministic_algorithms(True)
     from flash_rt.subgraphs.pi05.context_action import enable
     if config.get('rtc_suite','libero_spatial') == 'libero_10':
-        from scripts.eval_seam_sync import get_tasks
+        from scripts.libero_tasks import get_tasks
         task=get_tasks([task_id])[0]
     else:
         task = base._load_tasks([task_id], [config.get('rtc_suite','libero_spatial')])[0]
@@ -335,7 +335,7 @@ def main():
                      'perceptbudget/openpi_graph.py','perceptbudget/openpi_varlen.py',
                      'perceptbudget/rtc_expert.py','perceptbudget/rtc_memory.py',
                      'perceptbudget/rtc_schedule.py','perceptbudget/rtc_author_source.py',
-                     'scripts/eval_seam_sync.py','perceptbudget/rtc_source_step_graph.py',
+                     'scripts/libero_tasks.py','perceptbudget/rtc_source_step_graph.py',
                      'perceptbudget/rtc_condition_cache.py'):
             dest = run/'source'/name
             dest.parent.mkdir(parents=True, exist_ok=True)

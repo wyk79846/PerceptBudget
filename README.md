@@ -1,5 +1,16 @@
 # PerceptBudget
 
+## 当前主线（2026-10-21）
+
+M1新模型H50扫描已完成，当前采用完整VJP RTC真实异步，后续按Word推进M2设备标定。
+
+SEAM与硬前缀锁定的实现和实验入口已清理；历史代码可从Git分支 `archive/pre-m2-cleanup-20261021` 恢复，历史结果保持原样。RTC主入口为 `scripts/eval_rtc_openpi.py`，M1扫描为 `scripts/run_m1_h50.py`，诊断为 `scripts/diagnose_rtc_handoff.py`。公共任务加载迁至 `scripts/libero_tasks.py`。共享控制循环保留在 `scripts/probe_delay_buffer.py`，移除旧实验CLI。
+
+FlashRT本次不修改。
+
+## 历史记录（不作为当前执行指令）
+
+
 最新优化（2026-10-19）：固定时间条件预计算使同一Spatial2完整推理中位由583.21降至551.49ms，两版均成功（123/124步），但闭环轨迹不完全相同。固定输入专家逐步动作/梯度差0；受控d5，非真实20Hz或十任务成功率。显式`--source-packed-conditioning`配合source-step bank启用，默认不变；[证据与边界](RTC_SOURCE_ACCELERATION.md)。以下保留阶段历史。
 
 最新加速候选：[原版单步CUDA图](RTC_SOURCE_ACCELERATION.md)。保持7/10慢参考的原始attention与源运算顺序，Spatial2成对均123步成功、25份预测raw/噪声/旧目标逐值同，完整请求1815.74→583.21ms。只验证一个任务、受控d5，尚无十任务候选成功率或真实异步结论。未准备的state有效长度回退慢参考，不临时建图。默认不变。
@@ -11,26 +22,6 @@
 新实验默认 `state_prompt_capacity=80`，指文字指令与state合计的物理预留token数；图像token另算。完整分词不变、超限报错不截断，历史run配置和容量计时不改写。
 
 旧自写专家快路径及计时边界见 [RTC_NATIVE_PROBE.md](RTC_NATIVE_PROBE.md)。历史固定输入约393ms、任务中约425ms，不属于当前原始专家参考路径，且尚未通过原始专家独立数值等价验证。不得把它的速度或成功率赋给新路径。
-
-当前开发入口（2026-10-17）：主项目固定为 `/home/wyk/workspace/PerceptBudget`，FlashRT 固定为 `config.json` 指向的 `/home/wyk/workspace/FlashRT-upstream`。两仓库当前开发分支均为 `project/perceptbudget`。SEAM 已整合到这两个目录，后续修改直接在此进行。旧 SEAM 工作区转入任务产出归档，历史结果路径保留原样。
-
-FlashRT 的逐文件修改清单见 [PERCEPTBUDGET_CHANGES.md](../FlashRT-upstream/PERCEPTBUDGET_CHANGES.md)。主项目保留既有 RTC 诊断；SEAM 同步入口为 `scripts/eval_seam_sync.py`，真实延迟异步入口为 `scripts/eval_seam_async.py`，早期异步 SEAM 探针保留在历史分支中。
-
-异步入口固定 H20/N10/K10/M上限10/λ0.1、关闭额外 state，默认 LIBERO-10 十任务各一次，每任务独立进程。推理期间旧动作原速执行；旧 tail 按队列实际来源对齐，保留观测时刻完整 M 引导窗口（包括推理期间会执行的旧动作），提交时才按实际已过控制步裁剪。实际可执行的引导动作可能短于 10；日志保留真实延迟、有效引导步数和断供。该入口不使用运动减半、位置重对齐、硬前缀锁定或最终动作平均。启动命令：`/home/wyk/venvs/lutvla/bin/python scripts/eval_seam_async.py`。结果独立保存，不能与既有同步 9/10 混用。
-
-异步十任务本轮已完成：**4/10 成功、6 个 520 步超时、0 断供**；真实延迟 6–8 步，提交时仍可执行的引导重叠通常只有 2 步。[完整异步结果与核验](../任务产出/perceptbudget/M1/SEAM_H20_异步十任务结果_20261017.md)。初始画面均匹配，但只有 6/10 个首块完整 raw hash 相同，不将两轮差异称为严格单因素统计结论。当前异步移植效果低于既有同步小测，尚未作为主项目默认衔接。
-
-配置中的 `flashrt_revision` 固定实际本地提交，`flashrt_base_revision` 记录官方参考版本；`scripts/check_setup.py` 同时检查提交和继承关系。后续提交 FlashRT 源码后，更新实际版本字段。
-
-从主项目启动已测试的 SEAM 小测配置（需要设备 GPU，以下命令会实际运行 task0 三条件对照）：
-
-```bash
-/home/wyk/venvs/lutvla/bin/python scripts/guarded_run.py -- \
-  /home/wyk/venvs/lutvla/bin/python scripts/eval_seam_sync.py \
-  --task-ids 0 --horizon 20 --seam-m 10 --no-state-enabled
-```
-
-入口默认从 `config.json` 读取 FlashRT 路径；H20/M10、关闭额外 state 仅作用于这条 SEAM 命令，不改全项目基准配置。三条件为 BF16 普通求解器、BF16 网络配 FP32 求解状态、同精度加 SEAM。最新十任务结果为 10/10、9/10、9/10，见[结果记录](../任务产出/perceptbudget/M1/SEAM_H20_十任务对比_20261017.md)。以下带日期的旧说明为历史记录，以本段入口为准。
 
 [M1阶段交付报告（审查稿）](../任务指导与相关参考/PerceptBudget_M1阶段交付报告_审查稿_20261016.md)已整理，等待用户审查；不新增实验，不自动进入下一阶段。
 

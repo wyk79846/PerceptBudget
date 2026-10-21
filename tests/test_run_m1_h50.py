@@ -194,7 +194,7 @@ def test_offline_scripts_excluded_from_runtime_freeze(tmp_path, monkeypatch):
     monkeypatch.setattr(batch.subprocess, 'check_output', lambda *a, **k: 'head')
     names = ('diagnose_rtc_handoff.py', 'eval_rtc_openpi.py', 'probe_delay_buffer.py',
              'eval_q.py', 'probe_rtc_step.py', 'guarded_run.py', 'run_m1_h50.py',
-             'audit_rtc_system.py', 'eval_seam_sync.py')
+             'audit_rtc_system.py', 'libero_tasks.py')
     for name in names:
         dump(tmp_path / 'scripts' / name, {})
     dump(tmp_path / 'config.json', {})

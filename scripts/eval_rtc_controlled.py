@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from perceptbudget.experiment import create_run, load_config
 from scripts import eval_q as base
-from scripts import eval_seam_sync as sync
+from scripts import libero_tasks as sync
 from scripts import probe_delay_buffer as probe
 
 
