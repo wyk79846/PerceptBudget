@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- M2续进2026-10-21：用户终端确认EMC rate3199000000/min204000000/max3199000000/locked1，dvfs表含3200000000但超出max不得选；当前权限仍需root，无免密sudo。4ba474a增加隔离m2_profile/m2_view loader与profile_device --fast-probe，不改根配置/FlashRT；545feb3补齐CuBLAS确定性环境。结果M2/20261021T092919.503238Z-device-discovery-e49cfb7b：同已存Spatial0输入+旧目标d5s5，每条件5次，Full/agent/wrist=461.36/326.87/325.97ms，平均请求模块J=12.32/8.51/8.68；视觉512→256、容量712→456、valid665→409，两个形状各自raw/VJP parity0，0fallback。Full和single各加载一次，single复用agent/wrist。只是已准备输入的计算短测，非服务L/闭环成功率/动态节能。首9d4e038c CuBLAS初始化失败无有效样本，保留invalid。12个频率候选及用户EMC来源在run目录，仅提案未调频。下一步Fast候选配对质量验证、受限调频及恢复方案；不宣称已选Fast或三个最终频率组合。
+
 - 2026-10-21已启动M2第一步：新增device_control（只读）、device_profile及profile_device入口；备份分支archive/pre-m2-device-profile-20261021。只读发现当前40W模式、GPU min=max1173MHz，CPU policy0/4 min=max1497.6MHz；EMC debug需要root，沙盒外sudo -n仍要求密码，不擅自改sudo/权限/功耗模式。M2/20261021T091851.698669Z-device-discovery-9018a8cf完成7窗合成matmul忙闲传感器阶跃，20ms轮询、0丢样、值变化间隔中位21.90ms（非硬件更新周期），busy约28.7W/后续idle约10.3W非模型P_on/P_idle。源码num_views=1与序列缩短接口存在，未实测Fast速度/质量，FlashRT和唯一基线未改；未选三个组合、未完成27项小表。继续时先解决EMC读取/控制授权并保持恢复方案，不能宣称M2完成。
 
 - M1主扫描300/300：275成功、25超时。异步q5/10/20/30/40成功28/26/24/27/24，均30任务；零欠载不等于硬实时保证。
