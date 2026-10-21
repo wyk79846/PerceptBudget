@@ -52,6 +52,8 @@ M1名义动作余量不等于已验证安全缓冲；节能机会估计不等于
 
 ## 验证
 
+M2首步入口：`scripts/profile_device.py`（只读接口快照）；`--sensor-check`仅执行合成GPU忙闲阶跃，用于传感器检查，不加载模型、不改变频率。结果在外部`M2/`目录。EMC当前需要管理员权限，正式频率组合标定尚未开始。Fast仅确认源码支持一视角，尚无实时速度或质量结论。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```
