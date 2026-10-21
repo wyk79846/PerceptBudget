@@ -18,6 +18,7 @@ SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 QS = (5, 10, 20, 30, 40)
 MODES = ('sync_no_rtc', 'actual_history')
 NOTES = [
+    'Pairs with an explicitly saved exact_physics_render_lsb_v1 review have exact recorded physics but non-bit-identical images (at most4 pixels differ by1/255); these pairs are qualified separately, not called identical inputs.',
     'Energy summaries cover the currently indexed worker per cell; historical invalid/retried attempt energy is not accumulated and must be reported separately before claiming total retry cost.',
     'Main scan only; power calibration, six perturbations and physical phases are not delivered here. Phase=unknown; B_safe unverified.',
     'Trajectory: each complete observed pre-action EEF xyz path is resampled to 101 normalized cumulative-distance points; mean Euclidean deviation in metres versus same-task sync q5. Shape diagnostic, not ground-truth error; failed paths may end early.',
@@ -111,7 +112,8 @@ def load_cell(record, batch):
                 task_energy_j=energy(ep, 'power'), drain_energy_j=energy(ep, 'drain_power'),
                 including_drain_energy_j=energy(ep, 'including_drain_power'),
                 drain_seconds=_number(ep.get('drain_seconds')),
-                initial_hashes=record['result'].get('initial_hashes'))
+                initial_hashes=record['result'].get('initial_hashes'),
+                initial_pair_audit=record.get('initial_pair_audit'))
     trace_path, request_path = worker/'rtc/trace.jsonl', worker/f'rtc/q{q}_requests.json'
     rows, commits = None, None
     if trace_path.exists():
@@ -188,10 +190,19 @@ def paired(items, baselines):
             excluded.append(dict(suite=e['suite'], task_id=e['task_id'], reason='missing sync q5'))
             continue
         a_hash, b_hash = e.get('initial_hashes'), b.get('initial_hashes')
+        identity='verified' if a_hash and b_hash else 'unverified'
         if a_hash and b_hash and a_hash != b_hash:
-            excluded.append(dict(suite=e['suite'], task_id=e['task_id'], reason='initial hashes mismatch'))
-            continue
-        identities.append('verified' if a_hash and b_hash else 'unverified')
+            proof=e.get('initial_pair_audit') or {}
+            accepted=(proof.get('passed') is True and proof.get('rule')=='exact_physics_render_lsb_v1'
+                and proof.get('reference_hashes')==b_hash and proof.get('candidate_hashes')==a_hash
+                and all(a_hash.get(k)==b_hash.get(k) and a_hash.get(k) is not None for k in
+                        ('initial_sim_state_sha256','initial_raw_state_sha256'))
+                and 0<proof.get('changed_pixels',999)<=4 and 0<proof.get('max_channel_delta',999)<=1)
+            if not accepted:
+                excluded.append(dict(suite=e['suite'], task_id=e['task_id'], reason='initial hashes mismatch'))
+                continue
+            identity='exact_physics_qualified_render_lsb'
+        identities.append(identity)
         differences.append(int(e['outcome'] == 'success')-int(b['outcome'] == 'success'))
         value = trajectory(b['_rows'], e['_rows']) if b.get('_rows') is not None and e.get('_rows') is not None else None
         if value is not None:

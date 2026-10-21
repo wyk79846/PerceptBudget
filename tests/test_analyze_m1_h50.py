@@ -88,6 +88,19 @@ class AnalyzeM1H50Test(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'missing frozen config'):
                 analysis.load_cell(record,root)
 
+    def test_explicit_render_review_qualifies_pair_without_claiming_identical_input(self):
+        a=dict(initial_sim_state_sha256='same',initial_raw_state_sha256='same',initial_frames_sha256='a')
+        b=dict(a,initial_frames_sha256='b')
+        baseline=dict(suite='libero_goal',task_id=6,outcome='success',initial_hashes=a)
+        candidate=dict(suite='libero_goal',task_id=6,outcome='timeout',initial_hashes=b,
+            initial_pair_audit=dict(passed=True,rule='exact_physics_render_lsb_v1',
+                reference_hashes=a,candidate_hashes=b,changed_pixels=1,max_channel_delta=1))
+        result=analysis.paired([candidate],{('libero_goal',6):baseline})
+        self.assertEqual(result['initial_identity'],['exact_physics_qualified_render_lsb'])
+        self.assertEqual(result['excluded'],[])
+        candidate['initial_pair_audit']['max_channel_delta']=2
+        self.assertEqual(len(analysis.paired([candidate],{('libero_goal',6):baseline})['excluded']),1)
+
     def test_busy_union_clips_task_and_preserves_gaps(self):
         requests = [dict(inference_started_monotonic=a, inference_ended_monotonic=b)
                     for a, b in [(9., 11.), (10.5, 12.), (13., 15.)]]
