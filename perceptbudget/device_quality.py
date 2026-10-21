@@ -149,7 +149,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -165,12 +165,18 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
+    if task_plan is not None:
+        if kind != 'full' or resume or not task_plan or len(set(task_plan)) != len(task_plan) or any(
+                s not in SUITES or type(t) is not int or not 0<=t<10 for s,t in task_plan):
+            raise ValueError('Custom quality plan requires unique Full-view tasks and a new run')
     directory = Path(directory)
     cfg = copy.deepcopy(config)
     cfg.update(m2_profile=True, m2_view='full' if kind == 'full' else 'agent',
         candidate_q=[5], disk_backed_frames=True, rtc_audit_inputs=True,
         release_rtc_graph_before_artifacts=False,
         execution_mode='m2_fast_quality_actual_async', diagnostic_condition='actual_history')
+    from perceptbudget.model import vision_pool_factor
+    pool_factor = vision_pool_factor(cfg)
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl',
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
     path = directory/f'{kind}_quality.json'
@@ -196,6 +202,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             raise ValueError('Require six-task passed hard-reset cleanup gate')
         record['cleanup_gate'] = str(cleanup_gate)
     record['calibration_only'] = calibration_only
+    if task_plan is not None:
+        record.update(task_plan=list(task_plan), vision_pool_factor=pool_factor,
+            scope='fixed dual-view pooled perception across requested tasks; not Full/Fast switching',
+            holdout_policy='No calibration selection or extra holdout; execute the explicit task plan only')
     expected = {(s, 0, v) for s, _, v in calibration_plan(kind)}
     completed = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
     if calibration_only and expected <= completed:
@@ -235,6 +245,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             cohorts = (0, 3) if kind == 'full' and not calibration_only else (0,)
             # single-view holdout is appended only after a calibration-only decision.
             pending = [(suite, tid) for tid in cohorts for suite in SUITES]
+            if task_plan is not None:
+                pending = list(task_plan)
             if kind == 'single' and record.get('selection') and not calibration_only:
                 pending.extend((suite, 3) for suite in SUITES)
             while pending:
@@ -263,7 +275,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     base._infer_actions(model, prepared, task['instruction'], 50, {})
                     expected_views = 2 if kind == 'full' else 1
                     if model._pipe.pipeline.num_views != expected_views or \
-                       model._pipe.pipeline.vision_seq != 256*expected_views:
+                       model._pipe.pipeline.vision_seq != 256*expected_views or \
+                       model._pipe.pipeline.vision_seq_enc != 256*expected_views//pool_factor**2:
                         raise RuntimeError('Selected perception geometry not active')
                     record['native_release'] = release_unused_native_expert(model, torch)
                     adapter = OriginalOpenPiRTCAdapter(model, torch, cfg)
@@ -277,7 +290,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 adapter.bootstrap(prepared, task['instruction'], first)
                 num_views = 2 if kind == 'full' else 1
                 lengths = h50_state_prefix_lengths(first['rtc_guidance']['valid_prefix_length'],
-                                                   task['instruction'], num_views=num_views)
+                                                   task['instruction'], num_views=num_views,pool_factor=pool_factor)
                 cfg['source_step_prefixes'] = lengths
                 graph = adapter.prepare_step_bank(lengths, progress=lambda r: mem('prefix_'+str(r['valid'])))
                 record['graph_audits'].append(dict(suite=suite, task_id=tid, **graph))
@@ -292,14 +305,15 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = view
                     adapter.config = child_cfg
-                    active = create_run(child_cfg, 'M2', 'fast-quality-'+view)
+                    label = view if pool_factor == 1 else 'pool'+str(pool_factor)
+                    active = create_run(child_cfg, 'M2', 'fast-quality-'+label)
                     trace_dir = active/'rtc'
                     trace_dir.mkdir()
                     _write_json_atomically(active/'control_period_calibration.json', calibration)
                     mem('before_'+suite+str(tid)+view)
                     with (trace_dir/'trace.jsonl').open('w') as stream:
                         episode = probe.run_episode(env, task, 5, model, stats, child_cfg, np, torch,
-                            trace_dir, stream, rtc_adapter=adapter, condition='m2_'+view,
+                            trace_dir, stream, rtc_adapter=adapter, condition='m2_'+label,
                             refresh_policy='latest_due', pending_arm_gain=1.)
                     _write_json_atomically(active/'summary.json', dict(status='validating', episode=episode))
                     checked = audit(active)
@@ -311,6 +325,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         raise RuntimeError('Unexpected slow fallback in quality screen')
                     result = dict(status='completed', episode=episode, audit_passed=True,
                         view=view, suite=suite, task_id=tid,
+                        vision_pool_factor=pool_factor, visual_tokens=256*num_views//pool_factor**2,
                         steady_inference_median_ms=float(np.median([
                             (r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
                             for r in requests[1:]])) if len(requests)>1 else None)
@@ -327,6 +342,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     metadata['status'] = 'completed'
                     _write_json_atomically(active/'run.json', metadata)
                     record['episodes'].append(dict(suite=suite, task_id=tid, view=view,
+                        vision_pool_factor=pool_factor, visual_tokens=256*num_views//pool_factor**2,
                         run=str(active), outcome=episode['status'], steps=episode['steps'],
                         wall_seconds=episode['real_seconds'], audit_passed=True,
                         underflow_steps=len(episode['underflow_steps']), initial=info,

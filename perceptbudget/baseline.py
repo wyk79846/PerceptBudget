@@ -36,7 +36,7 @@ def apply_to_reference(reference, canonical):
 
 
 def validate(config):
-    if config.get('m2_profile') or config.get('m2_view', 'full') != 'full':
+    if config.get('m2_profile') or config.get('m2_view', 'full') != 'full' or config.get('m2_vision_pool_factor', 1) != 1:
         raise ValueError('M2 perception experiments cannot replace the deployment baseline')
     for key, value in FROZEN.items():
         if key not in config or config[key] != value:

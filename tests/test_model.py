@@ -5,6 +5,21 @@ import numpy as np
 from perceptbudget.model import validate_actions
 
 
+def test_pooling_requires_explicit_dual_view_experiment():
+    import pytest
+    from perceptbudget.model import vision_pool_factor
+    assert vision_pool_factor({}) == 1
+    for f in (2,4):
+        assert vision_pool_factor(dict(m2_profile=True,m2_vision_pool_factor=f)) == f
+        with pytest.raises(ValueError):
+            vision_pool_factor(dict(m2_vision_pool_factor=f))
+        with pytest.raises(ValueError):
+            vision_pool_factor(dict(m2_profile=True,m2_view='agent',m2_vision_pool_factor=f))
+    for f in (True,0,3,2.0):
+        with pytest.raises(ValueError):
+            vision_pool_factor(dict(m2_profile=True,m2_vision_pool_factor=f))
+
+
 class ActionShapeTests(unittest.TestCase):
     def test_h20_output_is_checked_and_copied(self):
         source = np.zeros((20, 7), dtype=np.float32)

@@ -60,6 +60,15 @@ M2固定输入短测入口：`--fast-probe --source-run <成功的H50 Spatial0 q
 
 连续测试内存修复：常驻建图流避免cuBLAS逐流工作区累计，精确长度图共用KV底层存储（无padding/模型数学变化）。新一轮Full三任务单次加载全部成功，51个长度动作/VJP范数对照误差0，未触发保护，释放图后的allocated持平；不保证任意长批次无峰值。[排查报告](../任务指导与相关参考/PerceptBudget_M2连续测试内存排查_20261021.md)。`scripts/diagnose_resident_memory.py`仅做无模型环境生命周期诊断。FlashRT未修改。
 
+M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python scripts/eval_pooled_views.py --pool-factor 2 4 --dry-run
+/home/wyk/venvs/lutvla/bin/python -u scripts/eval_pooled_views.py --pool-factor 2 4 --suite libero_spatial --task-ids 0 1 2 3 4 5 6 7 8 9
+```
+
+第二条顺序测两档，各10任务，每档一轮模型加载，共20回合；H50/N5/state/q5/seed7/init0固定，全程使用指定pool，不是Full/Fast动态切换。两路SigLIP仍完整编码512个token，后续实际消费128/32个；不是缩短视觉编码器本身。原生RTC精确前缀bank随token数缩短。`--probe-only`为固定输入短测，默认2次请求，不能当成功率。20261021两档短测324.01/276.55ms，图与同输入参考的动作/VJP范数误差0，闭环10任务待用户执行。结果分别在外部`M2/*-token-pool2-*`、`M2/*-token-pool4-*`，父`summary.json`及日志`POOL_TERMINAL_STATUS`记录包括外guard失败的真实退出状态；子日志为`worker.log`。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```

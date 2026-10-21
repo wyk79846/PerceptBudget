@@ -4,8 +4,18 @@ import importlib
 import os
 
 
+def vision_pool_factor(config):
+    factor = config.get('m2_vision_pool_factor', 1)
+    if type(factor) is not int or factor not in (1, 2, 4):
+        raise ValueError('vision pooling factor must be 1, 2 or 4')
+    if factor != 1 and (not config.get('m2_profile') or config.get('m2_view', 'full') != 'full'):
+        raise ValueError('Token pooling is restricted to explicit dual-view M2 experiments')
+    return factor
+
+
 def load_model(config):
     """Use the existing constructor's chunk_size; inference is unchanged."""
+    pool_factor = vision_pool_factor(config)
     if config["precision"] != "bfloat16":
         raise ValueError("This M1 adapter implements only the requested BF16 baseline")
     if config.get('native_gemm_policy', 'autotune') not in ('autotune', 'heuristic-first'):
@@ -36,7 +46,7 @@ def load_model(config):
     pipe = Pi05TorchFrontendRtx(
         config["checkpoint_path"], num_views=2 if view == 'full' else 1, chunk_size=config["H"],
         num_steps=config["N"], use_fp8=False, hardware="rtx_sm87",
-        vision_pool_factor=1, vision_num_layers=27, cache_frames=1,
+        vision_pool_factor=pool_factor, vision_num_layers=27, cache_frames=1,
         state_prompt_mode="fixed",
     )
     from perceptbudget.gemm_policy import apply_policy

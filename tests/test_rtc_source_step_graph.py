@@ -50,6 +50,19 @@ def test_h50_state_bank_covers_full_numeric_token_variation():
     with pytest.raises(ValueError):h50_state_prefix_lengths(640,'task',tokenizer)
 
 
+def test_pooled_prefix_bank_changes_visual_count_not_state_tokenization():
+    from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
+    class Tokenizer:
+        def encode(self,text,add_bos):
+            return [0]*(133 if 'State: 0 ' in text else 149)
+    full=h50_state_prefix_lengths(657,'task',Tokenizer())
+    for f,delta in ((2,384),(4,480)):
+        pooled=h50_state_prefix_lengths(657-delta,'task',Tokenizer(),pool_factor=f)
+        assert pooled == [n-delta for n in full]
+    with pytest.raises(ValueError):
+        h50_state_prefix_lengths(273,'task',Tokenizer(),pool_factor=True)
+
+
 def test_h50_number_token_width_bound_matches_installed_tokenizer():
     from pathlib import Path
     path=Path('/home/wyk/.cache/flash_rt/paligemma_tokenizer.model')

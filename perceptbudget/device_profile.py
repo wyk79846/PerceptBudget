@@ -175,13 +175,17 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5):
     expected_views = 2 if kind == 'full' else 1
     if pl.num_views != expected_views or pl.vision_seq != expected_views * 256:
         raise RuntimeError('View count did not reduce the actual pipeline geometry')
+    expected_pool=config.get('m2_vision_pool_factor',1)
+    if pl.vision_pool_factor != expected_pool or pl.vision_seq_enc != expected_views*256//expected_pool**2:
+        raise RuntimeError('Requested token pooling did not change encoder geometry')
     result = dict(status='running', kind=kind, source_run=str(source_run),
         scope='prepared-input context plus complete RTC VJP; not service L, success rate or dynamic energy saving',
         model_loads=1, load_and_prepare_seconds=time.monotonic()-start_load,
         input_frame_sha256=hashlib.sha256(frame.tobytes()).hexdigest(),
         old_target_sha256=hashlib.sha256(previous.tobytes()).hexdigest(),
         fixed_delay_steps=5, fixed_executed_steps=5,
-        num_views=pl.num_views, visual_tokens=pl.vision_seq,
+        num_views=pl.num_views, visual_tokens=pl.vision_seq_enc,
+        visual_tokens_before_pool=pl.vision_seq, vision_pool_factor=pl.vision_pool_factor,
         encoder_capacity=pl.encoder_seq_len, valid_prefix=valid,
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
         clock_settings_changed=False, flashrt_modified=False)

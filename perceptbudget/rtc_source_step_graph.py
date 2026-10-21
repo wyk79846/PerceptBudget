@@ -7,7 +7,7 @@ import copy
 import math
 
 
-def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2):
+def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,pool_factor=1):
     """8 varying state bins (-1..255), each 2..4 tokenizer tokens.
 
     The other 24 padded state values and task text stay fixed. No padding or
@@ -15,7 +15,9 @@ def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2):
     """
     if type(num_views) is not int or num_views not in (1,2):
         raise ValueError('H50 prefix coverage supports one or two views')
-    visual = 256*num_views
+    if type(pool_factor) is not int or pool_factor not in (1,2,4):
+        raise ValueError('invalid vision pooling factor')
+    visual = 256*num_views//(pool_factor*pool_factor)
     capacity = visual+200
     if type(initial_valid) is not int or not visual<=initial_valid<=capacity:
         raise ValueError('invalid H50 initial prefix for selected view count')
