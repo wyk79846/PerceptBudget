@@ -149,7 +149,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -195,6 +195,13 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
            or len(gate_record['cases']) != 6 or gate_record['render_cleanup']['errors']:
             raise ValueError('Require six-task passed hard-reset cleanup gate')
         record['cleanup_gate'] = str(cleanup_gate)
+    record['calibration_only'] = calibration_only
+    expected = {(s, 0, v) for s, _, v in calibration_plan(kind)}
+    completed = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
+    if calibration_only and expected <= completed:
+        record['status'] = 'completed'
+        _write_json_atomically(path, record)
+        return record
     def save():
         _write_json_atomically(path, record)
     save()
@@ -225,10 +232,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             from flash_rt.subgraphs.pi05.context_action import enable
             enable(model)
             _, env_class = base._libero_api()
-            cohorts = (0, 3) if kind == 'full' else (0,)
+            cohorts = (0, 3) if kind == 'full' and not calibration_only else (0,)
             # single-view holdout is appended only after a calibration-only decision.
             pending = [(suite, tid) for tid in cohorts for suite in SUITES]
-            if kind == 'single' and record.get('selection'):
+            if kind == 'single' and record.get('selection') and not calibration_only:
                 pending.extend((suite, 3) for suite in SUITES)
             while pending:
                 suite, tid = pending.pop(0)
@@ -340,7 +347,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     full = json.loads((directory/'full_quality.json').read_text())
                     record['selection'] = select_candidate(full['episodes'], record['episodes'])
                     save()
-                    if record['selection']:
+                    if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
             record['status'] = 'completed'
             save()

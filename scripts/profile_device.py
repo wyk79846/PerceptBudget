@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--resume-quality', type=Path, help='Resume only missing quality episodes after an exception')
     parser.add_argument('--cleanup-gate', type=Path, help='Passed six-task hard-reset render cleanup audit')
+    parser.add_argument('--calibration-only', action='store_true', help='Quality task0 screen only; no holdout or full-M2 claim')
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     validate(config)
@@ -66,7 +67,8 @@ def main():
             parser.error('Quality worker requires an existing M2 run directory')
         from perceptbudget.device_quality import resident_quality
         resident_quality(config, args.run_dir, args.quality_worker,
-                         resume=args.resume_quality is not None, cleanup_gate=args.cleanup_gate)
+                         resume=args.resume_quality is not None, cleanup_gate=args.cleanup_gate,
+                         calibration_only=args.calibration_only)
         return 0
     if args.resume_quality and not args.fast_quality:
         parser.error('--resume-quality requires --fast-quality')
@@ -96,7 +98,8 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 for kind in ('full', 'single'):
                     saved = run/f'{kind}_quality.json'
-                    if saved.exists() and json.loads(saved.read_text())['status'] == 'completed':
+                    if saved.exists() and json.loads(saved.read_text())['status'] == 'completed' and \
+                       (args.calibration_only or not json.loads(saved.read_text()).get('calibration_only')):
                         summary['quality'].append(json.loads(saved.read_text()))
                         continue
                     cmd = [config['python_executable'], str(ROOT/'scripts/guarded_run.py'), '--',
@@ -106,6 +109,8 @@ def main():
                         cmd += ['--resume-quality', str(run)]
                     if args.cleanup_gate:
                         cmd += ['--cleanup-gate', str(args.cleanup_gate)]
+                    if args.calibration_only:
+                        cmd += ['--calibration-only']
                     with (run/f'{kind}_quality.log').open('a') as log:
                         result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
                     if result.returncode:
@@ -118,6 +123,7 @@ def main():
             full, single = summary['quality']
             selected = single['selection']
             summary['selected_candidate'] = selected
+            summary['calibration_only'] = args.calibration_only
             full_holdout = [r for r in full['episodes'] if r['task_id']==3]
             fast_holdout = [r for r in single['episodes'] if r['task_id']==3]
             summary['fast_small_screen_passed'] = bool(selected and len(full_holdout)==len(fast_holdout)==3
