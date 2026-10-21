@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--sensor-check', action='store_true', help='GPU load steps, no model or clock changes')
     parser.add_argument('--fast-probe', action='store_true', help='Fixed-input Full and single-view RTC timing; no quality claim')
     parser.add_argument('--fast-quality', action='store_true', help='Resident Full/single-view paired screen, at most15 episodes')
+    parser.add_argument('--reset-check', action='store_true', help='No-model hard/soft environment reset replay audit')
     parser.add_argument('--source-run', type=Path, help='Successful H50 Spatial0 q5 source with original frames/actions')
     parser.add_argument('--repeats', type=int, default=5, choices=range(1, 21))
     parser.add_argument('--probe-worker', choices=('full', 'single'), help=argparse.SUPPRESS)
@@ -27,7 +28,7 @@ def main():
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     validate(config)
-    if sum((args.fast_probe, args.sensor_check, args.fast_quality)) > 1:
+    if sum((args.fast_probe, args.sensor_check, args.fast_quality, args.reset_check)) > 1:
         parser.error('Choose one M2 operation')
     if (args.fast_probe or args.probe_worker) and not args.source_run:
         parser.error('Fast probe requires --source-run')
@@ -47,6 +48,13 @@ def main():
     summary = discovery(config)
     (run / 'inventory.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
     try:
+        if args.reset_check:
+            from perceptbudget.device_quality import reset_reuse_audit
+            with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                summary['reset_reuse_audit'] = reset_reuse_audit(config, run)
+                if not summary['reset_reuse_audit']['passed']:
+                    raise RuntimeError('Environment reuse parity failed; do not use soft resets')
         if args.fast_quality:
             summary.update(scope='resident paired task0 calibration and task3 holdout', quality=[])
             with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:

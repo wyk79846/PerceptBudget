@@ -10,6 +10,78 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
+def reset_reuse_audit(config, directory):
+    """No model: verify constructor-preserving resets on all six screen tasks."""
+    import hashlib
+    import time
+    import numpy as np
+    from scripts import eval_q as base, probe_delay_buffer as probe
+    from perceptbudget.libero_input import raw_libero_state
+    from perceptbudget.experiment import _write_json_atomically
+    os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl',
+                      CUBLAS_WORKSPACE_CONFIG=':4096:8')
+    torch, _ = base._check_cuda_and_native(config)
+    base._patch_egl_cleanup()
+    _, cls = base._libero_api()
+    batch = Path(config['output_root'])/'M1/20261020T160525.143512Z-m1-h50-67126d0b'
+    index = json.loads((batch/'index.json').read_text())
+    result = dict(status='running', passed=False, cases=[], scope='reset-only replay; no model/clock changes')
+    def frame(obs):
+        return np.concatenate([obs['agentview_image'], obs['robot0_eye_in_hand_image']], axis=1)
+    for tid in (0, 3):
+        for suite in SUITES:
+            task = base._load_tasks([tid], [suite])[0]
+            source = Path(index['cells'][f'{suite}_task{tid:02d}_q5_actual_history']['result']['run'])
+            actions = [json.loads(line)['action'] for line in (source/'rtc/trace.jsonl').open()
+                       if '"control_step"' in line][:20]
+            captures = []
+            for soft in (False, True):
+                base._seed_process(7, np, torch)
+                env = base._make_env(cls, task)
+                env._pb_lock_fixtures = True
+                if soft:
+                    env.env.hard_reset = False
+                try:
+                    # Same calibration resets and 12 zero controls as quality runner.
+                    from scripts.complete_m1_h50 import calibrate
+                    observation, _ = calibrate(env, task, np)
+                    observation, _ = base._prepare_env_episode(env, task, np)
+                    rows = []
+                    for action in [None, *actions]:
+                        if action is not None:
+                            observation, _, _, _ = env.step(np.asarray(action, dtype=np.float32))
+                        rows.append(dict(state=env.env.sim.get_state().flatten().copy(),
+                            raw=raw_libero_state(observation).copy(), image=frame(observation).copy(),
+                            contacts=probe.snapshot_scene(env, observation)['contacts'],
+                            success=bool(env.check_success())))
+                    captures.append(rows)
+                finally:
+                    env.close()
+                    gc.collect()
+            states = max(float(np.max(np.abs(a['state']-b['state']))) for a,b in zip(*captures))
+            raw = max(float(np.max(np.abs(a['raw']-b['raw']))) for a,b in zip(*captures))
+            pixels = [np.abs(a['image'].astype(np.int16)-b['image'].astype(np.int16))
+                      for a,b in zip(*captures)]
+            changed = max(int(np.any(d!=0, axis=-1).sum()) for d in pixels)
+            maximum = max(int(d.max()) for d in pixels)
+            contact = all(a['contacts']==b['contacts'] and a['success']==b['success']
+                          for a,b in zip(*captures))
+            row = dict(suite=suite, task_id=tid, replay_steps=len(actions), state_max_abs=states,
+                       raw_state_max_abs=raw, max_changed_pixels=changed, max_channel_delta=maximum,
+                       contact_and_success_equal=contact,
+                       passed=states==0 and raw==0 and changed<=4 and maximum<=1 and contact)
+            result['cases'].append(row)
+            _write_json_atomically(Path(directory)/'reset_reuse_audit.json', result)
+            print('reset_audit='+json.dumps(row), flush=True)
+            if not row['passed']:
+                result['status'] = 'failed_gate'
+                _write_json_atomically(Path(directory)/'reset_reuse_audit.json', result)
+                return result
+    result.update(status='completed', passed=True)
+    _write_json_atomically(Path(directory)/'reset_reuse_audit.json', result)
+    return result
+
+
 def calibration_plan(kind):
     views = ('full',) if kind == 'full' else ('agent', 'wrist')
     return [(suite, 0, view) for suite in SUITES for view in views]
