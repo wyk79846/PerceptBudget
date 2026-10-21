@@ -33,6 +33,13 @@ def plan():
             (('sync_no_rtc',5),('actual_history',5),('actual_history',40))]
 
 
+def pending_cases(episodes):
+    completed=[(e['task_id'],e['mode'],e['q']) for e in episodes]
+    if len(completed)!=len(set(completed)) or any(c not in plan() for c in completed):
+        raise ValueError('duplicate or unexpected resident episode')
+    return [c for c in plan() if c not in completed]
+
+
 def cleanup(torch):
     import ctypes
     gc.collect();torch.cuda.empty_cache()
@@ -73,11 +80,15 @@ def power_windows(root,adapter,env,task,stats,np,torch):
     snapshot=base._make_snapshot(obs,stats,True)
     first={};adapter.bootstrap(snapshot,task['instruction'],first)
     previous=np.asarray(first['actions_raw'],dtype=np.float32)[5:].copy()
+    valid=first['rtc_guidance']['valid_prefix_length']
+    power_config['source_step_prefixes']=[valid]
+    power_config['screen'].update(suites=['libero_spatial'],task_ids=[task['task_id']])
+    graph_audit=adapter.prepare_step_bank([valid])
     guided_request(adapter,snapshot,task['instruction'],previous,-1)
     result=dict(status='running',blocks=[],requests=[],resident_model_reused=True,
         power_rail='INA3221 VDD_IN module input',poll_interval_seconds=.02,
         scope='fixed snapshot, full context + guided RTC VJP; simulation/rendering active; no power or clock changes',
-        device_before=probe.device_state(),config_snapshot=power_config,
+        device_before=probe.device_state(),config_snapshot=power_config,graph_audit=graph_audit,
         limitations=['fixed snapshot power calibration, not task success or implemented DVFS',
                     '20ms polling is not the sensor hardware update frequency; drain is separate from idle'])
     def save():base._write_json_atomic(root/'power.json',result)
@@ -108,7 +119,7 @@ def power_windows(root,adapter,env,task,stats,np,torch):
     return result
 
 
-def run(batch):
+def run(batch,resume=None):
     import numpy as np
     from perceptbudget.libero_input import load_libero_norm_stats
     from perceptbudget.rtc_memory import memory_record,release_unused_native_expert
@@ -129,11 +140,31 @@ def run(batch):
     os.environ.update(MUJOCO_GL='egl',MUJOCO_EGL_DEVICE_ID='0',PYOPENGL_PLATFORM='egl',CUBLAS_WORKSPACE_CONFIG=':4096:8')
     with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        root=create_run(config,'M1','h50-resident-completion',repo_root=ROOT)
+        root=resume if resume else create_run(config,'M1','h50-resident-completion',repo_root=ROOT)
         print('completion_dir='+str(root),flush=True)
-        summary=dict(status='loading',main_batch=str(batch),episodes=[],expected=6,
-                     model_load_count=0,suffix_load_count=0,task_graph_audits=[],memory=[])
-        def save():base._write_json_atomic(root/'summary.json',summary)
+        if resume:
+            summary=json.loads((root/'summary.json').read_text())
+            if summary['main_batch']!=str(batch) or summary.get('expected')!=6:
+                raise ValueError('resident resume batch mismatch')
+            for row in summary['episodes']:
+                if (row['task_id'],row['mode'],row['q']) not in plan():raise ValueError('unexpected saved resident case')
+                child=Path(row['run'])
+                if json.loads((child/'summary.json').read_text()).get('status')!='completed' or not audit(child)['passed']:
+                    raise ValueError('saved resident episode failed resume audit')
+            if summary.get('status')=='completed':return root
+            backup=root/f'summary_before_resume_{time.time_ns()}.json'
+            base._write_json_atomic(backup,summary)
+            summary.setdefault('exception_restarts',[]).append(dict(
+                prior_summary=str(backup),reason='guarded exit after4 episodes, renderer/reset memory pressure; resume missing only',
+                completed_before=len(summary['episodes']),source_commit=subprocess.check_output(
+                    ['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()))
+            summary['status']='loading'
+        else:
+            summary=dict(status='loading',main_batch=str(batch),episodes=[],expected=6,
+                         model_load_count=0,suffix_load_count=0,task_graph_audits=[],memory=[])
+        def save():
+            base._write_json_atomic(root/'summary.json',summary)
+            base._save_run_status(root,summary['status'])
         summary['egl_cleanup']=base._patch_egl_cleanup();save()
         torch,_=base._check_cuda_and_native(config);torch.use_deterministic_algorithms(True)
         def mem(stage):
@@ -147,11 +178,15 @@ def run(batch):
         try:
             from flash_rt.subgraphs.pi05.context_action import enable
             mem('before_model_load')
-            model=base._load_and_check_model(config,torch);summary['model_load_count']=1;enable(model)
+            model=base._load_and_check_model(config,torch);summary['model_load_count']+=1;enable(model)
             mem('after_model_load')
             _,cls=base._libero_api()
             root_expert=None
-            for task_id in (0,3):
+            remaining=pending_cases(summary['episodes'])
+            for task_id in sorted({s[0] for s in remaining}) or [3]:
+                if adapter is not None:
+                    torch.cuda.synchronize();adapter.step_bank=None;adapter.expert=root_expert
+                    cleanup(torch);mem('old_task_bank_released_before_environment')
                 task=base._load_tasks([task_id],['libero_spatial'])[0]
                 env=base._make_env(cls,task);env._pb_lock_fixtures=True
                 obs,calibration=calibrate(env,task,np)
@@ -162,13 +197,9 @@ def run(batch):
                     mem('after_native_release')
                     adapter=OriginalOpenPiRTCAdapter(model,torch,config);root_expert=adapter.expert
                     mem('after_suffix_load')
-                    summary['suffix_load_count']=1
+                    summary['suffix_load_count']+=1
                     gate=json.loads((Path(config['verified_reference_run'])/'summary.json').read_text())
                     if root_expert.provenance!=gate['original_source_hashes']:raise RuntimeError('source gate mismatch')
-                else:
-                    torch.cuda.synchronize();adapter.step_bank=None;adapter.expert=root_expert
-                    cleanup(torch)
-                    mem('old_task_bank_released')
                 first={};adapter.bootstrap(snapshot,task['instruction'],first)
                 lengths=h50_state_prefix_lengths(first['rtc_guidance']['valid_prefix_length'],task['instruction'])
                 adapter.config=config
@@ -180,7 +211,8 @@ def run(batch):
                 config['rtc_initial_control_period_seconds']=calibration['median_seconds']
                 config['rtc_initial_control_period_source']='same-environment 12 zero-action ticks; reset before episode'
                 mem(f'task{task_id}_prepared')
-                for tid,mode,q in [s for s in plan() if s[0]==task_id]:
+                summary['status']='running';save()
+                for tid,mode,q in [s for s in remaining if s[0]==task_id]:
                     cfg=copy.deepcopy(config)
                     cfg.update(candidate_q=[q],diagnostic_condition=mode,execution_mode='diagnostic_'+mode,
                         rtc_fixed_delay_estimate=0 if mode=='sync_no_rtc' else None,
@@ -217,6 +249,7 @@ def run(batch):
                         (r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000 for r in requests[1:]]))
                     result['status']='completed'
                     base._write_json_atomic(child/'summary.json',result)
+                    base._save_run_status(child,'completed')
                     summary['episodes'].append(dict(task_id=task_id,mode=mode,q=q,run=str(child),
                         outcome=episode['status'],steps=episode['steps'],real_seconds=episode['real_seconds'],
                         clean_run=clean['run'],audit_passed=True))
@@ -226,6 +259,8 @@ def run(batch):
                     active_child=None
                 env.close();env=None;cleanup(torch);mem(f'task{task_id}_environment_closed')
             # The same weights and final task's graph bank continue into power calibration.
+            torch.cuda.synchronize();adapter.step_bank=None;adapter.expert=root_expert
+            cleanup(torch);mem('bank_released_before_fixed_input_power')
             env=base._make_env(cls,dict(task,max_steps=10000));env._pb_lock_fixtures=True
             summary['status']='power_running';save()
             summary['power']=power_windows(root,adapter,env,task,stats,np,torch)
@@ -248,15 +283,18 @@ def run(batch):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--main-batch',type=Path,required=True)
+    parser.add_argument('--resume',type=Path,help='continue only missing cases after an exceptional guarded exit')
     parser.add_argument('--guarded-worker',action='store_true',help=argparse.SUPPRESS)
     args=parser.parse_args()
     if not args.guarded_worker:
-        return subprocess.call([sys.executable,str(ROOT/'scripts/guarded_run.py'),'--',sys.executable,'-u',
-            str(Path(__file__).resolve()),'--main-batch',str(args.main_batch),'--guarded-worker'])
+        command=[sys.executable,str(ROOT/'scripts/guarded_run.py'),'--',sys.executable,'-u',
+            str(Path(__file__).resolve()),'--main-batch',str(args.main_batch),'--guarded-worker']
+        if args.resume:command+=['--resume',str(args.resume)]
+        return subprocess.call(command)
     parent=Path(f'/proc/{os.getppid()}/cmdline').read_bytes().split(b'\0')
     if not any(Path(os.fsdecode(p)).name=='guarded_run.py' for p in parent if p):
         parser.error('standard 768MiB guard required')
-    run(args.main_batch)
+    run(args.main_batch,args.resume)
 
 
 if __name__=='__main__':main()

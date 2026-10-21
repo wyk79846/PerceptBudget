@@ -8,6 +8,14 @@ def test_only_six_planned_disturbance_cases():
                    (('sync_no_rtc',5),('actual_history',5),('actual_history',40))]
 
 
+def test_exceptional_resume_keeps_completed_cases_without_rerunning():
+    import pytest
+    from scripts.complete_m1_h50 import plan,pending_cases
+    saved=[dict(task_id=t,mode=m,q=q) for t,m,q in plan()[:4]]
+    assert pending_cases(saved)==[(3,'actual_history',5),(3,'actual_history',40)]
+    with pytest.raises(ValueError):pending_cases(saved+saved[:1])
+
+
 def test_initial_info_preserves_scene_and_frame_fingerprints(tmp_path):
     from scripts.complete_m1_h50 import initial_info
     import hashlib,struct
