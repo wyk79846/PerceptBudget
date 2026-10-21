@@ -30,7 +30,7 @@ def inventory(sys_root=Path('/sys')):
             'scaling_min_freq', 'scaling_max_freq', 'scaling_governor')}
     emc = sys_root / 'kernel/debug/bpmp/debug/clk/emc'
     domains['emc'] = {key: read_node(emc / key) for key in (
-        'rate', 'min_rate', 'max_rate', 'possible_rates', 'mrq_rate_locked')}
+        'rate', 'min_rate', 'max_rate', 'dvfs_table', 'mrq_rate_locked')}
     gpu_power = sys_root / 'devices/platform/bus@0/17000000.gpu/power'
     runtime = {key: read_node(gpu_power / key) for key in (
         'control', 'runtime_status', 'runtime_active_time', 'runtime_suspended_time')}

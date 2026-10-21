@@ -30,8 +30,11 @@ def load_model(config):
         from perceptbudget.compact_state import frontend_type
         Pi05TorchFrontendRtx=frontend_type(Pi05TorchFrontendRtx,config['state_prompt_capacity'])
 
+    view = config.get('m2_view', 'full')
+    if view not in ('full', 'agent', 'wrist') or (view != 'full' and not config.get('m2_profile')):
+        raise ValueError('Single-view input is limited to explicit M2 experiments')
     pipe = Pi05TorchFrontendRtx(
-        config["checkpoint_path"], num_views=2, chunk_size=config["H"],
+        config["checkpoint_path"], num_views=2 if view == 'full' else 1, chunk_size=config["H"],
         num_steps=config["N"], use_fp8=False, hardware="rtx_sm87",
         vision_pool_factor=1, vision_num_layers=27, cache_frames=1,
         state_prompt_mode="fixed",

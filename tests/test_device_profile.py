@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from perceptbudget.device_control import inventory, read_node
-from perceptbudget.device_profile import discovery, inspect_fast_interface, sensor_steps
+from perceptbudget.device_profile import discovery, inspect_fast_interface, sensor_steps, select_images
 
 
 def test_missing_and_nonwritable_interfaces_are_explicit(tmp_path):
@@ -55,3 +55,24 @@ def test_discovery_has_no_service_measurements():
         result = discovery({'flashrt_root': '/unused', 'baseline_id': 'frozen'})
     assert result['full_service_measurements_started'] is False
     assert result['clock_settings_changed'] is False
+
+
+def test_single_view_really_drops_the_other_image_and_preserves_state():
+    agent, wrist, state = object(), object(), object()
+    original = dict(images=[agent, wrist], state=state)
+    assert select_images(original, 'agent')['images'] == [agent]
+    assert select_images(original, 'wrist')['images'] == [wrist]
+    assert select_images(original, 'wrist')['state'] is state
+    assert len(select_images(original, 'full')['images']) == 2
+    assert original['images'] == [agent, wrist]
+
+
+def test_baseline_rejects_m2_view_overrides():
+    import json
+    import pytest
+    from perceptbudget.baseline import validate
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((root/'config.json').read_text())
+    for update in ({'m2_profile': True}, {'m2_view': 'wrist'}):
+        with pytest.raises(ValueError):
+            validate(dict(config, **update))
