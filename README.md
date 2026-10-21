@@ -77,6 +77,8 @@ M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）�
 
 查证FlashRT本地部署文档明确将pool2/4列为有损选项、须逐任务验证，性能表及示例preset均pool1，不能拿接口存在当质量保证。三份失败任务固定输入对照中，保留原token的抽样比均值压缩更接近Full，但尚无成功率结论；平均但保留原长度/位置也会改变动作，不能只归因位置。[文档与对照报告](../任务指导与相关参考/PerceptBudget_FlashRT池化说明与固定输入对照_20261021.md)。`scripts/diagnose_pool_mechanism.py`仅诊断动作敏感性，复用Full大小分配，不作为新生产/加速路径，不训练或启动闭环。
 
+旧KV专家重算隔离入口：`scripts/eval_expert_recompute.py --suite libero_spatial --task-id 0`，默认只同任务两回合、一轮模型加载，正常RTC对照Full/仅专家交替；`--dry-run`不加载。bootstrap始终Full，不压缩token，复用轮次也复用旧state；运行时/独立审计限制原KV的H步名义有效期，不将它当已验证安全缓冲。首测各1次均成功，但77→197步、6.17→14.61秒；expert-only约170ms，Full约490ms。当前快慢模式共享延迟history，对expert实际2–3步估成8–9步，需分模式估计后才适合进一步评价，不直接认定stale KV为唯一减速原因、不自动扩测。[报告](../任务指导与相关参考/PerceptBudget_旧KV专家重算配对小测_20261021.md)。生产默认仍每次更新KV，FlashRT未改。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```

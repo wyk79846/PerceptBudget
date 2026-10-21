@@ -160,7 +160,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -176,6 +176,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
+    if recompute_comparison and (kind!='full' or task_plan is None or resume or
+        config.get('m2_vision_pool_factor',1)!=1):
+        raise ValueError('Expert recompute comparison requires Full geometry and explicit new tasks')
     if task_plan is not None:
         if kind != 'full' or resume or not task_plan or len(set(task_plan)) != len(task_plan) or any(
                 s not in SUITES or type(t) is not int or not 0<=t<10 for s,t in task_plan):
@@ -186,6 +189,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         candidate_q=[5], disk_backed_frames=True, rtc_audit_inputs=True,
         release_rtc_graph_before_artifacts=False,
         execution_mode='m2_fast_quality_actual_async', diagnostic_condition='actual_history')
+    if recompute_comparison:
+        from perceptbudget.rtc_kv_reuse import RecomputeRTCAdapter
+        OriginalOpenPiRTCAdapter=RecomputeRTCAdapter
+        cfg.update(m2_expert_recompute=True,m2_reuse_enabled=False)
     from perceptbudget.model import vision_pool_factor
     pool_factor = vision_pool_factor(cfg)
     from perceptbudget.mixed_view_pool import visual_tokens
@@ -220,6 +227,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             pooled_view=cfg.get('m2_pool_view','both'),visual_tokens=expected_tokens,
             scope='fixed dual-view pooled perception across requested tasks; not Full/Fast switching',
             holdout_policy='No calibration selection or extra holdout; execute the explicit task plan only')
+    if recompute_comparison:
+        record.update(recompute_comparison=True,
+            scope='paired Full vs alternating stale-KV expert-only RTC; no spatial compression',
+            reuse_contract='bootstrap Full; at most one expert-only request after each Full; execution before original H-step nominal expiry')
     expected = {(s, 0, v) for s, _, v in calibration_plan(kind)}
     completed = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
     if calibration_only and expected <= completed:
@@ -267,6 +278,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 suite, tid = pending.pop(0)
                 views = (('full',) if kind == 'full' else
                          ('agent', 'wrist') if tid == 0 else (record['selection'],))
+                if recompute_comparison:
+                    views=('full','kv_reuse')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -316,9 +329,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
-                    current_view = view
+                    current_view = 'full' if recompute_comparison else view
                     child_cfg = copy.deepcopy(cfg)
-                    child_cfg['m2_view'] = view
+                    child_cfg['m2_view'] = current_view
+                    if recompute_comparison:
+                        child_cfg['m2_reuse_enabled']=view=='kv_reuse'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M2', 'fast-quality-'+label)

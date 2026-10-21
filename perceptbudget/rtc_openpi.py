@@ -109,12 +109,8 @@ class OriginalOpenPiRTCAdapter:
         import math
         return max(1, math.ceil(self.latency_estimate_seconds/period))
 
-    def _predict(self, snapshot, prompt, previous_raw, delay, executed, request):
-        import numpy as np
-        from flash_rt.core.utils.actions import unnormalize_actions
-        from perceptbudget.openpi_reference import sample_original_rtc
-        torch, pipe, pl = self.torch, self.pipe, self.pipeline
-        request['inference_started_monotonic'] = time.monotonic()
+    def _prepare_context(self,snapshot,prompt,request,*,guided):
+        torch,pipe,pl=self.torch,self.pipe,self.pipeline
         with torch.cuda.stream(pipe._graph_torch_stream):
             self.model.set_prompt(prompt, state=snapshot.get('state'))
             pipe._fill_img_buf({'images': snapshot['images']})
@@ -122,7 +118,15 @@ class OriginalOpenPiRTCAdapter:
                                                      pipe._graph_torch_stream.cuda_stream)
             pl._context_graph.replay(pl._graph_stream)
         pipe._graph_torch_stream.synchronize()
-        valid = int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
+        return int(pl.attn.dec_devpos.item()) if pl._fixed_shape else int(pl.encoder_seq_len)
+
+    def _predict(self, snapshot, prompt, previous_raw, delay, executed, request):
+        import numpy as np
+        from flash_rt.core.utils.actions import unnormalize_actions
+        from perceptbudget.openpi_reference import sample_original_rtc
+        torch, pipe, pl = self.torch, self.pipe, self.pipeline
+        request['inference_started_monotonic'] = time.monotonic()
+        valid = self._prepare_context(snapshot,prompt,request,guided=previous_raw is not None)
         step_graph=None
         if self.step_bank is not None:
             self.expert,step_graph=self.step_bank.select(valid)

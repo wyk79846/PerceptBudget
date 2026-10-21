@@ -79,6 +79,22 @@ def audit(run):
         else:
             normalized=(np.asarray(scene['raw_state'],dtype=np.float32)-low)/(high-low+1e-6)*2-1
         check('state_normalization',eq(request['model_state'],normalized),pid)
+        if cfg.get('m2_expert_recompute'):
+            k=request.get('kv_recompute',{})
+            mode=k.get('mode')
+            check('kv_mode_declared',mode in ('full','expert_only'),pid)
+            src=by_id.get(k.get('source_prediction_id'),{})
+            check('kv_source_is_full',src.get('kv_recompute',{}).get('mode')=='full',pid)
+            check('kv_source_state',eq(k.get('source_raw_state'),src.get('observation_raw_state')),pid)
+            check('kv_source_step',k.get('source_observation_step')==src.get('observation_step'),pid)
+            check('kv_source_valid_length',g.get('valid_prefix_length')==src.get('rtc_guidance',{}).get('valid_prefix_length'),pid)
+            check('kv_nominal_expiry',k.get('nominal_expiry_step')==src.get('observation_step',0)+cfg['H'],pid)
+            check('kv_current_inputs_encoded',k.get('current_images_encoded')==(mode=='full')
+                  and k.get('current_state_encoded')==(mode=='full'),pid)
+            if mode=='expert_only':
+                previous_request=by_id.get(pid-1,{})
+                check('kv_reuse_enabled',bool(cfg.get('m2_reuse_enabled')),pid)
+                check('kv_no_consecutive_reuse',previous_request.get('kv_recompute',{}).get('mode')=='full',pid)
         check('input_timestamp_order',request['observation_monotonic']<=request['input_ready_monotonic']
             <=request['inference_started_monotonic']<=request['inference_ended_monotonic']<=request['ready_monotonic'],pid)
         if origin:
@@ -145,6 +161,9 @@ def audit(run):
             and row['source']['offset']==offset
             and row['source']['origin_step']==request['observation_step']
             and row['applied_arm_gain']==1 and eq(row['action'],request['actions'][offset]),step)
+        if cfg.get('m2_expert_recompute'):
+            check('kv_execution_before_original_expiry',
+                step<request.get('kv_recompute',{}).get('nominal_expiry_step',-1),step)
     summary_path=run/'summary.json'
     if summary_path.exists():
         summary=json.loads(summary_path.read_text())

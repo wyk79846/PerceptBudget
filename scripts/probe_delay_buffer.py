@@ -543,6 +543,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 action = np.zeros(7, dtype=np.float32)
                 source = None
             else:
+                if rtc_adapter is not None and hasattr(rtc_adapter,'validate_execution'):
+                    rtc_adapter.validate_execution(requests[item[1]],step)
                 action = np.asarray(item[0], dtype=np.float32)
                 source = {'prediction_id': item[1], 'origin_step': item[2],
                           'offset': item[3], 'beyond_sync_q_prefix': item[3] >= q}
