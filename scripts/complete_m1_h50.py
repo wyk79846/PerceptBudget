@@ -21,9 +21,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from scripts import eval_q as base, probe_delay_buffer as probe
 from scripts.diagnose_rtc_handoff import sync_episode
-from scripts.probe_m11 import make_hook
+from perceptbudget.disturbance import make_hook
 from scripts.probe_m1_h50_power import reference_config, guided_request, measure_block
-from scripts.probe_power_states import block_schedule, measurement_summary
+from perceptbudget.power_windows import block_schedule, measurement_summary
 from scripts.run_m1_h50 import compare_initial
 from perceptbudget.experiment import create_run
 
@@ -126,7 +126,7 @@ def run(batch,resume=None):
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
     from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
     from scripts.audit_rtc_system import audit
-    from scripts.probe_rtc_step import timed
+    from perceptbudget.measurement import timed
     index=json.loads((batch/'index.json').read_text())
     if index.get('status')!='completed' or index.get('completed')!=300:
         raise ValueError('complete the main 300 episodes first')

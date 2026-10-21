@@ -66,3 +66,24 @@ def nudge_object(env, target, delta_xyz):
         'actual_delta': (after_q[:3] - before_q[:3]).tolist(),
         'simtime_before': before_time, 'simtime_after': after_time,
     }
+
+
+
+TARGET = 'akita_black_bowl_1'
+
+def make_hook(enabled, events):
+    def hook(env, observation, step):
+        if not enabled or step != 30:
+            return observation, None
+        if events:
+            raise RuntimeError('Disturbance must occur exactly once')
+        event = nudge_object(env, TARGET, (.02, 0., 0.))
+        observation = env.env._get_observations(force_update=True)
+        observed = observation[TARGET + '_pos']
+        if any(abs(float(x)-y) > 1e-8 for x, y in zip(observed, event['after_pos'])):
+            raise RuntimeError('Object observation cache did not refresh after disturbance')
+        event.update(step=step, timing='before observation and action; sim time unchanged',
+                     refreshed_observed_target_pos=observed.tolist())
+        events.append(event)
+        return observation, event
+    return hook

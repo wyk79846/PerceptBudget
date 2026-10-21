@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.probe_power_states import block_schedule, measurement_summary
+from perceptbudget.power_windows import block_schedule, measurement_summary
 from scripts import eval_q as base
 
 PROFILE = 'lerobot_h50_quantiles_v044'
@@ -242,7 +242,7 @@ def main(argv=None):
         record = provenance(args.reference_run)
         import hashlib
         record['source_hashes']['scripts/probe_m1_h50_power.py'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-        record['source_hashes']['scripts/probe_power_states.py'] = hashlib.sha256((ROOT/'scripts/probe_power_states.py').read_bytes()).hexdigest()
+        record['source_hashes']['perceptbudget/power_windows.py'] = hashlib.sha256((ROOT/'perceptbudget/power_windows.py').read_bytes()).hexdigest()
         record['norm_stats_sha256'] = hashlib.sha256(Path(config['norm_stats_path']).read_bytes()).hexdigest()
         record['reference_summary'] = json.loads((args.reference_run/'summary.json').read_text())
         base._write_json_atomic(root/'provenance.json', record)

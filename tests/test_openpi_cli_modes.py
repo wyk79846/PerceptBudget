@@ -1,69 +1,15 @@
+"""The old experimental CLI is retired; use the frozen baseline entry."""
 import subprocess
 import sys
 from pathlib import Path
 
-
-def test_actual_mode_rejects_paused_and_ungated_combinations_before_gpu():
+def test_internal_helpers_cannot_silently_run_as_old_cli():
     root=Path(__file__).resolve().parents[1]
-    for flags in (['--actual-delay','--controlled-delay-five'],
-                  ['--actual-delay','--timing-only'],
-                  ['--actual-delay'],['--experimental-varlen']):
-        result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],
-            cwd=root,capture_output=True,text=True)
+    for script in ('eval_rtc_openpi.py', 'eval_q.py'):
+        result=subprocess.run([sys.executable, 'scripts/'+script, '--horizon', '20'],
+                              cwd=root, capture_output=True, text=True)
         assert result.returncode == 2
-        assert 'error:' in result.stderr
-
-
-def test_horizon_50_is_not_silently_applied_to_fixed_h20_reference():
-    root=Path(__file__).resolve().parents[1]
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py','--horizon','50','--verify-only'],
-        cwd=root,capture_output=True,text=True)
-    assert result.returncode == 2
-    assert 'requires explicit --actual-delay' in result.stderr
-
-
-def test_horizon_25_is_recognized_but_requires_explicit_actual_mode():
-    root=Path(__file__).resolve().parents[1]
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py','--horizon','25','--verify-only'],
-        cwd=root,capture_output=True,text=True)
-    assert result.returncode == 2
-    assert 'requires explicit --actual-delay' in result.stderr
-
-
-def test_packed_conditioning_requires_explicit_source_graph_bank():
-    root=Path(__file__).resolve().parents[1]
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py','--source-packed-conditioning'],
-        cwd=root,capture_output=True,text=True)
-    assert result.returncode==2
-    assert 'requires source-step-prefixes or profile' in result.stderr
-
-
-def test_source_step_actual_mode_accepts_new_backend_but_still_requires_gate():
-    root=Path(__file__).resolve().parents[1]
-    flags=['--actual-delay','--author-order-reference','--horizon','25',
-           '--source-step-prefixes','566','567','568','--source-packed-conditioning']
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],
-        cwd=root,capture_output=True,text=True)
-    assert result.returncode==2
-    assert 'require --verify-only or a passed --verified-run' in result.stderr
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags,'--controlled-delay-five'],
-        cwd=root,capture_output=True,text=True)
-    assert result.returncode==2
-    assert '--actual-delay cannot combine with controlled delay' in result.stderr
-
-
-def test_fixed_guidance_estimate_is_not_a_controlled_wait():
-    root=Path(__file__).resolve().parents[1]
-    for flags in (['--fixed-delay-estimate','8'],
-                  ['--actual-delay','--author-order-reference','--fixed-delay-estimate','25','--horizon','25']):
-        result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],cwd=root,capture_output=True,text=True)
-        assert result.returncode==2
-        assert '--fixed-delay-estimate requires' in result.stderr
-    flags=['--actual-delay','--author-order-reference','--horizon','25',
-           '--source-step-prefixes','566','567','568','--fixed-delay-estimate','8']
-    result=subprocess.run([sys.executable,'scripts/eval_rtc_openpi.py',*flags],cwd=root,capture_output=True,text=True)
-    assert result.returncode==2
-    assert 'require --verify-only or a passed --verified-run' in result.stderr
+        assert 'run_baseline.py' in result.stderr
 
 
 def test_h50_source_horizon_transfer_requires_explicit_opt_in():

@@ -17,11 +17,13 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from perceptbudget.experiment import create_run
+from perceptbudget.experiment import load_config
+from perceptbudget.baseline import apply_to_reference
 from scripts import eval_rtc_openpi as runner
 from scripts import probe_delay_buffer as probe
 
-DEFAULT_MODES = ('sync_no_rtc', 'controlled_d5', 'actual_est8')
-MODES = DEFAULT_MODES + ('controlled_d8','actual_history')
+DEFAULT_MODES = ('actual_history',)
+MODES = ('actual_history', 'sync_no_rtc', 'controlled_d5', 'controlled_d8', 'actual_est8')
 
 
 def sync_episode(original, *args, **kwargs):
@@ -57,7 +59,10 @@ def configuration(reference, mode):
 
 def worker(reference_run, mode, parent, task_id=2, beta=5., q=5, horizon=20, checkpoint_profile='old', *, exact_flash=False, audit_attention=False, suffix_vjp=False, fused_norm=False, audit_norm=False, gemm_policy=None, suite='libero_spatial', calibrate_control_period=False):
     reference = json.loads((reference_run / 'run.json').read_text())['config_snapshot']
+    reference = apply_to_reference(reference, load_config(repo_root=ROOT))
     config = configuration(reference, mode)
+    config['action_handoff'] = 'rtc_vjp_actual_history'
+    config['baseline_id'] = 'pi05-h50-n5-state-rtc-flash-norm-autotune'
     config['rtc_suite']=suite
     config['screen']['suites']=[suite]
     config['rtc_calibrate_control_period']=bool(calibrate_control_period)
@@ -161,20 +166,20 @@ def main():
     parser.add_argument('--conditions', nargs='+', choices=MODES, default=DEFAULT_MODES)
     parser.add_argument('--task-ids', nargs='+', type=int, choices=range(10), default=[2])
     parser.add_argument('--task-id', type=int, choices=range(10), default=2, help='isolated worker task')
-    parser.add_argument('--beta',type=float,choices=(1.,2.,5.,10.),default=5.,help='explicit RTC guidance cap; default unchanged')
-    parser.add_argument('--q',type=int,choices=(5,8,10,15,20,30,40),default=5,help='minimum control-step interval between inference starts')
+    parser.add_argument('--beta',type=float,choices=(5.,),default=5.,help='explicit RTC guidance cap; default unchanged')
+    parser.add_argument('--q',type=int,choices=(5,10,20,30,40),default=5,help='minimum control-step interval between inference starts')
     parser.add_argument('--suite',choices=('libero_spatial','libero_object','libero_goal'),default='libero_spatial')
-    parser.add_argument('--calibrate-control-period',action='store_true',help='measure initial control period in the current environment before resetting')
-    parser.add_argument('--horizon',type=int,choices=(10,20,50),default=20,help='explicit action horizon experiment; does not change defaults')
-    parser.add_argument('--checkpoint-profile',choices=('old','h50'),default='old')
-    parser.add_argument('--gemm-policy',choices=('heuristic-first','autotune'),default=None,
+    parser.add_argument('--calibrate-control-period',action='store_true',default=True,help='measure initial control period in the current environment before resetting')
+    parser.add_argument('--horizon',type=int,choices=(50,),default=50,help='explicit action horizon experiment; does not change defaults')
+    parser.add_argument('--checkpoint-profile',choices=('h50',),default='h50')
+    parser.add_argument('--gemm-policy',choices=('autotune',),default='autotune',
                         help='explicit native GEMM selection policy; inherited when omitted')
-    parser.add_argument('--exact-flash-attention',action='store_true',help='experimental original expert with exact-context Flash SDPA')
-    parser.add_argument('--suffix-only-vjp',action='store_true',help='experimental eager attention with constant-prefix KV gradient elimination; not combined with Flash SDPA')
-    parser.add_argument('--fused-norm',action='store_true',help='opt-in FP32-style AdaRMS fusion on exact FlashAttention')
+    parser.add_argument('--exact-flash-attention',action='store_true',default=True,help='experimental original expert with exact-context Flash SDPA')
+    parser.add_argument('--fused-norm',action='store_true',default=True,help='opt-in FP32-style AdaRMS fusion on exact FlashAttention')
     parser.add_argument('--audit-norm-inputs',action='store_true',help='same-input norm-fusion audit against retained FlashAttention before rollout')
     parser.add_argument('--audit-attention-inputs',action='store_true',help='initial same-KV/noise/target comparison before candidate rollout')
     args = parser.parse_args()
+    args.suffix_only_vjp = False
     if args.fused_norm and not args.exact_flash_attention:
         parser.error('fused norm requires --exact-flash-attention')
     if args.audit_norm_inputs and not args.fused_norm:
@@ -198,6 +203,7 @@ def main():
     config = json.loads((args.reference_run / 'run.json').read_text())['config_snapshot']
     if (config['H'], config['N'], config['screen']['task_ids']) != (20, 5, [2]):
         raise ValueError('diagnostic is explicitly scoped to H20/N5/Spatial task2')
+    config = apply_to_reference(config, load_config(repo_root=ROOT))
     config['rtc_beta']=args.beta
     config['rtc_suite']=args.suite
     config['screen']['suites']=[args.suite]

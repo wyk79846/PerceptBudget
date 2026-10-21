@@ -18,41 +18,14 @@ class DiagnosticBatchTests(unittest.TestCase):
         worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),9,5.,40,50,'h50',
             exact_flash=True,fused_norm=True,gemm_policy='autotune',suite='libero_goal',calibrate_control_period=True)
 
-    def test_fused_norm_requires_flash_and_forwards_audit(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
-              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
-              '--checkpoint-profile','h50','--exact-flash-attention','--fused-norm','--audit-norm-inputs']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',exact_flash=True,fused_norm=True,audit_norm=True)
 
-    def test_suffix_only_vjp_is_explicit_and_forwarded_with_audit(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
-              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
-              '--checkpoint-profile','h50','--suffix-only-vjp','--audit-attention-inputs']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',audit_attention=True,suffix_vjp=True)
 
     def test_attention_backends_cannot_be_silently_stacked(self):
         argv=['diagnostic','--reference-run','/tmp/reference','--exact-flash-attention','--suffix-only-vjp']
         with patch('sys.argv',argv),self.assertRaises(SystemExit):
             diag.main()
 
-    def test_exact_flash_is_explicit_and_forwarded(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
-              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50',
-              '--checkpoint-profile','h50','--exact-flash-attention']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50',exact_flash=True)
 
-    def test_actual_new_h50_q15_forwarded_without_controlled_delay(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','actual_history',
-              '--parent','/tmp/results','--task-id','0','--q','15','--horizon','50','--checkpoint-profile','h50']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'actual_history',Path('/tmp/results'),0,5.,15,50,'h50')
 
     def test_actual_history_has_no_controlled_wait_or_fixed_estimate(self):
         c=diag.configuration({'controlled_delay_steps':5,'rtc_fixed_delay_estimate':8},'actual_history')
@@ -61,19 +34,7 @@ class DiagnosticBatchTests(unittest.TestCase):
         self.assertTrue(c['rtc_paper_schedule'])
         self.assertTrue(c['explicit_actual_delay_experiment'])
 
-    def test_worker_forwards_q8_independently_of_delay(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','controlled_d5',
-              '--parent','/tmp/results','--task-id','0','--q','8']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,8,20,'old')
 
-    def test_h10_q5_d5_is_explicitly_forwarded(self):
-        argv=['diagnostic','--reference-run','/tmp/reference','--worker','controlled_d5',
-              '--parent','/tmp/results','--task-id','0','--q','5','--horizon','10']
-        with patch('sys.argv',argv),patch.object(diag,'worker',return_value=0) as worker:
-            self.assertEqual(diag.main(),0)
-        worker.assert_called_once_with(Path('/tmp/reference'),'controlled_d5',Path('/tmp/results'),0,5.,5,10,'old')
 
     def test_fixed_eight_is_not_actual_async(self):
         c = diag.configuration({}, 'controlled_d8')

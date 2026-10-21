@@ -9,10 +9,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.analyze_async_q import (bootstrap_mean, describe, EVENT_RULES,
+from perceptbudget.analysis_metrics import (bootstrap_mean, describe, EVENT_RULES,
                                     prediction_events, summarize_event_types)
-from scripts.analyze_sync_quality import resample
-from scripts.analyze_opportunity import _merge, _number
+from perceptbudget.trajectory_metrics import resample
+from perceptbudget.energy_metrics import _merge, _number
 
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 QS = (5, 10, 20, 30, 40)

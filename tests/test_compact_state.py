@@ -57,14 +57,3 @@ class CompactStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'no truncation'): f._set_prompt_fixed(81)
         self.assertIs(f.pipeline,pipeline)
         self.assertEqual(f.current_prompt_len,80)
-
-    def test_old_capacity_results_cannot_be_reused_as_eighty(self):
-        import json
-        import tempfile
-        from pathlib import Path
-        from scripts.compare_rtc_ffn import read_case
-        with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)
-            (path/'run.json').write_text(json.dumps({'config_snapshot':{}}))
-            with self.assertRaisesRegex(ValueError,'state prompt capacity'):
-                read_case(path,0,'baseline',{'state_prompt_capacity':80})

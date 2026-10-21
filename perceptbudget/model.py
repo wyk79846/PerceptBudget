@@ -10,7 +10,7 @@ def load_model(config):
         raise ValueError("This M1 adapter implements only the requested BF16 baseline")
     if config.get('native_gemm_policy', 'autotune') not in ('autotune', 'heuristic-first'):
         raise ValueError('Unknown native GEMM policy')
-    from scripts.run_flashrt import select_flashrt
+    from perceptbudget.flashrt_import import select_flashrt
 
     select_flashrt(config["flashrt_root"], config["openpi_root"])
     # Fail before allocating checkpoint copies if the clean checkout isn't built.

@@ -70,7 +70,7 @@ def provenance(reference):
         return subprocess.check_output(['git', *args], cwd=ROOT, text=True).strip()
     # Hash live code as well as recording HEAD: shared worktrees may be dirty.
     entrypoints = ('diagnose_rtc_handoff.py', 'eval_rtc_openpi.py', 'probe_delay_buffer.py',
-                   'eval_q.py', 'probe_rtc_step.py', 'guarded_run.py', 'run_m1_h50.py',
+                   'eval_q.py', 'guarded_run.py', 'run_m1_h50.py',
                    'audit_rtc_system.py', 'libero_tasks.py')
     files = sorted({ROOT / 'scripts' / name for name in entrypoints}
                    | set(ROOT.glob('perceptbudget/**/*.py'))

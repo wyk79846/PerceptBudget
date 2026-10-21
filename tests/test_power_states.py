@@ -1,7 +1,7 @@
 import unittest
 
 from perceptbudget.power import PowerReading
-from scripts.probe_power_states import block_schedule, measurement_summary
+from perceptbudget.power_windows import block_schedule, measurement_summary
 
 
 class PowerStatesTest(unittest.TestCase):

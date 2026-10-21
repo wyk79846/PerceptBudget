@@ -1,4 +1,4 @@
-"""Explicit adapter for the pinned LeRobot H50 LIBERO release; no global switch."""
+"""Checkpoint mapping and preprocessing for the sole pinned H50 baseline."""
 import json
 from pathlib import Path
 

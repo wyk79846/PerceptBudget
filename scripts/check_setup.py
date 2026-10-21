@@ -11,14 +11,15 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 FLASHRT_REVISION = "e4fe1232ee49f8d3cd96e32706114fd960b320fb"
-FLASHRT_ENTRY = PROJECT_ROOT / "scripts" / "run_flashrt.py"
 PATHS = {
     "python_executable": "executable", "flashrt_root": "directory",
     "openpi_root": "directory", "checkpoint_path": "directory",
     "model_path": "file", "norm_stats_path": "file", "source_document": "file",
 }
-FILES = {"model_path": "model.safetensors", "norm_stats_path": "norm_stats.json"}
+FILES = {"model_path": "model.safetensors", "norm_stats_path": ("norm_stats.json", "perceptbudget_norm_stats.json")}
 REQUIRED = set(PATHS) | {"model_id", "flashrt_revision", "output_root", "candidate_q", "H", "N", "precision", "state_enabled"}
 
 
@@ -44,8 +45,8 @@ def check_path(config, key, kind, results):
         message = "必须是目录"
     elif kind != "directory" and not path.is_file():
         message = "必须是文件"
-    elif key in FILES and path.name != FILES[key]:
-        message = "文件名应为 " + FILES[key]
+    elif key in FILES and path.name not in ((FILES[key],) if isinstance(FILES[key], str) else FILES[key]):
+        message = "文件名应为 " + str(FILES[key])
     elif kind == "executable" and not os.access(path, os.X_OK):
         message = "文件不可执行"
     else:
@@ -74,7 +75,11 @@ def validate_config(config):
     model_id = config["model_id"]
     if not isinstance(model_id, str) or not model_id.strip():
         add(results, "model_id", "error", "必须是非空模型标识")
-    elif checkpoint and checkpoint.name != model_id:
+    elif checkpoint and checkpoint.name != model_id and not (
+        config.get("checkpoint_profile") == "lerobot_h50_quantiles_v044"
+        and model_id == "lerobot_h50_quantiles_v044"
+        and checkpoint.name == "lerobot_pi05_libero_h50_quantiles_v044"
+    ):
         add(results, "model_id", "error", "应与 checkpoint 目录名一致")
     if checkpoint and model and model.resolve().parent != checkpoint.resolve():
         add(results, "model_path", "error", "model.safetensors 应位于 checkpoint 目录")
@@ -114,6 +119,13 @@ def validate_config(config):
             add(results, "output_root", "ok" if output.exists() else "warning", "外部目录可用" if output.exists() else "尚不存在；不会创建")
     if "baseline_status" in config:
         add(results, "baseline_status", "info", "状态记录：" + str(config["baseline_status"]))
+    if config.get('baseline_id'):
+        from perceptbudget.baseline import validate
+        try:
+            validate(config)
+            add(results, 'frozen_baseline', 'ok', config['baseline_id'])
+        except (KeyError, ValueError) as exc:
+            add(results, 'frozen_baseline', 'error', str(exc))
     return results
 
 
@@ -202,7 +214,11 @@ def check_flashrt_import(config, results):
         return
     try:
         completed = subprocess.run(
-            [str(executable), str(FLASHRT_ENTRY), "--root", str(root), "--check-import"],
+            [str(executable), '-c',
+             'import json,sys; from perceptbudget.flashrt_import import probe_import; '
+             'r=probe_import(sys.argv[1],sys.argv[2] or None); '
+             'print(json.dumps(r)); sys.exit(0 if r["ok"] else 1)',
+             str(root), config.get('openpi_root', '')],
             cwd=PROJECT_ROOT, text=True, capture_output=True, check=False, timeout=90,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
