@@ -5,6 +5,8 @@ import fcntl
 import json
 import subprocess
 import sys
+import time
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,24 @@ from perceptbudget.device_profile import discovery, sensor_steps, fixed_view_pro
 from perceptbudget.experiment import create_run, load_config, _write_json_atomically
 
 
+def terminal_notice(run, status, detail=''):
+    """Persist final status and request a desktop notice; not a chat notification."""
+    record = dict(status=status, detail=detail, monotonic=time.monotonic(),
+                  run=str(run), desktop_notification='not_available')
+    executable = shutil.which('notify-send')
+    if executable:
+        try:
+            completed = subprocess.run([executable, '--app-name=PerceptBudget',
+                'PerceptBudget M2：'+('完成' if status=='completed' else '异常停止'),
+                (detail or str(run))[:500]], capture_output=True, text=True, timeout=5)
+            record['desktop_notification'] = 'requested' if completed.returncode==0 else 'failed'
+            record['notification_error'] = completed.stderr[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            record.update(desktop_notification='failed', notification_error=str(exc))
+    _write_json_atomically(run/'terminal_status.json', record)
+    print('M2_TERMINAL_STATUS='+json.dumps(record, ensure_ascii=False), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sensor-check', action='store_true', help='GPU load steps, no model or clock changes')
@@ -21,6 +41,7 @@ def main():
     parser.add_argument('--fast-quality', action='store_true', help='Resident Full/single-view paired screen, at most15 episodes')
     parser.add_argument('--reset-check', action='store_true', help='No-model hard/soft environment reset replay audit')
     parser.add_argument('--render-cleanup-check', action='store_true', help='Keep hard reset, audit render-buffer release')
+    parser.add_argument('--shared-egl-check', action='store_true', help='Audit sequential EGL reuse while preserving hard resets')
     parser.add_argument('--source-run', type=Path, help='Successful H50 Spatial0 q5 source with original frames/actions')
     parser.add_argument('--repeats', type=int, default=5, choices=range(1, 21))
     parser.add_argument('--probe-worker', choices=('full', 'single'), help=argparse.SUPPRESS)
@@ -31,7 +52,7 @@ def main():
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     validate(config)
-    if sum((args.fast_probe, args.sensor_check, args.fast_quality, args.reset_check, args.render_cleanup_check)) > 1:
+    if sum((args.fast_probe, args.sensor_check, args.fast_quality, args.reset_check, args.render_cleanup_check, args.shared_egl_check)) > 1:
         parser.error('Choose one M2 operation')
     if (args.fast_probe or args.probe_worker) and not args.source_run:
         parser.error('Fast probe requires --source-run')
@@ -60,11 +81,13 @@ def main():
         old = json.loads((run/'summary.json').read_text())
         _write_json_atomically(run/f'parent_before_resume_{__import__("time").time_ns()}.json', old)
     try:
-        if args.reset_check or args.render_cleanup_check:
+        if args.reset_check or args.render_cleanup_check or args.shared_egl_check:
             from perceptbudget.device_quality import reset_reuse_audit
             with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                summary['reset_reuse_audit'] = reset_reuse_audit(config, run, render_cleanup=args.render_cleanup_check)
+                summary['reset_reuse_audit'] = reset_reuse_audit(config, run,
+                    render_cleanup=args.render_cleanup_check or args.shared_egl_check,
+                    shared_egl=args.shared_egl_check)
                 if not summary['reset_reuse_audit']['passed']:
                     raise RuntimeError('Environment reuse parity failed; do not use soft resets')
         if args.fast_quality:
@@ -138,6 +161,7 @@ def main():
         metadata = json.loads((run / 'run.json').read_text())
         metadata['status'] = summary['status']
         _write_json_atomically(run / 'run.json', metadata)
+        terminal_notice(run, summary['status'], summary.get('error', ''))
     print(json.dumps(dict(status=summary['status'], clock_settings_changed=False), ensure_ascii=False))
     return 0
 

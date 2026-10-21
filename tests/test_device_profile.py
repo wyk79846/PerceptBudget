@@ -76,3 +76,16 @@ def test_baseline_rejects_m2_view_overrides():
     for update in ({'m2_profile': True}, {'m2_view': 'wrist'}):
         with pytest.raises(ValueError):
             validate(dict(config, **update))
+
+
+def test_terminal_status_is_saved_even_if_desktop_notification_fails(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from scripts.profile_device import terminal_notice
+    with patch('scripts.profile_device.shutil.which', return_value='/usr/bin/notify-send'), \
+         patch('scripts.profile_device.subprocess.run', return_value=SimpleNamespace(returncode=1, stderr='no display')):
+        terminal_notice(tmp_path, 'invalid', 'memory guard')
+    record = json.loads((tmp_path/'terminal_status.json').read_text())
+    assert record['status'] == 'invalid'
+    assert record['detail'] == 'memory guard'
+    assert record['desktop_notification'] == 'failed'

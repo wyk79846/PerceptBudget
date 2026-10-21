@@ -64,3 +64,26 @@ def test_buffer_cleanup_does_not_destroy_egl_and_is_idempotent():
     context.con.free.assert_called_once()
     context.gl_ctx.free.assert_not_called()
     assert audit['freed'] == 1 and audit['errors'] == []
+
+
+def test_shared_egl_factory_reuses_only_same_device_and_main_thread():
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    import pytest
+    from perceptbudget.device_quality import install_render_buffer_cleanup
+    class Context:
+        pass
+    gl = object()
+    factory = Mock(return_value=gl)
+    binding = SimpleNamespace(MjRenderContext=Context, GLContext=factory)
+    utils = SimpleNamespace(binding_utils=binding)
+    with patch.dict(sys.modules, {'robosuite': SimpleNamespace(utils=utils),
+        'robosuite.utils': utils, 'robosuite.utils.binding_utils': binding}):
+        report = install_render_buffer_cleanup(shared_egl=True)
+    assert binding.GLContext(max_width=640, max_height=480, device_id=0) is gl
+    assert binding.GLContext(max_width=640, max_height=480, device_id=0) is gl
+    assert report['egl_contexts_created'] == 1
+    factory.assert_called_once()
+    with pytest.raises(RuntimeError):
+        binding.GLContext(max_width=640, max_height=480, device_id=1)

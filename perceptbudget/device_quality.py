@@ -10,14 +10,31 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
-def install_render_buffer_cleanup():
+def install_render_buffer_cleanup(*, shared_egl=False):
     """Release MuJoCo render buffers, retain the upstream EGL-destroy workaround.
 
     Process-local M2 diagnostic only. Call after base._patch_egl_cleanup().
     Does not change resets, simulation, observation processing or model math.
     """
     import robosuite.utils.binding_utils as binding
-    audit = dict(freed=0, errors=[], egl_destroy_enabled=False)
+    import threading
+    audit = dict(freed=0, errors=[], egl_destroy_enabled=False,
+                 shared_egl=shared_egl, egl_contexts_created=0)
+    if shared_egl:
+        original_factory = binding.GLContext
+        cache = {}
+        owner = threading.get_ident()
+        def context_factory(*, max_width, max_height, device_id):
+            if threading.get_ident() != owner:
+                raise RuntimeError('M2 shared EGL is sequential and main-thread only')
+            if cache and device_id not in cache:
+                raise RuntimeError('Cannot share EGL across different GPU devices')
+            if device_id not in cache:
+                cache[device_id] = original_factory(max_width=max_width, max_height=max_height,
+                                                    device_id=device_id)
+                audit['egl_contexts_created'] += 1
+            return cache[device_id]
+        binding.GLContext = context_factory
     def free_buffers(context):
         if getattr(context, '_pb_buffers_freed', False):
             return
@@ -35,7 +52,7 @@ def install_render_buffer_cleanup():
     return audit
 
 
-def reset_reuse_audit(config, directory, *, render_cleanup=False):
+def reset_reuse_audit(config, directory, *, render_cleanup=False, shared_egl=False):
     """No model: verify constructor-preserving resets on all six screen tasks."""
     import hashlib
     import time
@@ -64,7 +81,7 @@ def reset_reuse_audit(config, directory, *, render_cleanup=False):
             for candidate in (False, True):
                 soft = candidate and not render_cleanup
                 if candidate and render_cleanup and cleanup_record is None:
-                    cleanup_record = install_render_buffer_cleanup()
+                    cleanup_record = install_render_buffer_cleanup(shared_egl=shared_egl)
                 base._seed_process(7, np, torch)
                 env = base._make_env(cls, task)
                 env._pb_lock_fixtures = True
@@ -100,7 +117,8 @@ def reset_reuse_audit(config, directory, *, render_cleanup=False):
                        contact_and_success_equal=contact,
                        passed=states==0 and raw==0 and changed<=4 and maximum<=1 and contact)
             result['cases'].append(row)
-            result['candidate'] = 'hard_reset_render_buffer_cleanup' if render_cleanup else 'soft_reset'
+            result['candidate'] = ('hard_reset_shared_egl' if shared_egl else
+                                   'hard_reset_render_buffer_cleanup' if render_cleanup else 'soft_reset')
             result['render_cleanup'] = cleanup_record
             _write_json_atomically(Path(directory)/'reset_reuse_audit.json', result)
             print('reset_audit='+json.dumps(row), flush=True)
@@ -173,7 +191,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         record.update(status='loading', error=None, active_run=None)
     if cleanup_gate:
         gate_record = json.loads((Path(cleanup_gate)/'reset_reuse_audit.json').read_text())
-        if not gate_record.get('passed') or gate_record.get('candidate') != 'hard_reset_render_buffer_cleanup' \
+        if not gate_record.get('passed') or gate_record.get('candidate') not in ('hard_reset_render_buffer_cleanup', 'hard_reset_shared_egl') \
            or len(gate_record['cases']) != 6 or gate_record['render_cleanup']['errors']:
             raise ValueError('Require six-task passed hard-reset cleanup gate')
         record['cleanup_gate'] = str(cleanup_gate)
@@ -184,7 +202,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     torch.use_deterministic_algorithms(True)
     base._patch_egl_cleanup()
     if cleanup_gate:
-        record['render_buffer_cleanup'] = install_render_buffer_cleanup()
+        record['render_buffer_cleanup'] = install_render_buffer_cleanup(
+            shared_egl=gate_record.get('candidate') == 'hard_reset_shared_egl')
     def mem(stage):
         cleanup(torch)
         value = memory_record(torch, stage)
