@@ -16,6 +16,15 @@ def test_exceptional_resume_keeps_completed_cases_without_rerunning():
     with pytest.raises(ValueError):pending_cases(saved+saved[:1])
 
 
+def test_guard_failure_propagates_to_service_exit_code(monkeypatch):
+    import pathlib,runpy,subprocess,sys,pytest
+    monkeypatch.setattr(sys,'argv',['complete_m1_h50.py','--main-batch','/tmp/not-read-by-parent'])
+    monkeypatch.setattr(subprocess,'call',lambda *a,**k:125)
+    script=pathlib.Path(__file__).resolve().parents[1]/'scripts/complete_m1_h50.py'
+    with pytest.raises(SystemExit) as exc:runpy.run_path(str(script),run_name='__main__')
+    assert exc.value.code==125
+
+
 def test_initial_info_preserves_scene_and_frame_fingerprints(tmp_path):
     from scripts.complete_m1_h50 import initial_info
     import hashlib,struct

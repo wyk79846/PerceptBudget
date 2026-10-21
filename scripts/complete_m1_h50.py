@@ -297,4 +297,4 @@ def main():
     run(args.main_batch,args.resume)
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':raise SystemExit(main())
