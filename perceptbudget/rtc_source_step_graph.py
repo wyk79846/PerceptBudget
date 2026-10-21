@@ -7,14 +7,18 @@ import copy
 import math
 
 
-def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None):
+def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2):
     """8 varying state bins (-1..255), each 2..4 tokenizer tokens.
 
     The other 24 padded state values and task text stay fixed. No padding or
     altered model inputs: enumerate exact shapes before the timed episode.
     """
-    if type(initial_valid) is not int or not 512<=initial_valid<=712:
-        raise ValueError('invalid H50 dual-view initial prefix')
+    if type(num_views) is not int or num_views not in (1,2):
+        raise ValueError('H50 prefix coverage supports one or two views')
+    visual = 256*num_views
+    capacity = visual+200
+    if type(initial_valid) is not int or not visual<=initial_valid<=capacity:
+        raise ValueError('invalid H50 initial prefix for selected view count')
     if tokenizer is None:
         from flash_rt.utils.paligemma_tokenizer import load_paligemma_sentencepiece
         tokenizer=load_paligemma_sentencepiece()
@@ -22,7 +26,7 @@ def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None):
     def count(value):
         # normalize_state pads the last 24 entries with zero, whose bin is127.
         state=' '.join(map(str,[value]*8+[127]*24))
-        return min(712,512+len(tokenizer.encode(f'Task: {cleaned}, State: {state};\nAction: ',add_bos=True)))
+        return min(capacity,visual+len(tokenizer.encode(f'Task: {cleaned}, State: {state};\nAction: ',add_bos=True)))
     low,high=count(0),count(255)
     if not low<=initial_valid<=high or not 1<=high-low+1<=17:
         raise ValueError('state tokenizer prefix bound does not match live context')
