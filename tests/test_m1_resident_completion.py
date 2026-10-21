@@ -39,13 +39,16 @@ def test_repeated_bank_preparation_reuses_frozen_conditioning(monkeypatch):
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
     from perceptbudget import rtc_condition_cache,rtc_source_step_graph
     seen=[]
+    streams=[]
     monkeypatch.setattr(rtc_condition_cache,'enable_condition_cache',lambda *a,**k: (_ for _ in ()).throw(AssertionError('must not reinstall')))
     def bank(expert,lengths,noise,**kwargs):
         seen.append(kwargs['max_lengths'])
+        streams.append(kwargs['stream'])
         return SimpleNamespace(entries={n:None for n in lengths},audits=[])
     monkeypatch.setattr(rtc_source_step_graph,'SourceStepBank',bank)
     adapter=OriginalOpenPiRTCAdapter.__new__(OriginalOpenPiRTCAdapter)
-    adapter.torch=SimpleNamespace(randn=lambda *a,**k:object(),float32='float32')
+    adapter.torch=SimpleNamespace(randn=lambda *a,**k:object(),float32='float32',
+                                 cuda=SimpleNamespace(Stream=object))
     adapter.horizon=50;adapter.beta=5.
     adapter.expert=SimpleNamespace(_condition_cache={'existing':True},_packed_condition_cache=object())
     adapter.config=dict(source_packed_conditioning=True,source_prefix_coverage_rule='h50_state8_tokenizer_bounds_v1')
@@ -53,3 +56,4 @@ def test_repeated_bank_preparation_reuses_frozen_conditioning(monkeypatch):
         result=adapter.prepare_step_bank(range(645,662))
         assert result['packed_conditioning']['reused'] is True
     assert seen==[17,17]
+    assert streams[0] is streams[1]

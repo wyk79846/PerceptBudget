@@ -9,9 +9,17 @@ def memory_record(torch, stage):
             if line.startswith('MemAvailable:'):
                 available=int(line.split()[1])/1024
                 break
-    return dict(stage=stage,available_mib=available,
+    result = dict(stage=stage,available_mib=available,
                 torch_allocated_mib=torch.cuda.memory_allocated()/2**20,
                 torch_reserved_mib=torch.cuda.memory_reserved()/2**20)
+    # Jetson native CUDA/EGL allocations are not all visible to PyTorch.
+    # Keep process residency separate from system-wide MemAvailable.
+    with open('/proc/self/status', encoding='ascii') as stream:
+        for line in stream:
+            name = line.split(':', 1)[0]
+            if name in ('VmRSS', 'VmSize', 'RssAnon', 'RssFile', 'VmSwap'):
+                result[name.lower()+'_mib'] = int(line.split()[1])/1024
+    return result
 
 
 def release_unused_native_expert(model,torch):

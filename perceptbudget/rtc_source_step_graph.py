@@ -247,7 +247,7 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
@@ -259,14 +259,27 @@ class SourceStepBank:
         self.fallback=expert
         self.entries={}
         self.audits=[]
+        # Only one exact-length graph may execute at a time. Keep one maximum
+        # KV allocation; each layer's selected prefix is still contiguous and
+        # exact length (no attention padding or change to token positions).
+        capacity=max(lengths)
+        shared_keys=torch.zeros(18,1,1,capacity,256,device=noise.device,dtype=expert.keys.dtype)
+        shared_values=torch.zeros_like(shared_keys)
+        shared_mask=torch.ones(1,capacity,device=noise.device,dtype=torch.bool)
+        self.storage_record=dict(shared_kv=True,capacity=capacity,
+            kv_mib=2*shared_keys.numel()*shared_keys.element_size()/2**20,
+            separate_kv_mib=2*18*sum(lengths)*256*shared_keys.element_size()/2**20)
         pool=torch.cuda.graph_pool_handle()
-        stream=torch.cuda.Stream()
+        # cuBLAS keeps workspaces keyed by CUDA stream beyond Python stream
+        # lifetime. Resident adapters must reuse their capture stream across tasks.
+        stream=stream if stream is not None else torch.cuda.Stream()
         for valid in lengths:
             started=time.monotonic()
             bound=copy.copy(expert)
-            bound.keys=torch.zeros(18,1,1,valid,256,device=noise.device,dtype=expert.keys.dtype)
-            bound.values=torch.zeros_like(bound.keys)
-            bound.prefix_mask=torch.ones(1,valid,device=noise.device,dtype=torch.bool)
+            bound.keys=shared_keys[...,:valid,:]
+            bound.values=shared_values[...,:valid,:]
+            bound.prefix_mask=shared_mask[:,:valid]
+            bound.keys.zero_();bound.values.zero_()
             count=min(valid,expert.keys.shape[-2])
             bound.keys[...,:count,:].copy_(expert.keys[...,:count,:])
             bound.values[...,:count,:].copy_(expert.values[...,:count,:])

@@ -24,6 +24,7 @@ class OriginalOpenPiRTCAdapter:
         self.graph_expert = None
         self.fallback_expert = None
         self.step_bank = None
+        self._step_bank_stream = None
         if config.get('rtc_exact_flash_attention') and config.get('rtc_suffix_only_vjp'):
             raise ValueError('exact FlashAttention and suffix-only eager VJP are alternative backends, not stackable')
         self._attention_restore = None
@@ -46,11 +47,15 @@ class OriginalOpenPiRTCAdapter:
         def report(record):
             print('step_graph_prepared='+json.dumps(record),flush=True)
             if progress is not None:progress(record)
+        if getattr(self, '_step_bank_stream', None) is None:
+            self._step_bank_stream = torch.cuda.Stream()
         self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
+            stream=self._step_bank_stream,
             max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,
             progress=report)
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
+            storage=getattr(self.step_bank,'storage_record',None),
             packed_conditioning=conditioning,
             audits=self.step_bank.audits,limitation='unprepared valid lengths use exact slow reference; no runtime capture')
 

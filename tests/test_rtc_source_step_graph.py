@@ -2,6 +2,41 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_bank_shares_kv_storage_without_padding_each_layer(monkeypatch):
+    import torch
+    from perceptbudget import rtc_source_step_graph as source, openpi_reference
+    zeros = torch.zeros
+    def cpu_zeros(*args, **kwargs):
+        kwargs['device'] = 'cpu'
+        return zeros(*args, **kwargs)
+    monkeypatch.setattr(torch, 'zeros', cpu_zeros)
+    monkeypatch.setattr(torch.cuda, 'graph_pool_handle', lambda: object())
+    monkeypatch.setattr(torch.cuda, 'Stream', lambda: object())
+    monkeypatch.setattr(torch.cuda, 'memory_allocated', lambda: 0)
+    monkeypatch.setattr(torch.cuda, 'memory_reserved', lambda: 0)
+    monkeypatch.setattr(openpi_reference, 'sample_original_rtc',
+                        lambda expert, noise, *args, **kwargs: (noise.clone(), [0.]))
+    class Graph:
+        def __init__(self, expert, *args, **kwargs):
+            self.expert = expert
+        def replay(self, noise, *args):
+            return noise.clone(), torch.tensor([0.])
+    monkeypatch.setattr(source, 'SourceStepGraph', Graph)
+    expert = SimpleNamespace(keys=torch.ones(18,1,1,11,256),
+                             values=torch.ones(18,1,1,11,256))
+    bank = source.SourceStepBank(expert, [9,10,11], torch.ones(50,32))
+    bound = [bank.select(n)[0] for n in (9,10,11)]
+    assert len({e.keys.untyped_storage().data_ptr() for e in bound}) == 1
+    assert len({e.values.untyped_storage().data_ptr() for e in bound}) == 1
+    for n, e in zip((9,10,11), bound):
+        assert e.keys.shape == (18,1,1,n,256)
+        assert e.prefix_mask.shape == (1,n)
+        assert all(e.keys[i].is_contiguous() for i in range(18))
+    bound[0].keys.fill_(2)
+    assert bool((bound[-1].keys[...,:9,:] == 2).all())
+    assert bool((bound[-1].keys[...,9:,:] == 1).all())
+
+
 def test_h50_state_bank_covers_full_numeric_token_variation():
     from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
     class Tokenizer:
