@@ -20,15 +20,18 @@ def main():
     parser.add_argument('--fast-probe', action='store_true', help='Fixed-input Full and single-view RTC timing; no quality claim')
     parser.add_argument('--fast-quality', action='store_true', help='Resident Full/single-view paired screen, at most15 episodes')
     parser.add_argument('--reset-check', action='store_true', help='No-model hard/soft environment reset replay audit')
+    parser.add_argument('--render-cleanup-check', action='store_true', help='Keep hard reset, audit render-buffer release')
     parser.add_argument('--source-run', type=Path, help='Successful H50 Spatial0 q5 source with original frames/actions')
     parser.add_argument('--repeats', type=int, default=5, choices=range(1, 21))
     parser.add_argument('--probe-worker', choices=('full', 'single'), help=argparse.SUPPRESS)
     parser.add_argument('--quality-worker', choices=('full', 'single'), help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--resume-quality', type=Path, help='Resume only missing quality episodes after an exception')
+    parser.add_argument('--cleanup-gate', type=Path, help='Passed six-task hard-reset render cleanup audit')
     args = parser.parse_args()
     config = load_config(repo_root=ROOT)
     validate(config)
-    if sum((args.fast_probe, args.sensor_check, args.fast_quality, args.reset_check)) > 1:
+    if sum((args.fast_probe, args.sensor_check, args.fast_quality, args.reset_check, args.render_cleanup_check)) > 1:
         parser.error('Choose one M2 operation')
     if (args.fast_probe or args.probe_worker) and not args.source_run:
         parser.error('Fast probe requires --source-run')
@@ -41,18 +44,27 @@ def main():
         if args.run_dir is None or args.run_dir.resolve().parent != (Path(config['output_root'])/'M2').resolve():
             parser.error('Quality worker requires an existing M2 run directory')
         from perceptbudget.device_quality import resident_quality
-        resident_quality(config, args.run_dir, args.quality_worker)
+        resident_quality(config, args.run_dir, args.quality_worker,
+                         resume=args.resume_quality is not None, cleanup_gate=args.cleanup_gate)
         return 0
-    run = create_run(config, 'M2', 'fast-quality' if args.fast_quality else 'device-discovery', repo_root=ROOT)
+    if args.resume_quality and not args.fast_quality:
+        parser.error('--resume-quality requires --fast-quality')
+    run = args.resume_quality or create_run(config, 'M2', 'fast-quality' if args.fast_quality else 'device-discovery', repo_root=ROOT)
+    if args.resume_quality and run.resolve().parent != (Path(config['output_root'])/'M2').resolve():
+        parser.error('Resume requires an existing M2 directory')
     print('run_dir=' + str(run), flush=True)
     summary = discovery(config)
-    (run / 'inventory.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
+    if not args.resume_quality:
+        (run / 'inventory.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
+    else:
+        old = json.loads((run/'summary.json').read_text())
+        _write_json_atomically(run/f'parent_before_resume_{__import__("time").time_ns()}.json', old)
     try:
-        if args.reset_check:
+        if args.reset_check or args.render_cleanup_check:
             from perceptbudget.device_quality import reset_reuse_audit
             with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                summary['reset_reuse_audit'] = reset_reuse_audit(config, run)
+                summary['reset_reuse_audit'] = reset_reuse_audit(config, run, render_cleanup=args.render_cleanup_check)
                 if not summary['reset_reuse_audit']['passed']:
                     raise RuntimeError('Environment reuse parity failed; do not use soft resets')
         if args.fast_quality:
@@ -60,10 +72,18 @@ def main():
             with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 for kind in ('full', 'single'):
+                    saved = run/f'{kind}_quality.json'
+                    if saved.exists() and json.loads(saved.read_text())['status'] == 'completed':
+                        summary['quality'].append(json.loads(saved.read_text()))
+                        continue
                     cmd = [config['python_executable'], str(ROOT/'scripts/guarded_run.py'), '--',
                            config['python_executable'], '-u', str(Path(__file__).resolve()),
                            '--quality-worker', kind, '--run-dir', str(run)]
-                    with (run/f'{kind}_quality.log').open('w') as log:
+                    if args.resume_quality:
+                        cmd += ['--resume-quality', str(run)]
+                    if args.cleanup_gate:
+                        cmd += ['--cleanup-gate', str(args.cleanup_gate)]
+                    with (run/f'{kind}_quality.log').open('a') as log:
                         result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
                     if result.returncode:
                         raise RuntimeError(f'{kind} resident quality exited {result.returncode}; completed episodes preserved')

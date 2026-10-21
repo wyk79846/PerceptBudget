@@ -41,3 +41,26 @@ def test_single_view_shape_bank_is_exact_dual_view_bank_shift():
     full = h50_state_prefix_lengths(657, 'task', Tokenizer())
     single = h50_state_prefix_lengths(401, 'task', Tokenizer(), num_views=1)
     assert single == [x-256 for x in full]
+
+
+def test_buffer_cleanup_does_not_destroy_egl_and_is_idempotent():
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from perceptbudget.device_quality import install_render_buffer_cleanup
+    class Context:
+        pass
+    binding = SimpleNamespace(MjRenderContext=Context)
+    utils = SimpleNamespace(binding_utils=binding)
+    with patch.dict(sys.modules, {'robosuite': SimpleNamespace(utils=utils),
+        'robosuite.utils': utils,
+        'robosuite.utils.binding_utils': binding}):
+        audit = install_render_buffer_cleanup()
+    context = Context()
+    context.gl_ctx = SimpleNamespace(make_current=Mock(), free=Mock())
+    context.con = SimpleNamespace(free=Mock())
+    context.__del__()
+    context.__del__()
+    context.con.free.assert_called_once()
+    context.gl_ctx.free.assert_not_called()
+    assert audit['freed'] == 1 and audit['errors'] == []

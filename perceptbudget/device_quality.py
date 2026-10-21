@@ -10,7 +10,32 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
-def reset_reuse_audit(config, directory):
+def install_render_buffer_cleanup():
+    """Release MuJoCo render buffers, retain the upstream EGL-destroy workaround.
+
+    Process-local M2 diagnostic only. Call after base._patch_egl_cleanup().
+    Does not change resets, simulation, observation processing or model math.
+    """
+    import robosuite.utils.binding_utils as binding
+    audit = dict(freed=0, errors=[], egl_destroy_enabled=False)
+    def free_buffers(context):
+        if getattr(context, '_pb_buffers_freed', False):
+            return
+        try:
+            gl = getattr(context, 'gl_ctx', None)
+            con = getattr(context, 'con', None)
+            if gl is not None and con is not None:
+                gl.make_current()
+                con.free()
+                context._pb_buffers_freed = True
+                audit['freed'] += 1
+        except Exception as exc:
+            audit['errors'].append(f'{type(exc).__name__}: {exc}')
+    binding.MjRenderContext.__del__ = free_buffers
+    return audit
+
+
+def reset_reuse_audit(config, directory, *, render_cleanup=False):
     """No model: verify constructor-preserving resets on all six screen tasks."""
     import hashlib
     import time
@@ -22,6 +47,7 @@ def reset_reuse_audit(config, directory):
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
     torch, _ = base._check_cuda_and_native(config)
     base._patch_egl_cleanup()
+    cleanup_record = None
     _, cls = base._libero_api()
     batch = Path(config['output_root'])/'M1/20261020T160525.143512Z-m1-h50-67126d0b'
     index = json.loads((batch/'index.json').read_text())
@@ -35,7 +61,10 @@ def reset_reuse_audit(config, directory):
             actions = [json.loads(line)['action'] for line in (source/'rtc/trace.jsonl').open()
                        if '"control_step"' in line][:20]
             captures = []
-            for soft in (False, True):
+            for candidate in (False, True):
+                soft = candidate and not render_cleanup
+                if candidate and render_cleanup and cleanup_record is None:
+                    cleanup_record = install_render_buffer_cleanup()
                 base._seed_process(7, np, torch)
                 env = base._make_env(cls, task)
                 env._pb_lock_fixtures = True
@@ -71,6 +100,8 @@ def reset_reuse_audit(config, directory):
                        contact_and_success_equal=contact,
                        passed=states==0 and raw==0 and changed<=4 and maximum<=1 and contact)
             result['cases'].append(row)
+            result['candidate'] = 'hard_reset_render_buffer_cleanup' if render_cleanup else 'soft_reset'
+            result['render_cleanup'] = cleanup_record
             _write_json_atomically(Path(directory)/'reset_reuse_audit.json', result)
             print('reset_audit='+json.dumps(row), flush=True)
             if not row['passed']:
@@ -100,7 +131,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -125,18 +156,35 @@ def resident_quality(config, directory, kind):
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl',
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
     path = directory/f'{kind}_quality.json'
-    if path.exists():
+    if path.exists() and not resume:
         raise ValueError('Quality worker output already exists; do not overwrite episodes')
     record = dict(status='loading', kind=kind, episodes=[], model_loads=0, suffix_loads=0,
         graph_audits=[], memory=[], q=5, selection=None,
         scope='task0 calibration; task3 holdout; seed7/init0; no clock changes',
         holdout_policy='Full task3 collected early to avoid reloading, never used to select a camera')
+    if resume and path.exists():
+        record = json.loads(path.read_text())
+        for row in record['episodes']:
+            if not audit(Path(row['run']))['passed']:
+                raise ValueError('Saved episode failed independent resume audit')
+        _write_json_atomically(directory/f'{kind}_before_resume_{__import__("time").time_ns()}.json', record)
+        record.setdefault('restarts', []).append(dict(reason='exception continuation; completed episodes retained',
+                                                     previous_error=record.get('error')))
+        record.update(status='loading', error=None, active_run=None)
+    if cleanup_gate:
+        gate_record = json.loads((Path(cleanup_gate)/'reset_reuse_audit.json').read_text())
+        if not gate_record.get('passed') or gate_record.get('candidate') != 'hard_reset_render_buffer_cleanup' \
+           or len(gate_record['cases']) != 6 or gate_record['render_cleanup']['errors']:
+            raise ValueError('Require six-task passed hard-reset cleanup gate')
+        record['cleanup_gate'] = str(cleanup_gate)
     def save():
         _write_json_atomically(path, record)
     save()
     torch, _ = base._check_cuda_and_native(cfg)
     torch.use_deterministic_algorithms(True)
     base._patch_egl_cleanup()
+    if cleanup_gate:
+        record['render_buffer_cleanup'] = install_render_buffer_cleanup()
     def mem(stage):
         cleanup(torch)
         value = memory_record(torch, stage)
@@ -161,8 +209,16 @@ def resident_quality(config, directory, kind):
             cohorts = (0, 3) if kind == 'full' else (0,)
             # single-view holdout is appended only after a calibration-only decision.
             pending = [(suite, tid) for tid in cohorts for suite in SUITES]
+            if kind == 'single' and record.get('selection'):
+                pending.extend((suite, 3) for suite in SUITES)
             while pending:
                 suite, tid = pending.pop(0)
+                views = (('full',) if kind == 'full' else
+                         ('agent', 'wrist') if tid == 0 else (record['selection'],))
+                done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
+                views = tuple(v for v in views if (suite, tid, v) not in done)
+                if not views:
+                    continue
                 if adapter is not None:
                     torch.cuda.synchronize()
                     adapter.step_bank = None
@@ -173,8 +229,6 @@ def resident_quality(config, directory, kind):
                 env = base._make_env(env_class, task)
                 env._pb_lock_fixtures = True
                 observation, calibration = calibrate(env, task, np)
-                views = (('full',) if kind == 'full' else
-                         ('agent', 'wrist') if tid == 0 else (record['selection'],))
                 current_view = views[0]
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)
@@ -255,11 +309,14 @@ def resident_quality(config, directory, kind):
                     save()
                     print('quality_episode='+json.dumps(record['episodes'][-1]), flush=True)
                     del episode, requests, result
+                    checked = None
                     active = None
                     mem('episode_released')
                 env.close()
                 env = None
                 mem('environment_closed')
+                if cleanup_gate and record['render_buffer_cleanup']['errors']:
+                    raise RuntimeError('Render buffer cleanup reported errors')
                 if kind == 'single' and tid == 0 and not pending:
                     full = json.loads((directory/'full_quality.json').read_text())
                     record['selection'] = select_candidate(full['episodes'], record['episodes'])
