@@ -24,6 +24,14 @@ def test_duplicate_tasks_or_factors_are_rejected_before_cuda():
         assert r.returncode==2
 
 
+def test_mixed_pool_plan_has_four_groups_and_forty_episodes():
+    r=subprocess.run([sys.executable,str(SCRIPT),'--pool-factor','2','4',
+        '--pool-view','agent','wrist','--dry-run'],capture_output=True,text=True,check=True)
+    plan=json.loads(r.stdout)
+    assert plan['episodes']==40 and plan['model_lifetimes']==4
+    assert plan['mixed_visual_tokens']=={'2':320,'4':272}
+
+
 def test_custom_quality_plan_rejects_unrelated_suites_and_duplicate_tasks(tmp_path):
     import pytest
     from perceptbudget.device_quality import resident_quality

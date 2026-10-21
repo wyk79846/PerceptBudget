@@ -17,23 +17,32 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 
-def pool_check(pipeline, torch, np):
+def pool_check(pipeline, torch, np, pooled_view='both'):
     f=pipeline.vision_pool_factor
     def download(name, count):
         bits=np.empty(count,dtype=np.uint16)
         pipeline.bufs[name].download(bits)
         return torch.from_numpy(bits).view(torch.bfloat16).float()
     original=download('vision_x',2*256*1152).reshape(2,16,16,1152)
-    actual=download('vision_x_pooled',2*256//f**2*1152).reshape(2,16//f,16//f,1152)
+    actual=download('vision_x_pooled',pipeline.vision_seq_enc*1152).reshape(-1,1152)
     # Same FP32 addition order as the native kernel, independent CPU indexing.
-    expected=torch.zeros_like(actual)
+    expected=torch.zeros(2,16//f,16//f,1152)
     for dr in range(f):
         for dc in range(f):
             expected+=original[:,dr::f,dc::f,:]
     expected=(expected/(f*f)).to(torch.bfloat16).float()
+    if pooled_view=='agent':
+        expected=torch.cat((expected[0].reshape(-1,1152),original[1].reshape(-1,1152)))
+    elif pooled_view=='wrist':
+        expected=torch.cat((original[0].reshape(-1,1152),expected[1].reshape(-1,1152)))
+    else:
+        expected=expected.reshape(-1,1152)
     return dict(max_abs=float((expected-actual).abs().max()),
                 mismatched_elements=int((expected!=actual).sum()),num_views=2,
-                per_view_tokens=256//f**2,scope='native spatial pooling vs CPU reference, view/row/column order')
+                pooled_view=pooled_view,
+                camera_token_counts=([256//f**2,256//f**2] if pooled_view=='both' else
+                    [256//f**2,256] if pooled_view=='agent' else [256,256//f**2]),
+                scope='native spatial pooling vs CPU reference, view/row/column order')
 
 
 def main():
@@ -59,6 +68,7 @@ def main():
     if factor not in (2,4):
         raise ValueError('Require a recorded dual-view pooling run')
     config.update(m2_profile=True,m2_view='full',m2_vision_pool_factor=factor,
+                  m2_pool_view=source_cfg.get('m2_pool_view','both'),
                   rtc_audit_inputs=False,rtc_audit_attention_same_input=False,rtc_audit_fused_norm=False)
     run=create_run(config,'M2','pool-memory-parity',repo_root=ROOT)
     result=dict(status='running',source_run=str(args.source_run),pool_factor=factor,
@@ -125,7 +135,7 @@ def main():
                 expected=pl.vision_seq_enc+model._pipe.current_prompt_len
                 if valid!=expected or valid!=r['rtc_guidance']['valid_prefix_length']:
                     raise RuntimeError('Live pooled prefix differs from recorded/tokenized length')
-                pooling=pool_check(pl,torch,np)
+                pooling=pool_check(pl,torch,np,config.get('m2_pool_view','both'))
                 solver=r['rtc_solver_inputs']
                 z=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
                 previous=torch.tensor(solver['previous_raw'],device='cuda',dtype=torch.float32)

@@ -7,7 +7,7 @@ import copy
 import math
 
 
-def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,pool_factor=1):
+def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,pool_factor=1,pooled_view='both'):
     """8 varying state bins (-1..255), each 2..4 tokenizer tokens.
 
     The other 24 padded state values and task text stay fixed. No padding or
@@ -18,6 +18,12 @@ def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,p
     if type(pool_factor) is not int or pool_factor not in (1,2,4):
         raise ValueError('invalid vision pooling factor')
     visual = 256*num_views//(pool_factor*pool_factor)
+    if pooled_view not in ('both','agent','wrist'):
+        raise ValueError('invalid pooled view')
+    if pooled_view!='both':
+        if num_views!=2 or pool_factor==1:
+            raise ValueError('Mixed pooling requires two cameras and factor2/4')
+        visual=256+256//pool_factor**2
     capacity = visual+200
     if type(initial_valid) is not int or not visual<=initial_valid<=capacity:
         raise ValueError('invalid H50 initial prefix for selected view count')

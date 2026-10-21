@@ -176,8 +176,16 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5):
     if pl.num_views != expected_views or pl.vision_seq != expected_views * 256:
         raise RuntimeError('View count did not reduce the actual pipeline geometry')
     expected_pool=config.get('m2_vision_pool_factor',1)
-    if pl.vision_pool_factor != expected_pool or pl.vision_seq_enc != expected_views*256//expected_pool**2:
+    from perceptbudget.mixed_view_pool import visual_tokens
+    tokens=visual_tokens(config) if kind=='full' else 256
+    if pl.vision_pool_factor != expected_pool or pl.vision_seq_enc != tokens:
         raise RuntimeError('Requested token pooling did not change encoder geometry')
+    pool_layout=None
+    if expected_pool>1:
+        from scripts.diagnose_pool_parity import pool_check
+        pool_layout=pool_check(pl,torch,np,config.get('m2_pool_view','both'))
+        if pool_layout['mismatched_elements']:
+            raise RuntimeError('Pooled token CPU layout audit failed')
     result = dict(status='running', kind=kind, source_run=str(source_run),
         scope='prepared-input context plus complete RTC VJP; not service L, success rate or dynamic energy saving',
         model_loads=1, load_and_prepare_seconds=time.monotonic()-start_load,
@@ -188,6 +196,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5):
         visual_tokens_before_pool=pl.vision_seq, vision_pool_factor=pl.vision_pool_factor,
         encoder_capacity=pl.encoder_seq_len, valid_prefix=valid,
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
+        pooled_view=config.get('m2_pool_view','both'),pool_layout_audit=pool_layout,
         clock_settings_changed=False, flashrt_modified=False)
     for view in views:
         image_input_snapshot = select_images(snapshot, view)

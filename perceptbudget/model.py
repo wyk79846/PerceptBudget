@@ -10,6 +10,10 @@ def vision_pool_factor(config):
         raise ValueError('vision pooling factor must be 1, 2 or 4')
     if factor != 1 and (not config.get('m2_profile') or config.get('m2_view', 'full') != 'full'):
         raise ValueError('Token pooling is restricted to explicit dual-view M2 experiments')
+    view=config.get('m2_pool_view','both')
+    if view not in ('both','agent','wrist') or (view!='both' and
+        (not config.get('m2_profile') or config.get('m2_view','full')!='full' or factor==1)):
+        raise ValueError('Mixed pooling requires explicit dual-view M2 factor2/4')
     return factor
 
 
@@ -38,7 +42,12 @@ def load_model(config):
 
     if config.get('state_prompt_capacity') is not None:
         from perceptbudget.compact_state import frontend_type
-        Pi05TorchFrontendRtx=frontend_type(Pi05TorchFrontendRtx,config['state_prompt_capacity'])
+        mixed=None
+        if config.get('m2_pool_view','both')!='both':
+            from perceptbudget.mixed_view_pool import pipeline_type
+            from flash_rt.models.pi05.pipeline_rtx import Pi05Pipeline
+            mixed=pipeline_type(Pi05Pipeline,config['m2_pool_view'])
+        Pi05TorchFrontendRtx=frontend_type(Pi05TorchFrontendRtx,config['state_prompt_capacity'],pipeline_type=mixed)
 
     view = config.get('m2_view', 'full')
     if view not in ('full', 'agent', 'wrist') or (view != 'full' and not config.get('m2_profile')):

@@ -61,6 +61,10 @@ def test_pooled_prefix_bank_changes_visual_count_not_state_tokenization():
         assert pooled == [n-delta for n in full]
     with pytest.raises(ValueError):
         h50_state_prefix_lengths(273,'task',Tokenizer(),pool_factor=True)
+    for f,delta in ((2,192),(4,240)):
+        for view in ('agent','wrist'):
+            assert h50_state_prefix_lengths(657-delta,'task',Tokenizer(),pool_factor=f,
+                pooled_view=view)==[n-delta for n in full]
 
 
 def test_h50_number_token_width_bound_matches_installed_tokenizer():

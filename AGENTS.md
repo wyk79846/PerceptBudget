@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 最新2026-10-21单路池化：用户要求四组各Spatial0..9一次共40，由用户执行。新增项目侧mixed_view_pool.py pipeline子类，在原分配入口前设vision_seq_enc320/272（encoder容量520/472），调用原双路池化后以同流D2D恢复未压缩视角，原顺序外部后腕部，不改FlashRT源码/内核/训练/Full默认。eval_pooled_views.py --pool-factor2 4 --pool-view agent wrist即四组顺序外部2/外部4/腕部2/腕部4；每组独立模型生命周期、组内常驻，不并发40/不逐任务重载。四组固定输入各2请求短测已completed：feafa96d/e243b0c6/c0e31bdb/e1084b6d，410.11/358.99/415.14/356.11ms；CPU池化布局逐元素0（未压缩相机保持原值），RTC动作/VJP范数图对照0，valid473/425=320/272+153，非闭环质量/服务L。357pass9skip110subtests。40任务未启动；preflight已正常结束。备份archive/pre-m2-mixed-pool-20261021。命令仍q5H50N5state开启seed7init0，持续单路简化非Full/Fast交替。
+
 - 最新pool排查2026-10-21：用户因低成功率要求停止pool24服务，已确认inactive/dead、无eval_pooled子进程；pool2批次3204975b完成7条Spatial0..6，task5success其余6timeout，pool4未开始，不重启。原批次stopped_by_user.json说明原running字段过期。新scripts/diagnose_pool_parity.py读取失败task0的观测步5/11/17（valid280/282/283），用同图/state/噪声/旧动作/延迟交替正反序6次，与git b9e7aef^独立KV老图、新共享KV图及无图RTC对照，动作/VJP范数/已保存动作误差全部0；原生池化与CPU逐元素误差0，两视角顺序/前缀valid=128+152/154/155正确。结果M2/20261021T111535.952274Z-pool-memory-parity-d756b3a2/summary.md；诊断退出0，无后台GPU实验。只排除这些记录中的内存优化数值错误；更支持持续75%token缩减的质量/适配问题，不声称唯一原因/否定交替Fast。FlashRT未改，未训练，不继续盲跑。
 
 - 最新双视角pool接入2026-10-21：备份archive/pre-m2-token-pool-20261021，scripts/eval_pooled_views.py --pool-factor2 4顺序两档，每档Spatial0..9各一次/单次模型加载，总20，尚未执行闭环10任务，用户要自己执行命令。H50N5stateq5seed7init0，实际异步完整RTC，持续固定pool而非动态Full/Fast。model.py仅M2显式双视角允许m2_vision_pool_factor2/4；baseline拒绝覆盖；h50_state_prefix_lengths新增pool_factor，visual512→128/32，state tokenizer不变。device_quality新增显式task_plan仅Full新run，复用已有内存修复/共享EGL/900/768保护/audit。固定输入probe e6cd97b2/44896b0a各2请求已completed，324.01/276.55ms，原生encoder容量328/232，valid281/185，动作/VJP范数图对照0，非质量/完整服务L。preflight服务已正常结束，不启动20任务。FlashRT未改/未训练/根配置未改。

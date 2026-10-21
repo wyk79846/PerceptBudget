@@ -71,6 +71,8 @@ M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）�
 
 上述20回合计划已被用户叫停：pool2完成7条、1成功6超时，pool4未开始；不重启。失败task0固定输入正反序6次对照：内存修复前独立KV、当前共享KV、不使用图的RTC、已存动作均误差0，原生池化与CPU参考逐元素相同。证据在`M2/20261021T111535.952274Z-pool-memory-parity-d756b3a2/summary.md`。`scripts/diagnose_pool_parity.py --source-run <已记录pool回合>`只做诊断，不跑新闭环。该证据未发现内存优化数值错误，不代表pool质量通过或全部原因已排除。
 
+用户下一轮改为单路合并、另一路保留完整：`scripts/eval_pooled_views.py --pool-factor 2 4 --pool-view agent wrist --suite libero_spatial --task-ids 0 1 2 3 4 5 6 7 8 9`。顺序为外部2/外部4/腕部2/腕部4，4组各10回合，总40，非4组并行；每组模型常驻一次。`agent`表示被合并的是外部视角，`wrist`表示被合并的是腕部视角，输入始终两路，token总数320/272。项目侧`mixed_view_pool.py`仅继承原pipeline、在分配前设置实际序列容量、调用原池化内核并按原视角顺序保留另一视角完整特征；不修改FlashRT源码、不训练、不降分辨率、不以mask替代计算。沿用内存保护及独立审计，不允许此实验覆盖Full基线。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```
