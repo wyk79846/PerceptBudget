@@ -14,7 +14,7 @@ from perceptbudget.experiment import load_config, create_run, _write_json_atomic
 from perceptbudget.baseline import validate, SUITES
 
 CLEANUP_GATE = Path('/home/wyk/workspace/任务产出/perceptbudget/M2/'
-                    '20261021T101001.012984Z-device-discovery-3a32022b')
+                    '20261021T113854.868898Z-device-discovery-ae986a81')
 SOURCE_RUN = Path('/home/wyk/workspace/任务产出/perceptbudget/M1/'
                   '20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d')
 

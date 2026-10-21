@@ -19,7 +19,7 @@ def install_render_buffer_cleanup(*, shared_egl=False):
     import robosuite.utils.binding_utils as binding
     import threading
     audit = dict(freed=0, errors=[], egl_destroy_enabled=False,
-                 shared_egl=shared_egl, egl_contexts_created=0)
+                 shared_egl=shared_egl, egl_contexts_created=0, explicit_sim_frees=0)
     if shared_egl:
         original_factory = binding.GLContext
         cache = {}
@@ -49,6 +49,17 @@ def install_render_buffer_cleanup(*, shared_egl=False):
         except Exception as exc:
             audit['errors'].append(f'{type(exc).__name__}: {exc}')
     binding.MjRenderContext.__del__ = free_buffers
+    # A render context retains its sim and may remain referenced by old sensor
+    # closures during hard reset. Waiting for __del__/GC allows old and new
+    # GPU render buffers to overlap. Release at the explicit sim-free boundary.
+    previous_free = binding.MjSim.free
+    def free_sim(sim):
+        context = getattr(sim, '_render_context_offscreen', None)
+        if context is not None:
+            free_buffers(context)
+            audit['explicit_sim_frees'] += 1
+        return previous_free(sim)
+    binding.MjSim.free = free_sim
     return audit
 
 

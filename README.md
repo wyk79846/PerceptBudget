@@ -73,6 +73,8 @@ M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）�
 
 用户下一轮改为单路合并、另一路保留完整：`scripts/eval_pooled_views.py --pool-factor 2 4 --pool-view agent wrist --suite libero_spatial --task-ids 0 1 2 3 4 5 6 7 8 9`。顺序为外部2/外部4/腕部2/腕部4，4组各10回合，总40，非4组并行；每组模型常驻一次。`agent`表示被合并的是外部视角，`wrist`表示被合并的是腕部视角，输入始终两路，token总数320/272。项目侧`mixed_view_pool.py`仅继承原pipeline、在分配前设置实际序列容量、调用原池化内核并按原视角顺序保留另一视角完整特征；不修改FlashRT源码、不训练、不降分辨率、不以mask替代计算。沿用内存保护及独立审计，不允许此实验覆盖Full基线。
 
+上述40计划仅完成第一组7条（3成功4超时），创建task7触发外保护761.4MiB，未完成/不自动续跑。进一步修复M2硬重置时旧渲染缓冲延迟释放：在显式sim.free边界释放；六任务图像/物理gate全同。常驻十环境生命周期与另两条task6→7实际闭环均完成，无保护退出；后一条仍为动作超时，不能把内存修复当质量修复。完整一路只指SigLIP特征保留，联合模型隐藏状态与KV仍受另一视角压缩及位置变化影响，并非独立Full路径兜底。[本次报告](../任务指导与相关参考/PerceptBudget_M2环境峰值修复与单路压缩核查_20261021.md)。不声称任意长批次无内存峰值。
+
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```

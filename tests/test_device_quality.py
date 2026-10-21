@@ -50,7 +50,7 @@ def test_buffer_cleanup_does_not_destroy_egl_and_is_idempotent():
     from perceptbudget.device_quality import install_render_buffer_cleanup
     class Context:
         pass
-    binding = SimpleNamespace(MjRenderContext=Context)
+    binding = SimpleNamespace(MjRenderContext=Context,MjSim=type('Sim',(),{'free':lambda self:None}))
     utils = SimpleNamespace(binding_utils=binding)
     with patch.dict(sys.modules, {'robosuite': SimpleNamespace(utils=utils),
         'robosuite.utils': utils,
@@ -66,6 +66,31 @@ def test_buffer_cleanup_does_not_destroy_egl_and_is_idempotent():
     assert audit['freed'] == 1 and audit['errors'] == []
 
 
+def test_sim_free_releases_render_buffers_before_replacing_environment():
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from perceptbudget.device_quality import install_render_buffer_cleanup
+    events=[]
+    class Context:
+        pass
+    class Sim:
+        def free(self):
+            events.append('sim_free')
+    binding=SimpleNamespace(MjRenderContext=Context,MjSim=Sim)
+    utils=SimpleNamespace(binding_utils=binding)
+    with patch.dict(sys.modules,{'robosuite':SimpleNamespace(utils=utils),
+        'robosuite.utils':utils,'robosuite.utils.binding_utils':binding}):
+        record=install_render_buffer_cleanup()
+    context=Context()
+    context.gl_ctx=SimpleNamespace(make_current=lambda:events.append('current'))
+    context.con=SimpleNamespace(free=lambda:events.append('buffer_free'))
+    sim=Sim();sim._render_context_offscreen=context
+    sim.free();context.__del__()
+    assert events==['current','buffer_free','sim_free']
+    assert record['freed']==record['explicit_sim_frees']==1
+
+
 def test_shared_egl_factory_reuses_only_same_device_and_main_thread():
     import sys
     from types import SimpleNamespace
@@ -76,7 +101,7 @@ def test_shared_egl_factory_reuses_only_same_device_and_main_thread():
         pass
     gl = object()
     factory = Mock(return_value=gl)
-    binding = SimpleNamespace(MjRenderContext=Context, GLContext=factory)
+    binding = SimpleNamespace(MjRenderContext=Context, GLContext=factory,MjSim=type('Sim',(),{'free':lambda self:None}))
     utils = SimpleNamespace(binding_utils=binding)
     with patch.dict(sys.modules, {'robosuite': SimpleNamespace(utils=utils),
         'robosuite.utils': utils, 'robosuite.utils.binding_utils': binding}):
