@@ -11,7 +11,9 @@ PROFILES = {
     'cpu1190': (1173000000, 3199000000, 1190400),
     'gpu_emc': (816000000, 2133000000, 1497600),
     'gpu_emc_cpu': (816000000, 2133000000, 1190400),
-    'balanced': (1020000000, 2750000000, 1497600),
+    # 2750MHz was advertised but two hardware preflights stayed at3199MHz.
+    # Keep known-working EMC and screen an intermediate GPU rate instead.
+    'balanced': (1020000000, 3199000000, 1497600),
 }
 
 SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')

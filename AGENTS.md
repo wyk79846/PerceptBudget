@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-22修锁顺序后两次matrix预检6ca5aaad/74620292仍失败：balanced requested EMC2750000000、actual3199000000、locked1，.5s不匹配；baseline通过，两次全RESTORED且NO MODEL LOADED，无频率工具残留。只确认当前设置2750不生效，非取整/延迟，不能再把锁竞态当已证实唯一原因，不扩BWMGR控制。为继续筛选显式更新balanced为GPU1020/EMC3199/CPU1497.6，保留所有2750失败证据与旧run/样本，不放松精确匹配。九项45请求规模不变，GPU1020新候选必须先预检，尚未实际执行新方案。其余baseline1173/3199/1497.6及gpu_emc816/2133/1497.6不变；三点仍候选不当最终，根配置/FlashRT不改。备份archive/pre-m2-balanced-emc-fallback-20261022。
+
 - 2026-10-22九项331ded3a用户执行失败：baseline_hot5条已完成，balanced_hot在ClockControl.apply报EMC readback mismatch，未进入balanced推理；balanced_clocks有RESTORED且root读回恢复通过，GPU普通读回1173无工具残留。旧Lease.finish因exit1覆盖为restoration unconfirmed，已区分设置失败但恢复成功。对照本机NVIDIA jetson_clocks586–591，修正EMC先锁1再写rate（旧先解锁有DVFS竞态窗口），restore先锁写原值再恢复锁；wait_emc最多.5s精确读回，失败打印requested/actual/locked，不加容差/新控制节点。原日志未记actual，不能断言唯一根因，需硬件复验。--matrix新增模型加载前各1秒三挡预检并恢复，失败NO MODEL LOADED、记录preflight，不反复加载模型验证频率。原失败run不改/不当成功或任务质量失败，根配置/FlashRT不改，尚无修正后真实执行。备份archive/pre-m2-emc-readback-fix-20261022。
 
 - 2026-10-22恢复c914c106用户完成：30请求1model，freq/coverage1/0missing/动作0/6restore通过。0.2秒高/低恢复+计算451.31/470.47ms、cycle13.7739/13.6299J；1秒450.88/466.20ms、20.4788/18.6192J。低频多约15–19ms恢复，完整循环多约32–36ms，循环能量初步省1.0/9.1%，固定顺序/传感器响应不当闭环收益。用户继续授权M2：新增白名单balanced GPU1020/EMC2750/CPU1497.6，与baseline和gpu_emc作候选；原入口--matrix复用RecoveryLease，9项(三目标×hot/short.2/long1)×5=45请求1model，短/长统一从gpu_emc驻留再去目标，hot已在目标；新增serve-profile白名单，原协议/恢复/根配置不变。保存clock_matrix.json及full_cost_table.csv、目标/idle频率/实际间隙/动作误差；这是Full固定输入初表，不冒充27项/真实Continue/Full在线观测L。尚未执行本轮GPU/调频，用户终端命令在docs/M2_CLOCK_CONTROL.md末节。备份archive/pre-m2-full-cost-matrix-20261022；不自动扩Fast/不训练/不改FlashRT。

@@ -70,10 +70,14 @@ def test_emc_is_locked_before_rate_write_to_prevent_dvfs_race(control):
             path.write_text('3199000000')
     writes.clear()
     with patch.object(c, 'write', side_effect=emulate_dvfs):
-        c.apply('balanced')
-    assert c.read(c.emc/'rate') == 2750000000
-    assert writes.index(('mrq_rate_locked', 1)) < writes.index(('rate', 2750000000))
+        c.apply('emc2133')
+    assert c.read(c.emc/'rate') == 2133000000
+    assert writes.index(('mrq_rate_locked', 1)) < writes.index(('rate', 2133000000))
     assert ('mrq_rate_locked', 0) not in writes
+
+
+def test_balanced_candidate_does_not_reuse_failed_2750mhz():
+    assert PROFILES['balanced'] == (1020000000, 3199000000, 1497600)
 
 
 def test_emc_mismatch_reports_actual_and_does_not_accept_rounding(control):
