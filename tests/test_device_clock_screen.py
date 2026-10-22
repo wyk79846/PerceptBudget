@@ -42,7 +42,7 @@ def test_lease_requires_successful_restore(tmp_path):
     lease.events.append({'message': 'RESTORED'})
     lease.finish()
     lease.proc = SimpleNamespace(wait=lambda **kwargs: 1)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='AFTER successful restoration'):
         lease.finish()
 
 

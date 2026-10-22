@@ -157,3 +157,17 @@ def test_matrix_root_command_whitelists_service_profile(tmp_path):
     assert lease.command()[-2:] == ['--serve-profile', 'balanced']
     with pytest.raises(ValueError):
         RecoveryLease('gpu_emc', .2, tmp_path, 'test', serve_profile='cpu1190')
+
+
+def test_matrix_preflight_stops_before_any_model_on_clock_failure(tmp_path):
+    from scripts.profile_clock_screen import clock_preflight
+    summary = {}
+    def run(command, **kwargs):
+        kwargs['stdout'].write('RESTORED\n')
+        return SimpleNamespace(returncode=1 if 'balanced' in command else 0)
+    with patch('scripts.profile_clock_screen.subprocess.run', side_effect=run) as call:
+        with pytest.raises(RuntimeError, match='NO MODEL LOADED'):
+            clock_preflight(tmp_path, ('baseline', 'balanced', 'gpu_emc'), summary)
+    assert call.call_count == 2
+    assert summary['clock_preflight'][-1]['restored'] is True
+    assert not (tmp_path/'gpu_emc_preflight.log').exists()

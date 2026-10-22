@@ -60,6 +60,29 @@ def test_unsupported_emc_rejected_before_any_write(control):
     assert writes == []
 
 
+def test_emc_is_locked_before_rate_write_to_prevent_dvfs_race(control):
+    c, writes = control
+    c.write(c.emc/'mrq_rate_locked', 0)
+    real = c.write
+    def emulate_dvfs(path, value):
+        real(path, value)
+        if path == c.emc/'rate' and c.read(c.emc/'mrq_rate_locked') == 0:
+            path.write_text('3199000000')
+    writes.clear()
+    with patch.object(c, 'write', side_effect=emulate_dvfs):
+        c.apply('balanced')
+    assert c.read(c.emc/'rate') == 2750000000
+    assert writes.index(('mrq_rate_locked', 1)) < writes.index(('rate', 2750000000))
+    assert ('mrq_rate_locked', 0) not in writes
+
+
+def test_emc_mismatch_reports_actual_and_does_not_accept_rounding(control):
+    c, _ = control
+    (c.emc/'rate').write_text('2752000000')
+    with patch('time.monotonic', side_effect=[0, 1]), pytest.raises(RuntimeError, match='actual=2752000000'):
+        c.wait_emc(2750000000)
+
+
 def test_restore_rejects_arbitrary_nodes(control):
     c, writes = control
     saved = c.snapshot()

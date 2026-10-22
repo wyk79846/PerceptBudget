@@ -76,8 +76,10 @@ class Lease:
         except subprocess.TimeoutExpired:
             raise RuntimeError('Clock helper did not exit; manual restore required')
         self.thread.join(timeout=2)
-        if code != 0 or not any(e.get('message') == 'RESTORED' for e in self.events):
+        if not any(e.get('message') == 'RESTORED' for e in self.events):
             raise RuntimeError('Clock restoration unconfirmed; inspect '+str(self.path))
+        if code != 0:
+            raise RuntimeError(f'Clock helper failed (exit{code}) AFTER successful restoration; inspect {self.path}')
 
     def __exit__(self, *exc):
         self.finish()

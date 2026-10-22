@@ -13,6 +13,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def clock_preflight(run, profiles, summary):
+    """Reject unavailable matrix clocks BEFORE expensive model loading."""
+    summary['clock_preflight'] = []
+    for profile in profiles:
+        path = run/(profile+'_preflight.log')
+        command = ['sudo', '-n', '/usr/bin/python3', str(ROOT/'scripts/control_device_clocks.py'),
+                   'lease', '--profile', profile, '--seconds', '1', '--trace']
+        with path.open('w') as log:
+            code = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT).returncode
+        restored = 'RESTORED' in path.read_text().splitlines()
+        summary['clock_preflight'].append(dict(profile=profile, exit_code=code,
+                                               restored=restored, log=str(path)))
+        if code or not restored:
+            raise RuntimeError(f'Clock preflight failed for {profile}; restored={restored}; '
+                               f'NO MODEL LOADED; inspect {path}')
+
+
 def monitored_worker(command, out):
     # Keep the user's controlling terminal/session for sudo's tty-bound cache.
     # Do not use guarded_run's setsid: that would lose this authorization.
@@ -95,6 +112,9 @@ def main():
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if args.matrix:
+                from perceptbudget.device_clocks import MATRIX_PROFILES
+                clock_preflight(run, MATRIX_PROFILES, summary)
             command = [config['python_executable'], '-u', str(Path(__file__).resolve()),
                        '--worker', '--run-dir', str(run)]
             if args.transitions:

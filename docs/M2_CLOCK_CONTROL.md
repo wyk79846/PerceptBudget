@@ -135,3 +135,11 @@ cd /home/wyk/workspace/PerceptBudget
 输出`clock-matrix`目录：`clock_matrix.json`及`full_cost_table.csv`九行，列出目标频率、起始空闲频率、耗时中位/样本最大、恢复+计算能量、完整循环能量、动作差异和恢复状态。5个样本只作短测，不报可信P95/P99。三点若存在明显被支配点再替换，不为凑数定为最终组合。
 
 这仅是Full固定输入成本初表，不是27项验收表：Fast混合可用性、真实Continue控制负载、在线新观测完整服务及入选点追加批次仍未完成，不伪造其他两档数字。尚未执行本轮硬件测试，需要用户终端执行后分析。
+
+### 九项首次失败与EMC控制修正
+
+`M2/20261022T064312.512940Z-clock-matrix-331ded3a`无效退出：baseline_hot五次已完成，balanced_hot在root设置阶段报EMC读回不匹配，尚未推理；并非任务失败或RTC数值错误。balanced日志有RESTORED，旧恢复过程读回通过后才打印，因此设置失败但恢复成功；原父层将非零退出误报为恢复未确认，现已区分。
+
+检查本机NVIDIA `/usr/bin/jetson_clocks:586`，其顺序是先写mrq_rate_locked=1，再写EMC rate。旧项目代码先解锁、设rate、再锁，存在自动DVFS争抢窗口，已修正为先锁再设，恢复也先锁再设原rate，最后恢复原锁状态。不新增BWMGR/电压/温控控制，不改合法频率或功耗模式。EMC精确读回允许最多0.5秒，超时报告requested/actual/lock；不放宽频率匹配、不把取整当通过。旧日志未记录实际错值，尚不能断言竞态就是本次唯一根因；需再次硬件确认。
+
+原--matrix命令现在先对三候选各做1秒独立lease并恢复，日志写各profile_preflight.log，任何失败会在加载模型前停止（NO MODEL LOADED）。通过才启动单次常驻模型九项流程；若仍失败保留真实读回与恢复信息，不自动改频率凑数。模拟自动DVFS回退、错值、恢复成功但任务非零及预检提前停止均有测试。未执行真实修正后调频。

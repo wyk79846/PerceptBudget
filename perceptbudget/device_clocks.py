@@ -156,13 +156,26 @@ class ClockControl:
     def apply(self, name):
         gpu, emc, cpu = self.validate(name)  # all validation before first write
         self.bounds(self.gpu/'min_freq', self.gpu/'max_freq', gpu, gpu)
-        self.write(self.emc/'mrq_rate_locked', 0)
-        self.write(self.emc/'rate', emc)
+        # Match installed NVIDIA jetson_clocks: lock BEFORE setting rate.
+        # Unlocking creates an automatic-DVFS race between write and relock.
         self.write(self.emc/'mrq_rate_locked', 1)
-        if self.read(self.emc/'rate') != emc or self.read(self.emc/'mrq_rate_locked') != 1:
-            raise RuntimeError('EMC readback mismatch')
+        self.write(self.emc/'rate', emc)
+        self.wait_emc(emc)
         for policy in self.cpus:
             self.bounds(policy/'scaling_min_freq', policy/'scaling_max_freq', cpu, cpu)
+
+    def wait_emc(self, requested):
+        import time
+        deadline = time.monotonic()+.5
+        while True:
+            actual = self.read(self.emc/'rate')
+            locked = self.read(self.emc/'mrq_rate_locked')
+            if actual == requested and locked == 1:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'EMC readback mismatch after0.5s: requested={requested}, '
+                                   f'actual={actual}, locked={locked}; no rounding tolerance applied')
+            time.sleep(.002)
 
     def restore(self, saved):
         expected = {str(p.relative_to(self.root)) for p in self.paths()}
@@ -172,9 +185,11 @@ class ClockControl:
         errors = []
         operations = [(self.bounds, (self.gpu/'min_freq', self.gpu/'max_freq',
                        value(self.gpu/'min_freq'), value(self.gpu/'max_freq')))]
-        operations += [(self.write, (self.emc/'mrq_rate_locked', 0)),
-                       (self.write, (self.emc/'rate', value(self.emc/'rate'))),
-                       (self.write, (self.emc/'mrq_rate_locked', value(self.emc/'mrq_rate_locked')))]
+        operations += [(self.write, (self.emc/'mrq_rate_locked', 1)),
+                       (self.write, (self.emc/'rate', value(self.emc/'rate')))]
+        if value(self.emc/'mrq_rate_locked') == 1:
+            operations.append((self.wait_emc, (value(self.emc/'rate'),)))
+        operations.append((self.write, (self.emc/'mrq_rate_locked', value(self.emc/'mrq_rate_locked'))))
         for p in self.cpus:
             operations.append((self.bounds, (p/'scaling_min_freq', p/'scaling_max_freq',
                                value(p/'scaling_min_freq'), value(p/'scaling_max_freq'))))
