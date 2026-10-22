@@ -64,6 +64,7 @@ def main():
     modes.add_argument('--transitions', action='store_true', help='Resident static combination holds and transition cost')
     modes.add_argument('--recovery', action='store_true', help='Short/long idle recovery followed by prepared-input Full RTC')
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
+    modes.add_argument('--continue-control', action='store_true', help='Fifteen bounded live LIBERO Continue windows, five fresh actions each')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -73,6 +74,13 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.continue_control:
+            from perceptbudget.device_clocks import MATRIX_PROFILES
+            print(json.dumps(dict(profiles=MATRIX_PROFILES, model_loads=1, H=50, N=5,
+                                  state=True, suite='libero_spatial', task_id=0, seed=7, init=0,
+                                  repeats=5, committed_steps=5, windows=15, max_control_steps=75,
+                                  inference_during_continue=False, steady_hold_claim=False)))
+            return 0
         if args.matrix:
             from perceptbudget.device_clock_recovery import MATRIX_PLAN
             print(json.dumps(dict(plan=MATRIX_PLAN, model_loads=1, H=50, N=5, state=True,
@@ -101,18 +109,18 @@ def main():
         from perceptbudget.device_profile import fixed_view_probe
         fixed_view_probe(config, args.run_dir, source, 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
-                         clock_matrix=args.matrix)
+                         clock_matrix=args.matrix, continue_control=args.continue_control)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    purpose = 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix:
+            if args.matrix or args.continue_control:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             command = [config['python_executable'], '-u', str(Path(__file__).resolve()),
@@ -123,11 +131,20 @@ def main():
                 command.append('--recovery')
             if args.matrix:
                 command.append('--matrix')
+            if args.continue_control:
+                command.append('--continue-control')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
             if code:
                 raise RuntimeError('Worker failed; inspect worker.log and any clock logs for restoration')
+            if args.continue_control:
+                record = json.loads((run/'continue_control.json').read_text())
+                if record['status'] != 'completed' or len(record['windows']) != 15:
+                    raise RuntimeError('Incomplete Continue control screen')
+                summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
+                               conditions=record['summary'], all_final_states_equal=record['all_final_states_equal'])
+                return 0
             filename = 'clock_matrix.json' if args.matrix else 'clock_recovery.json' if args.recovery else 'clock_transitions.json' if args.transitions else 'clock_screen.json'
             record = json.loads((run/filename).read_text())
             if record['status'] != 'completed' or len(record['conditions']) != (9 if args.matrix else 6 if args.recovery else 4):

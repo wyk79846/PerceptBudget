@@ -24,6 +24,7 @@ def main():
     lease.add_argument('--profile', required=True, choices=PROFILES)
     lease.add_argument('--seconds', type=int, default=120, choices=range(1, 601))
     lease.add_argument('--trace', action='store_true', help='Print actual frequency samples every 0.2s')
+    lease.add_argument('--trace-interval', type=float, default=.2, choices=(.02, .2))
     cycles = sub.add_parser('cycles', help='Five fixed static low/high cycles, three seconds per phase')
     cycles.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc', 'gpu_emc_cpu'))
     recovery = sub.add_parser('recovery', help='Five bounded RUN/DONE exchanges for prepared-input recovery')
@@ -94,7 +95,7 @@ def main():
                 if args.trace:
                     print(json.dumps(dict(status='SAMPLE', monotonic=time.monotonic(),
                                           actual=control.actual())), flush=True)
-                time.sleep(min(.2, max(0, end-time.monotonic())))
+                time.sleep(min(args.trace_interval, max(0, end-time.monotonic())))
         finally:
             # Prevent a second normal signal from interrupting restoration.
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):

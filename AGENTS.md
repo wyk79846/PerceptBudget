@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-22Full九项2cd04e4e用户完成，9×5=45、1model、三预检/九restore、freq匹配/coverage1/0missing/动作0全通过。hot/short/long服务ms：baseline463.24/476.90/478.39，balanced496.18/514.12/513.47，gpu_emc650.58/651.96/653.61；热cycleJ11.3243/11.4439/11.1460，中间收益未明确，仍三候选非最终27表。用户同意继续真实Continue：新device_continue.py接入原入口--continue-control/原模型准备，1环境Spatial0、硬重置/共享EGL释放gate、三频率×5窗口，每次当前观测fresh bootstrap再执行首5步，最多75step，窗口无推理/不重播/不拿H50当缓冲。root短lease2秒/20ms实际频率，未执行部分只离线等待恢复；实际双图render/envstep、scene/contact/state、trace、50ms目标，记录实际Hz/超期/初始hash/首5动作配对/终态/观测时刻/承诺区间/瞬态功率。非稳态P_idle、非RTC交接/完整任务/九种Continue表，保留推理前后整段功率便于分析传感器尾迹。预检/900和768保护/FlashRT不改。尚未真实执行；备份archive/pre-m2-live-continue-20261022，命令见docs/M2_CLOCK_CONTROL.md末节。
+
 - 2026-10-22修锁顺序后两次matrix预检6ca5aaad/74620292仍失败：balanced requested EMC2750000000、actual3199000000、locked1，.5s不匹配；baseline通过，两次全RESTORED且NO MODEL LOADED，无频率工具残留。只确认当前设置2750不生效，非取整/延迟，不能再把锁竞态当已证实唯一原因，不扩BWMGR控制。为继续筛选显式更新balanced为GPU1020/EMC3199/CPU1497.6，保留所有2750失败证据与旧run/样本，不放松精确匹配。九项45请求规模不变，GPU1020新候选必须先预检，尚未实际执行新方案。其余baseline1173/3199/1497.6及gpu_emc816/2133/1497.6不变；三点仍候选不当最终，根配置/FlashRT不改。备份archive/pre-m2-balanced-emc-fallback-20261022。
 
 - 2026-10-22九项331ded3a用户执行失败：baseline_hot5条已完成，balanced_hot在ClockControl.apply报EMC readback mismatch，未进入balanced推理；balanced_clocks有RESTORED且root读回恢复通过，GPU普通读回1173无工具残留。旧Lease.finish因exit1覆盖为restoration unconfirmed，已区分设置失败但恢复成功。对照本机NVIDIA jetson_clocks586–591，修正EMC先锁1再写rate（旧先解锁有DVFS竞态窗口），restore先锁写原值再恢复锁；wait_emc最多.5s精确读回，失败打印requested/actual/locked，不加容差/新控制节点。原日志未记actual，不能断言唯一根因，需硬件复验。--matrix新增模型加载前各1秒三挡预检并恢复，失败NO MODEL LOADED、记录preflight，不反复加载模型验证频率。原失败run不改/不当成功或任务质量失败，根配置/FlashRT不改，尚无修正后真实执行。备份archive/pre-m2-emc-readback-fix-20261022。
