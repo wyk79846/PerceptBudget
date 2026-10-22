@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from perceptbudget.device_clocks import ClockControl, PROFILES
+from perceptbudget.device_clocks import ClockControl, PROFILES, cycle_trace
 
 STATE = Path('/run/perceptbudget-clocks')
 
@@ -24,6 +24,8 @@ def main():
     lease.add_argument('--profile', required=True, choices=PROFILES)
     lease.add_argument('--seconds', type=int, default=120, choices=range(1, 601))
     lease.add_argument('--trace', action='store_true', help='Print actual frequency samples every 0.2s')
+    cycles = sub.add_parser('cycles', help='Five fixed static low/high cycles, three seconds per phase')
+    cycles.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc', 'gpu_emc_cpu'))
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -52,6 +54,8 @@ def main():
         if len(mode) < 2 or mode[-1].strip() != '4' or '40W' not in mode[0]:
             raise RuntimeError('Expected fixed 40W mode4; refusing clock changes')
         control.validate(args.profile)
+        if args.command == 'cycles':
+            control.validate('baseline')
         saved = control.snapshot()
         with snapshot.open('x') as out:
             json.dump(saved, out)
@@ -62,6 +66,14 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, interrupted)
         try:
+            if args.command == 'cycles':
+                control.apply('baseline')
+                print(json.dumps(dict(status='READY', monotonic=time.monotonic(),
+                                      profile=args.profile, settings=control.snapshot(),
+                                      actual=control.actual(), lease_seconds=40)), flush=True)
+                cycle_trace(control, args.profile,
+                            lambda event: print(json.dumps(event), flush=True))
+                return
             control.apply(args.profile)
             print(json.dumps(dict(status='READY', profile=args.profile,
                                   monotonic=time.monotonic(),

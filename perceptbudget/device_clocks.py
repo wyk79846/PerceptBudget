@@ -9,7 +9,46 @@ PROFILES = {
     'gpu816': (816000000, 3199000000, 1497600),
     'emc2133': (1173000000, 2133000000, 1497600),
     'cpu1190': (1173000000, 3199000000, 1190400),
+    'gpu_emc': (816000000, 2133000000, 1497600),
+    'gpu_emc_cpu': (816000000, 2133000000, 1190400),
 }
+
+SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')
+
+
+def cycle_trace(control, profile, emit, *, cycles=5, phase_seconds=3):
+    """Bounded static transitions. Readback time is not GPU wake/service time."""
+    import time
+    current = 'baseline'
+    for cycle in range(cycles):
+        for phase, target in (('low', profile), ('high', 'baseline')):
+            command = time.monotonic()
+            changed = target != current
+            if changed:
+                control.apply(target)
+            settings_readback = time.monotonic()
+            gpu, emc, cpu = PROFILES[target]
+            deadline = settings_readback+.5
+            while True:
+                actual = control.actual()
+                observed = time.monotonic()
+                expected = {name: gpu if name.endswith('/cur_freq') else
+                            emc if name.endswith('/rate') else cpu for name in actual}
+                if actual == expected:
+                    break
+                if observed >= deadline:
+                    raise RuntimeError('Frequency did not reach requested value within0.5s')
+                time.sleep(.002)
+            emit(dict(status='PHASE', cycle=cycle, phase=phase, profile=target,
+                      command_monotonic=command, settings_readback_monotonic=settings_readback,
+                      observed_match_monotonic=observed, actual=actual,
+                      change_required=changed))
+            end = observed+phase_seconds
+            while time.monotonic() < end:
+                emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual()))
+                time.sleep(min(.02, max(0, end-time.monotonic())))
+            current = target
+        emit(dict(status='CYCLE_END', cycle=cycle, monotonic=time.monotonic()))
 
 
 class ClockControl:

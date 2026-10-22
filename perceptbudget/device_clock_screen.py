@@ -9,7 +9,7 @@ import subprocess
 import threading
 import time
 
-from perceptbudget.device_clocks import PROFILES
+from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES
 from perceptbudget.device_control import inventory
 from perceptbudget.experiment import _write_json_atomically
 from perceptbudget.power import PowerMonitor
@@ -28,11 +28,14 @@ class Lease:
         self.events = []
         self.lines = queue.Queue()
         self.proc = None
+        self.duration = LEASE_SECONDS
+
+    def command(self):
+        return ['sudo', '-n', '/usr/bin/python3', str(ROOT/'scripts/control_device_clocks.py'),
+                'lease', '--profile', self.profile, '--seconds', str(self.duration), '--trace']
 
     def __enter__(self):
-        command = ['sudo', '-n', '/usr/bin/python3', str(ROOT/'scripts/control_device_clocks.py'),
-                   'lease', '--profile', self.profile, '--seconds', str(LEASE_SECONDS), '--trace']
-        self.proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        self.proc = subprocess.Popen(self.command(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1)
         def consume():
             with self.path.open('w') as out:
@@ -53,7 +56,7 @@ class Lease:
                 event = self.lines.get(timeout=10)
                 if event.get('status') == 'READY':
                     self.ready = event
-                    self.deadline = event['monotonic']+LEASE_SECONDS
+                    self.deadline = event['monotonic']+self.duration
                     return self
                 if event.get('status') == 'EOF':
                     raise RuntimeError('No clock READY; inspect '+str(self.path))
@@ -68,7 +71,7 @@ class Lease:
     def finish(self):
         # No signals or root model execution: finite child naturally restores.
         try:
-            code = self.proc.wait(timeout=LEASE_SECONDS+15)
+            code = self.proc.wait(timeout=self.duration+15)
         except subprocess.TimeoutExpired:
             raise RuntimeError('Clock helper did not exit; manual restore required')
         self.thread.join(timeout=2)
@@ -111,11 +114,11 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                         'task success, true Continue control load, or the 27-cell table',
                   repeats=5, fixed_delay_steps=5, fixed_executed_steps=5,
                   hold_seconds=3, lease_seconds=LEASE_SECONDS,
-                  profile_order=list(PROFILES), power_boundary='INA3221 VDD_IN module input')
+                  profile_order=list(SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
     _write_json_atomically(directory/'clock_screen.json', result)
     reference_actions = None
     try:
-        for profile in PROFILES:
+        for profile in SCREEN_PROFILES:
             print('CLOCK_PROFILE_START='+profile, flush=True)
             row = dict(profile=profile, target=PROFILES[profile], requests=[])
             outputs = []

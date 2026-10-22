@@ -24,7 +24,7 @@ def monitored_worker(command, out):
     try:
         while child.poll() is None:
             if available_ram_bytes() < RAM_FLOOR_BYTES:
-                raise RuntimeError('RAM protection stopped worker; active root lease restores within25s')
+                raise RuntimeError('RAM protection stopped worker; wait for finite root helper and verify restoration')
             time.sleep(.1)
         return child.returncode
     finally:
@@ -40,9 +40,10 @@ def monitored_worker(command, out):
 def main():
     from perceptbudget.baseline import validate
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
-    from perceptbudget.device_clocks import PROFILES
+    from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--transitions', action='store_true', help='Resident static combination holds and transition cost')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -52,7 +53,10 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
-        print(json.dumps(dict(profiles=PROFILES, model_loads=1, requests_per_profile=5,
+        print(json.dumps(dict(profiles={p: PROFILES[p] for p in (
+                              ('baseline', 'gpu_emc', 'gpu_emc_cpu') if args.transitions else SCREEN_PROFILES)},
+                              transitions=args.transitions, cycles_per_condition=5 if args.transitions else None,
+                              model_loads=1, requests_per_profile=0 if args.transitions else 5,
                               static_hold_seconds=3, H=50, N=5, views=2, state=True,
                               changes_clocks=True, changes_power_mode=False,
                               source_run=str(source)), ensure_ascii=False))
@@ -63,11 +67,12 @@ def main():
         # Check the inherited tty credential before loading any weights.
         subprocess.run(['sudo', '-n', 'true'], check=True)
         from perceptbudget.device_profile import fixed_view_probe
-        fixed_view_probe(config, args.run_dir, source, 'full', clock_screen=True)
+        fixed_view_probe(config, args.run_dir, source, 'full', clock_screen=True,
+                         clock_transitions=args.transitions)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    run = create_run(config, 'M2', 'clock-screen', repo_root=ROOT)
+    run = create_run(config, 'M2', 'clock-transitions' if args.transitions else 'clock-screen', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
@@ -75,14 +80,20 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             command = [config['python_executable'], '-u', str(Path(__file__).resolve()),
                        '--worker', '--run-dir', str(run)]
+            if args.transitions:
+                command.append('--transitions')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
             if code:
                 raise RuntimeError('Worker failed; inspect worker.log and any clock logs for restoration')
-            record = json.loads((run/'clock_screen.json').read_text())
+            record = json.loads((run/('clock_transitions.json' if args.transitions else 'clock_screen.json')).read_text())
             if record['status'] != 'completed' or len(record['conditions']) != 4:
                 raise RuntimeError('Incomplete clock screen')
+            if args.transitions:
+                summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
+                               conditions=record['summary'])
+                return 0
             summary.update(status='completed', model_loads=record['model_loads'], conditions=[
                 dict(profile=r['profile'], median_ms=r['median_ms'],
                      mean_compute_energy_per_request_j=r['mean_compute_energy_per_request_j'],

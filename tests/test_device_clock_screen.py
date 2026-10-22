@@ -93,7 +93,7 @@ def test_dry_plan_has_one_model_twenty_requests_without_sudo(capsys):
 
 def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
     import numpy as np
-    from perceptbudget.device_clock_screen import screen, PROFILES
+    from perceptbudget.device_clock_screen import screen, SCREEN_PROFILES
     calls = []
     seeds = []
     def predict(*args, **kwargs):
@@ -128,7 +128,7 @@ def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
         result = screen(SimpleNamespace(predict=predict), {}, 'test', np.zeros((45, 32)),
                         SimpleNamespace(manual_seed=seeds.append), tmp_path, {'model_loads': 1})
     assert result['status'] == 'completed'
-    assert [r['profile'] for r in result['conditions']] == list(PROFILES)
+    assert [r['profile'] for r in result['conditions']] == list(SCREEN_PROFILES)
     assert len(calls) == 4*7 and len(seeds) == 20
     assert seeds[:5] == seeds[5:10] == seeds[10:15] == seeds[15:]
     assert all(r['restored'] and len(r['requests']) == 5 for r in result['conditions'])
