@@ -8,6 +8,10 @@
 
 ## 已完成与待推进
 
+- 2026-10-22用户同意汇总M2成本并做Full/Fast配对。核查发现完全对应7dce5182在10-21已做且原始power完整，本次不重复GPU实验。离线重新audit full695/split1740项全pass、初sim/raw/frame配对、配置模型/H50N5/state/精度/beta/autotune匹配当前，GPU/CPU历史采样1173/1497.6；EMC历史未采不能额外声称验证。重积分任务/含排空能量均与原记录一致coverage1/0missing：Full77success6.2168s143.403J，含排空6.4057s148.458J；split176success12.8984s277.178J，含排空13.0698s281.332J。交替guided14Full/14expert占50%、专家171ms但总时间+107.5%/含排空J+89.5%，不当默认、不以单任务否定更稀疏/其他Fast候选，不盲目扩测。报告任务指导与相关参考/PerceptBudget_M2阶段成本表与Fast配对复核_20261022.md汇总所有M2成本及缺口；未改生产代码/频率/FlashRT/根配置，无新GPU任务。备份archive/pre-m2-cost-review-20261022。
+
+- 2026-10-22Continue bcf8dd87用户已完成：15窗口75步1model，初sim/frame/前5动作及跨组终态全同、coverage1/freq匹配/restore通过，min记录点RAM1564MiB。baseline/中频/低频Hz16.686/16.359/15.627，envstep55.92/57.30/59.44ms，瞬态W12.267/12.138/11.462，每5步J3.6767/3.7102/3.6675；三组各25次50ms超期，非单纯降频所致，低频功率约−6.6%但速度−6.3%抵消能量，不推荐动作持续执行时默认降频。非稳态P_idle/RTC交接/长任务/九种Continue验收。
+
 - 2026-10-22Full九项2cd04e4e用户完成，9×5=45、1model、三预检/九restore、freq匹配/coverage1/0missing/动作0全通过。hot/short/long服务ms：baseline463.24/476.90/478.39，balanced496.18/514.12/513.47，gpu_emc650.58/651.96/653.61；热cycleJ11.3243/11.4439/11.1460，中间收益未明确，仍三候选非最终27表。用户同意继续真实Continue：新device_continue.py接入原入口--continue-control/原模型准备，1环境Spatial0、硬重置/共享EGL释放gate、三频率×5窗口，每次当前观测fresh bootstrap再执行首5步，最多75step，窗口无推理/不重播/不拿H50当缓冲。root短lease2秒/20ms实际频率，未执行部分只离线等待恢复；实际双图render/envstep、scene/contact/state、trace、50ms目标，记录实际Hz/超期/初始hash/首5动作配对/终态/观测时刻/承诺区间/瞬态功率。非稳态P_idle、非RTC交接/完整任务/九种Continue表，保留推理前后整段功率便于分析传感器尾迹。预检/900和768保护/FlashRT不改。尚未真实执行；备份archive/pre-m2-live-continue-20261022，命令见docs/M2_CLOCK_CONTROL.md末节。
 
 - 2026-10-22修锁顺序后两次matrix预检6ca5aaad/74620292仍失败：balanced requested EMC2750000000、actual3199000000、locked1，.5s不匹配；baseline通过，两次全RESTORED且NO MODEL LOADED，无频率工具残留。只确认当前设置2750不生效，非取整/延迟，不能再把锁竞态当已证实唯一原因，不扩BWMGR控制。为继续筛选显式更新balanced为GPU1020/EMC3199/CPU1497.6，保留所有2750失败证据与旧run/样本，不放松精确匹配。九项45请求规模不变，GPU1020新候选必须先预检，尚未实际执行新方案。其余baseline1173/3199/1497.6及gpu_emc816/2133/1497.6不变；三点仍候选不当最终，根配置/FlashRT不改。备份archive/pre-m2-balanced-emc-fallback-20261022。
