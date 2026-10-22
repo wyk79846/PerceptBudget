@@ -11,9 +11,11 @@ PROFILES = {
     'cpu1190': (1173000000, 3199000000, 1190400),
     'gpu_emc': (816000000, 2133000000, 1497600),
     'gpu_emc_cpu': (816000000, 2133000000, 1190400),
+    'balanced': (1020000000, 2750000000, 1497600),
 }
 
 SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')
+MATRIX_PROFILES = ('baseline', 'balanced', 'gpu_emc')
 
 
 def observed_switch(control, target, current):
@@ -53,12 +55,12 @@ def cycle_trace(control, profile, emit, *, cycles=5, phase_seconds=3):
         emit(dict(status='CYCLE_END', cycle=cycle, monotonic=time.monotonic()))
 
 
-def recovery_trace(control, profile, idle_seconds, emit, fd):
+def recovery_trace(control, profile, idle_seconds, emit, fd, *, serve_profile='baseline'):
     """Five finite RUN/DONE exchanges; no arbitrary commands or model code."""
     import os
     import select
     import time
-    if profile not in ('baseline', 'gpu_emc') or idle_seconds not in (0., .2, 1.):
+    if profile not in MATRIX_PROFILES or serve_profile not in MATRIX_PROFILES or idle_seconds not in (0., .2, 1.):
         raise ValueError('Recovery scenario outside whitelist')
     def receive(expected, index):
         deadline = time.monotonic()+3
@@ -81,15 +83,15 @@ def recovery_trace(control, profile, idle_seconds, emit, fd):
         raise TimeoutError('Recovery worker handshake exceeded3s')
     for index in range(5):
         receive(b'RUN', index)
-        down = observed_switch(control, profile, 'baseline')
+        down = observed_switch(control, profile, serve_profile)
         idle_end = down['observed_match_monotonic']+idle_seconds
         while time.monotonic() < idle_end:
             emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual(),
                       request_index=index))
             time.sleep(min(.02, max(0, idle_end-time.monotonic())))
-        up = observed_switch(control, 'baseline', profile)
+        up = observed_switch(control, serve_profile, profile)
         emit(dict(status='SERVE', request_index=index, down=down, up=up,
-                  requested_idle_seconds=idle_seconds, profile=profile))
+                  requested_idle_seconds=idle_seconds, profile=profile, serve_profile=serve_profile))
         receive(b'DONE', index)
         emit(dict(status='REQUEST_ACK', request_index=index, monotonic=time.monotonic()))
 

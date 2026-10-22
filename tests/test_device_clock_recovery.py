@@ -11,10 +11,11 @@ from perceptbudget.device_clocks import recovery_trace, PROFILES
 from perceptbudget.device_clock_recovery import RecoveryLease, PLAN, screen
 
 
-def test_fixed_root_handshake_runs_five_requests_without_arbitrary_commands():
+@pytest.mark.parametrize('serve_profile', ['baseline', 'balanced', 'gpu_emc'])
+def test_fixed_root_handshake_runs_five_requests_without_arbitrary_commands(serve_profile):
     read, write = os.pipe()
     events, calls = [], []
-    current = ['baseline']
+    current = [serve_profile]
     def apply(profile):
         calls.append(profile)
         current[0] = profile
@@ -29,13 +30,14 @@ def test_fixed_root_handshake_runs_five_requests_without_arbitrary_commands():
             os.write(write, b'RUN\n')
     try:
         os.write(write, b'RUN\n')
-        recovery_trace(SimpleNamespace(apply=apply, actual=actual), 'gpu_emc', 0., emit, read)
+        recovery_trace(SimpleNamespace(apply=apply, actual=actual), 'gpu_emc', 0., emit, read,
+                       serve_profile=serve_profile)
     finally:
         os.close(read)
         os.close(write)
-    assert calls == ['gpu_emc', 'baseline']*5
+    assert calls == ([] if serve_profile == 'gpu_emc' else ['gpu_emc', serve_profile]*5)
     assert len([e for e in events if e['status'] == 'SERVE']) == 5
-    assert current[0] == 'baseline'
+    assert current[0] == serve_profile
 
 
 def test_root_protocol_rejects_unexpected_tokens():
@@ -82,7 +84,8 @@ def test_recovery_dry_plan_loads_once_and_runs_thirty_requests(capsys):
     run.assert_not_called()
 
 
-def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_path):
+@pytest.mark.parametrize('matrix', [False, True])
+def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_path, matrix):
     import numpy as np
     from perceptbudget.power import PowerReport
     calls, seeds = [], []
@@ -91,8 +94,8 @@ def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_p
         return np.zeros((50, 32), dtype=np.float32)
     class FakeLease:
         events = []
-        def __init__(self, *args):
-            pass
+        def __init__(self, *args, **kwargs):
+            self.serve_profile = kwargs.get('serve_profile', 'baseline')
         def __enter__(self):
             return self
         def __exit__(self, *args):
@@ -101,7 +104,8 @@ def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_p
             assert token in ('RUN', 'DONE')
         def receive(self, status, index):
             now = time.monotonic()
-            return dict(request_index=index, down={'command_monotonic': now-.003,
+            return dict(request_index=index, serve_profile=self.serve_profile,
+                        down={'command_monotonic': now-.003,
                         'observed_match_monotonic': now-.002},
                         up={'command_monotonic': now-.001, 'observed_match_monotonic': now-.0005})
     class Monitor:
@@ -121,10 +125,35 @@ def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_p
          patch('perceptbudget.device_clock_recovery.frequency_check', return_value={'matches': True}), \
          patch('perceptbudget.device_clock_recovery.inventory', return_value={'thermal': []}):
         result = screen(SimpleNamespace(predict=predict), {}, 'test', np.zeros((45, 32)),
-                        SimpleNamespace(manual_seed=seeds.append), tmp_path, {'model_loads': 1})
-    assert result['status'] == 'completed' and len(result['conditions']) == len(PLAN)
-    assert len(calls) == len(seeds) == 30
-    assert all(seeds[i:i+5] == seeds[:5] for i in range(0, 30, 5))
+                        SimpleNamespace(manual_seed=seeds.append), tmp_path, {'model_loads': 1}, matrix=matrix)
+    groups = 9 if matrix else len(PLAN)
+    count = groups*5
+    assert result['status'] == 'completed' and len(result['conditions']) == groups
+    assert len(calls) == len(seeds) == count
+    assert all(seeds[i:i+5] == seeds[:5] for i in range(0, count, 5))
     assert all(c['restored'] and c['max_abs_action_difference_vs_hot_pre'] == 0 for c in result['conditions'])
     assert all(r['recovery_compute_ms'] >= r['predict_ms'] for c in result['conditions'] for r in c['requests'])
-    assert len(list(tmp_path.glob('*_actions.npz'))) == 6
+    assert len(list(tmp_path.glob('*_actions.npz'))) == groups
+    if matrix:
+        assert len((tmp_path/'full_cost_table.csv').read_text().splitlines()) == 10
+
+
+def test_full_matrix_covers_three_service_profiles_and_three_idle_states(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv', ['probe', '--matrix', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as run:
+        assert main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['total_requests'] == 45 and result['full_cells'] == 9
+    pairs = {(item[2], item[3]) for item in result['plan']}
+    assert len(pairs) == 9
+    assert {profile for _, profile in pairs} == {'baseline', 'balanced', 'gpu_emc'}
+    assert all(item[1] == 'gpu_emc' for item in result['plan'] if item[2] > 0)
+    run.assert_not_called()
+
+
+def test_matrix_root_command_whitelists_service_profile(tmp_path):
+    lease = RecoveryLease('gpu_emc', .2, tmp_path, 'test', serve_profile='balanced')
+    assert lease.command()[-2:] == ['--serve-profile', 'balanced']
+    with pytest.raises(ValueError):
+        RecoveryLease('gpu_emc', .2, tmp_path, 'test', serve_profile='cpu1190')

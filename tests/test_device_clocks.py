@@ -12,12 +12,12 @@ def control(tmp_path):
         'class/devfreq/17000000.gpu/min_freq': '1173000000',
         'class/devfreq/17000000.gpu/max_freq': '1173000000',
         'class/devfreq/17000000.gpu/cur_freq': '1173000000',
-        'class/devfreq/17000000.gpu/available_frequencies': '816000000 1173000000',
+        'class/devfreq/17000000.gpu/available_frequencies': '816000000 1020000000 1173000000',
         'kernel/debug/bpmp/debug/clk/emc/rate': '3199000000',
         'kernel/debug/bpmp/debug/clk/emc/min_rate': '204000000',
         'kernel/debug/bpmp/debug/clk/emc/max_rate': '3199000000',
         'kernel/debug/bpmp/debug/clk/emc/mrq_rate_locked': '1',
-        'kernel/debug/bpmp/debug/clk/emc/dvfs_table': 'vdd_core 2133000000 1\nvdd_core 3199000000 1',
+        'kernel/debug/bpmp/debug/clk/emc/dvfs_table': 'vdd_core 2133000000 1\nvdd_core 2750000000 1\nvdd_core 3199000000 1',
     }
     for policy in ('policy0', 'policy4'):
         prefix = 'devices/system/cpu/cpufreq/'+policy+'/'
