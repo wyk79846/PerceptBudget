@@ -35,7 +35,8 @@ class Lease:
                 'lease', '--profile', self.profile, '--seconds', str(self.duration), '--trace']
 
     def __enter__(self):
-        self.proc = subprocess.Popen(self.command(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        self.proc = subprocess.Popen(self.command(), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1)
         def consume():
             with self.path.open('w') as out:

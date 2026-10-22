@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-22组合切换87883481用户执行完成：1model、4×5循环、全restore、freqmatch、coverage1/0missing。基准约8W，gpu_emc5.9994W、gpu_emc_cpu5.9433W；降/升17.32/18.06ms及18.45/18.77ms仅读回，不是完整服务。能量残差−.364/−.376J均unresolved、不填回本时间。优先CPU不降、GPU+EMC低频待机。用户同意继续恢复推理：device_clock_recovery.py及原入口--recovery，单模型六组各5次=30，hot_pre/full_short.2/low_short.2/full_long1/low_long1/hot_post；root固定RUN/DONE五次受限握手（3s超时）、实际freq匹配后才算动作，模型仍普通用户，断管走恢复。保存从升频命令到动作返回的恢复+计算及完整低频等待循环能量、实际空闲与驻留、空闲/推理频率检查、动作差异。固定同图/state/旧动作d5s5，非live观测完整服务L，GPU首算子未伪造、非真实Continue。未执行新GPU/频率测试，命令见docs/M2_CLOCK_CONTROL.md末节；FlashRT/配置不改，旧证据保留。备份archive/pre-m2-clock-recovery-20261022。
+
 - 2026-10-22四候选51594b24已由用户完成：基准/GPU816/EMC2133/CPU1190中位478.06/631.94/616.48/479.69ms，每次J12.6765/12.2231/13.1682/12.6632，静止W8.7654/7.5148/7.3899/8.7229；1model、实际频率全匹配、动作误差0、完整功率覆盖1.0/0missing、全restore。不再称待执行。用户允许继续组合保持与转换成本：新增device_clock_transitions及原入口--transitions，复用Full模型准备；root仅固定5循环low3s/high3s，基准pre/组合gpu_emc/组合gpu_emc_cpu/基准post，静止阶段无推理/环境，20ms实际频率trace/功率、root控制读回及首匹配时刻、平均完整往返能量残差；负/小于漂移噪声不填回本时间。非GPU算子/新动作恢复服务L，非真实Continue/27项表。ClockControl新增两个白名单组合；原四组使用SCREEN_PROFILES隔离，不自动变成6组。原始run不改，根配置/FlashRT不改，不训练。尚未执行新硬件流程；命令在docs/M2_CLOCK_CONTROL.md末节，用户终端执行后读取。备份archive/pre-m2-clock-transitions-20261022。
 
 - 2026-10-22用户提供GPU816短测完整输出，实际816MHz及RESTORED后GPU1173/CPU1497.6/EMC3199均与原设置一致；随后授权四候选成本短测。新增profile_clock_screen.py及device_clock_screen.py，复用fixed_view_probe模型准备、同成功Spatial0固定输入，单次加载Full/原RTC，四组baseline/gpu816/emc2133/cpu1190，各2预热+5计算+3秒静止保持；root只运行25秒lease/0.2秒频率trace，普通用户同终端会话启动，父进程768MiB监控，恢复后才下一组。完整能量须覆盖完整，保留动作/误差/实际频率匹配，非服务L、真实Continue或27项表。未启动真实模型/调频；sudo -n仍拒绝，需用户终端执行docs/M2_CLOCK_CONTROL.md末节命令。FlashRT/根配置未改，不扩Fast、不训练。备份archive/pre-m2-clock-screen-20261022。

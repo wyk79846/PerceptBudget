@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from perceptbudget.device_clocks import ClockControl, PROFILES, cycle_trace
+from perceptbudget.device_clocks import ClockControl, PROFILES, cycle_trace, recovery_trace
 
 STATE = Path('/run/perceptbudget-clocks')
 
@@ -26,6 +26,9 @@ def main():
     lease.add_argument('--trace', action='store_true', help='Print actual frequency samples every 0.2s')
     cycles = sub.add_parser('cycles', help='Five fixed static low/high cycles, three seconds per phase')
     cycles.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc', 'gpu_emc_cpu'))
+    recovery = sub.add_parser('recovery', help='Five bounded RUN/DONE exchanges for prepared-input recovery')
+    recovery.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc'))
+    recovery.add_argument('--idle-seconds', type=float, required=True, choices=(0., .2, 1.))
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -54,7 +57,7 @@ def main():
         if len(mode) < 2 or mode[-1].strip() != '4' or '40W' not in mode[0]:
             raise RuntimeError('Expected fixed 40W mode4; refusing clock changes')
         control.validate(args.profile)
-        if args.command == 'cycles':
+        if args.command in ('cycles', 'recovery'):
             control.validate('baseline')
         saved = control.snapshot()
         with snapshot.open('x') as out:
@@ -66,13 +69,16 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, interrupted)
         try:
-            if args.command == 'cycles':
+            if args.command in ('cycles', 'recovery'):
                 control.apply('baseline')
                 print(json.dumps(dict(status='READY', monotonic=time.monotonic(),
                                       profile=args.profile, settings=control.snapshot(),
                                       actual=control.actual(), lease_seconds=40)), flush=True)
-                cycle_trace(control, args.profile,
-                            lambda event: print(json.dumps(event), flush=True))
+                emit = lambda event: print(json.dumps(event), flush=True)
+                if args.command == 'cycles':
+                    cycle_trace(control, args.profile, emit)
+                else:
+                    recovery_trace(control, args.profile, args.idle_seconds, emit, sys.stdin.fileno())
                 return
             control.apply(args.profile)
             print(json.dumps(dict(status='READY', profile=args.profile,

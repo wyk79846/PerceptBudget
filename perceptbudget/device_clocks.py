@@ -16,39 +16,82 @@ PROFILES = {
 SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')
 
 
+def observed_switch(control, target, current):
+    import time
+    command = time.monotonic()
+    if target != current:
+        control.apply(target)
+    settings = time.monotonic()
+    gpu, emc, cpu = PROFILES[target]
+    while True:
+        actual = control.actual()
+        observed = time.monotonic()
+        expected = {name: gpu if name.endswith('/cur_freq') else
+                    emc if name.endswith('/rate') else cpu for name in actual}
+        if actual == expected:
+            return dict(command_monotonic=command, settings_readback_monotonic=settings,
+                        observed_match_monotonic=observed, actual=actual,
+                        change_required=target != current)
+        if observed >= settings+.5:
+            raise RuntimeError('Frequency did not reach requested value within0.5s')
+        time.sleep(.002)
+
+
 def cycle_trace(control, profile, emit, *, cycles=5, phase_seconds=3):
     """Bounded static transitions. Readback time is not GPU wake/service time."""
     import time
     current = 'baseline'
     for cycle in range(cycles):
         for phase, target in (('low', profile), ('high', 'baseline')):
-            command = time.monotonic()
-            changed = target != current
-            if changed:
-                control.apply(target)
-            settings_readback = time.monotonic()
-            gpu, emc, cpu = PROFILES[target]
-            deadline = settings_readback+.5
-            while True:
-                actual = control.actual()
-                observed = time.monotonic()
-                expected = {name: gpu if name.endswith('/cur_freq') else
-                            emc if name.endswith('/rate') else cpu for name in actual}
-                if actual == expected:
-                    break
-                if observed >= deadline:
-                    raise RuntimeError('Frequency did not reach requested value within0.5s')
-                time.sleep(.002)
-            emit(dict(status='PHASE', cycle=cycle, phase=phase, profile=target,
-                      command_monotonic=command, settings_readback_monotonic=settings_readback,
-                      observed_match_monotonic=observed, actual=actual,
-                      change_required=changed))
-            end = observed+phase_seconds
+            record = observed_switch(control, target, current)
+            emit(dict(status='PHASE', cycle=cycle, phase=phase, profile=target, **record))
+            end = record['observed_match_monotonic']+phase_seconds
             while time.monotonic() < end:
                 emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual()))
                 time.sleep(min(.02, max(0, end-time.monotonic())))
             current = target
         emit(dict(status='CYCLE_END', cycle=cycle, monotonic=time.monotonic()))
+
+
+def recovery_trace(control, profile, idle_seconds, emit, fd):
+    """Five finite RUN/DONE exchanges; no arbitrary commands or model code."""
+    import os
+    import select
+    import time
+    if profile not in ('baseline', 'gpu_emc') or idle_seconds not in (0., .2, 1.):
+        raise ValueError('Recovery scenario outside whitelist')
+    def receive(expected, index):
+        deadline = time.monotonic()+3
+        data = b''
+        while time.monotonic() < deadline:
+            emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual(),
+                      request_index=index))
+            ready, _, _ = select.select([fd], [], [], min(.02, max(0, deadline-time.monotonic())))
+            if ready:
+                part = os.read(fd, 32)
+                if not part:
+                    raise RuntimeError('Recovery worker pipe closed')
+                data += part
+                if len(data) > 16:
+                    raise ValueError('Oversize recovery protocol token')
+                if b'\n' in data:
+                    if data != expected+b'\n':
+                        raise ValueError('Unexpected recovery protocol token')
+                    return
+        raise TimeoutError('Recovery worker handshake exceeded3s')
+    for index in range(5):
+        receive(b'RUN', index)
+        down = observed_switch(control, profile, 'baseline')
+        idle_end = down['observed_match_monotonic']+idle_seconds
+        while time.monotonic() < idle_end:
+            emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual(),
+                      request_index=index))
+            time.sleep(min(.02, max(0, idle_end-time.monotonic())))
+        up = observed_switch(control, 'baseline', profile)
+        emit(dict(status='SERVE', request_index=index, down=down, up=up,
+                  requested_idle_seconds=idle_seconds, profile=profile))
+        receive(b'DONE', index)
+        emit(dict(status='REQUEST_ACK', request_index=index, monotonic=time.monotonic()))
 
 
 class ClockControl:
