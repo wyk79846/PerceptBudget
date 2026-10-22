@@ -23,6 +23,7 @@ def main():
     lease = sub.add_parser('lease')
     lease.add_argument('--profile', required=True, choices=PROFILES)
     lease.add_argument('--seconds', type=int, default=120, choices=range(1, 601))
+    lease.add_argument('--trace', action='store_true', help='Print actual frequency samples every 0.2s')
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -63,10 +64,14 @@ def main():
         try:
             control.apply(args.profile)
             print(json.dumps(dict(status='READY', profile=args.profile,
+                                  monotonic=time.monotonic(),
                                   settings=control.snapshot(), actual=control.actual(),
                                   lease_seconds=args.seconds)), flush=True)
             end = time.monotonic() + args.seconds
             while time.monotonic() < end:
+                if args.trace:
+                    print(json.dumps(dict(status='SAMPLE', monotonic=time.monotonic(),
+                                          actual=control.actual())), flush=True)
                 time.sleep(min(.2, max(0, end-time.monotonic())))
         finally:
             # Prevent a second normal signal from interrupting restoration.

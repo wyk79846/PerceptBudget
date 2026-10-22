@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-22用户提供GPU816短测完整输出，实际816MHz及RESTORED后GPU1173/CPU1497.6/EMC3199均与原设置一致；随后授权四候选成本短测。新增profile_clock_screen.py及device_clock_screen.py，复用fixed_view_probe模型准备、同成功Spatial0固定输入，单次加载Full/原RTC，四组baseline/gpu816/emc2133/cpu1190，各2预热+5计算+3秒静止保持；root只运行25秒lease/0.2秒频率trace，普通用户同终端会话启动，父进程768MiB监控，恢复后才下一组。完整能量须覆盖完整，保留动作/误差/实际频率匹配，非服务L、真实Continue或27项表。未启动真实模型/调频；sudo -n仍拒绝，需用户终端执行docs/M2_CLOCK_CONTROL.md末节命令。FlashRT/根配置未改，不扩Fast、不训练。备份archive/pre-m2-clock-screen-20261022。
+
 - 2026-10-22用户要求准备调频工具/恢复命令，实际执行时再给指令。新增device_clocks.py与scripts/control_device_clocks.py：四个固定筛选候选、40W模式4检查、全域合法频率预校验、GPU/CPU有序min/max写入、EMC锁/频率、root私有/run快照/互斥锁、最长600秒lease及正常信号恢复、独立restore与失败保留快照。文档docs/M2_CLOCK_CONTROL.md。未sudo执行工具、未改硬件/FlashRT/根配置，模拟节点测试不代表硬件通过。候选不是最终C1/C2/C3；M2频率筛选/状态/27项表仍未实测。需用户终端先inspect再短时lease验证，不能声称模型测试已启动。三类Fast候选均保留，后续混合质量验证，暂不单独扩测。备份archive/pre-m2-clock-tool-20261022。
 
 - 最新2026-10-21分模式延迟：用户同意修正，eval_expert_recompute.py新增--split-delay，同Spatial0三回合Full/旧共享延迟交替/新分模式延迟交替，一次模型专家加载，初sim/raw/frame全同。rtc_kv_reuse.context_mode纯预判，控制循环按full/expert各自DelayQueue初始化和更新，实际模式须匹配预判；bootstrap不入队。独立audit按模式重建history，测试注入错误Full队列会拒绝。cfg初始Full9/expert3（各3次固定输入短测），N5不变。7dce5182已completed退出0：Full77success6.217s、旧197success14.646s、新176success12.898s，guidedfull500.62/492.59/488.33ms，expert旧170.37/新171.06ms；新expert估计全3实际2–3、旧估8–9实际2–3，Full约估8–9/实际7–8。0underflow/fallback，审计695/1882/1740checks全pass，min记录点RAM1352.10MiB，368pass9skip110subtests，无FlashRT/根配置/去噪改动、无GPU后台任务。新比旧快11.9%但仍慢于正常RTC约一倍，不据单次归因/推总体成功率/节能。结果与方法追加在任务指导与相关参考/PerceptBudget_旧KV专家重算配对小测_20261021.md。备份archive/pre-m2-split-delay-20261021。不扩测、不把专家170ms当端到端任务加速。
