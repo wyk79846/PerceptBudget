@@ -37,7 +37,7 @@ def compare_arrays(left,right):
         different_elements=int(np.count_nonzero(delta)),elements=int(delta.size))
 
 
-def worker(config,source,run,leg):
+def worker(config,source,run,leg,*,fixed_gemm=False):
     os.environ.update(MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl',MUJOCO_EGL_DEVICE_ID='0',
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
     import numpy as np
@@ -55,8 +55,12 @@ def worker(config,source,run,leg):
              m2_visual_fast_mode='pool2',m2_visual_fast_enabled=True)
     if leg=='native':
         cfg['m2_vision_pool_factor']=2
+    if fixed_gemm:
+        cfg['native_gemm_policy']='heuristic-first'
     source_cfg=json.loads((source/'run.json').read_text())['config_snapshot']
     for key in ('H','N','checkpoint_provenance_revision','state_enabled','state_prompt_capacity','native_gemm_policy'):
+        if key=='native_gemm_policy' and fixed_gemm:
+            continue
         if cfg[key]!=source_cfg[key]:
             raise ValueError('Source mismatch: '+key)
     requests=selected_requests(json.loads((source/'rtc/q5_requests.json').read_text()))
@@ -75,6 +79,7 @@ def worker(config,source,run,leg):
     torch.use_deterministic_algorithms(True)
     result=dict(status='running',leg=leg,cases=[],memory=[],model_loads=1,
         source=str(source),gemm_policy=cfg['native_gemm_policy'],
+        source_gemm_policy=source_cfg['native_gemm_policy'],diagnostic_fixed_gemm=fixed_gemm,
         scope='Recorded fixed-input numerical audit, not latency/energy or closed-loop evaluation')
     def mem(stage):
         r=memory_record(torch,stage)
@@ -168,25 +173,29 @@ def main():
     parser.add_argument('--source-run',type=Path,required=True)
     parser.add_argument('--worker',choices=('native','shared'))
     parser.add_argument('--run-dir',type=Path)
+    parser.add_argument('--fixed-gemm',action='store_true',help='Diagnostic only: first heuristic in BOTH legs; production config unchanged')
     args=parser.parse_args()
     cfg=load_config(repo_root=ROOT)
     validate(cfg)
     if args.worker:
         if args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M2').resolve():
             parser.error('Require M2 worker directory')
-        worker(cfg,args.source_run,args.run_dir,args.worker)
+        worker(cfg,args.source_run,args.run_dir,args.worker,fixed_gemm=args.fixed_gemm)
         return
     import numpy as np
     with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         run=create_run(cfg,'M2','pool-path-audit',repo_root=ROOT)
         print('run_dir='+str(run),flush=True)
-        summary=dict(status='running',source=str(args.source_run),comparisons=[],model_loads=0)
+        summary=dict(status='running',source=str(args.source_run),comparisons=[],model_loads=0,
+                     diagnostic_fixed_gemm=args.fixed_gemm)
         try:
             for leg in ('native','shared'):
                 cmd=[cfg['python_executable'],str(ROOT/'scripts/guarded_run.py'),'--',
                      cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                      '--source-run',str(args.source_run),'--worker',leg,'--run-dir',str(run)]
+                if args.fixed_gemm:
+                    cmd.append('--fixed-gemm')
                 summary['model_loads']+=1
                 with (run/f'{leg}.log').open('w') as stream:
                     completed=subprocess.run(cmd,stdout=stream,stderr=subprocess.STDOUT)
