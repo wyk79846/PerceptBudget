@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23共享视觉上下文16bd07ac已完成：1次checkpoint加载、45个checkpoint张量共享、单专家，Full/wrist精确valid665/409，SourceStepBank图与VJP对照差0；6次交替各自切回raw差0、无fallback。中位Full448.454ms/wrist326.664ms，准备第二上下文前后可用4460/4227MiB，原专家图准备后约2851MiB且6次稳定。仅固定输入切换可行性，非独立实现全输入等价/闭环质量或成功率。可继续准备最新腕部视觉Full/Fast闭环，但现有cross-suite入口仍旧KV实现，不能冒用命令声称已跑新视觉交叉；未改FlashRT/基线。
+
 - 2026-10-23用户要求试其他Fast，选择使用新腕部图像重算上下文（不是旧KV）。先准备共享权重双上下文可行性探针：shared_visual_context.py浅共享checkpoint张量、独立frontend字典/KV/图，原图双视角、候选实际1视角256token；原专家只加载一次，精确valid两图共享SourceStepBank。固定输入Full/wrist交替6次检查各自回切输出0差/无fallback/900保护，非闭环成功率，未做Fast可用性认证。probe_shared_visual_context.py复用fixed_view_probe，建议guarded_run包裹。18项相关测试通过，实际GPU尚未运行，不改FlashRT/安装包/生产基线。备份archive/pre-shared-visual-context-20261023。
 
 - 2026-10-23跨集合交叉2d451616完成：1model/suffix、6回合同任务初态配对，audit全pass/0underflow。Full Spatial/Object/Goal成功77/141/123步，交叉成功176/超时280/成功144；任务秒6.034/8.510/7.138→12.650/15.465/8.166，任务J139.322/206.495/171.435→271.389/351.431/180.468。含drain另存报告，不混窗口。实际Full观测gap7.60/9.13/9.58→12.50/14.47/14.44步；Fast来源动作129/176、201/280、99/144（约69–73%），非一半请求就一半执行。此q5交叉不通过默认Fast可用性，不盲扩任务；下一步若优化先提出保持Full刷新时机、Fast仅填空的最小方案审阅，不直接实现M3调度。详细证据/能量口径已补Fast失败原因审核报告第8节。
