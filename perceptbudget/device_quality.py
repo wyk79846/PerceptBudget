@@ -361,7 +361,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
                     from perceptbudget.shared_visual_context import historical_visual_prefixes
                     lengths, coverage = historical_visual_prefixes(cfg, suite, tid,
-                        first['rtc_guidance']['valid_prefix_length'], wrist_valid)
+                        first['rtc_guidance']['valid_prefix_length'], wrist_valid,
+                        allowed_text_range=[min(lengths)-512,max(lengths)-512])
                     cfg['m2_visual_prefix_coverage'] = coverage
                     record.setdefault('visual_prefix_coverage', []).append(dict(suite=suite,task_id=tid,**coverage))
                 cfg['source_step_prefixes'] = lengths

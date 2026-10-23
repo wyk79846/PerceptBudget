@@ -62,5 +62,10 @@ def test_historical_visual_prewarm_is_shapes_only_with_provenance_gate(tmp_path,
     lengths,record=historical_visual_prefixes(config,'suite',0,665,409)
     assert lengths==list(range(664,670))+list(range(408,414))
     assert record['kind']=='historical_shape_envelope_not_exhaustive'
+    pooled,coverage=historical_visual_prefixes(dict(config,m2_visual_fast_mode='pool2'),
+        'suite',0,665,281,allowed_text_range=[141,157])
+    assert coverage['text_range']==[150,157]
+    assert pooled==list(range(662,670))+list(range(278,286))
+    assert coverage['margin_lengths']==2
     with pytest.raises(ValueError,match='mismatch'):
         historical_visual_prefixes(dict(config,N=10),'suite',0,665,409)

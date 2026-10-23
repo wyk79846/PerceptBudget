@@ -12,9 +12,10 @@ VISUAL_PREFIX_REFERENCES = {
     'libero_goal': ('20261021T101328.104719Z-fast-quality-full-02768e71',
                    '20261021T102104.966625Z-fast-quality-wrist-324c98dc'),
 }
+POOL_PREFIX_REFERENCES = {'libero_spatial':'20261021T110243.748047Z-fast-quality-pool2-46646e05'}
 
 
-def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid):
+def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, *, allowed_text_range=None):
     """Prewarm observed shape envelope only; never reuse actions or select policy.
 
     Unseen shapes must fail closed before the expert, not silently run slowly.
@@ -40,13 +41,32 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid):
         requests = json.loads((run/'rtc/q5_requests.json').read_text())
         text_lengths.extend(r['rtc_guidance']['valid_prefix_length']-views*256 for r in requests)
         sources.append(str(run))
+    if mode=='pool2' and suite in POOL_PREFIX_REFERENCES:
+        run=root/POOL_PREFIX_REFERENCES[suite]
+        previous=json.loads((run/'run.json').read_text())['config_snapshot']
+        for key in ('checkpoint_provenance_revision','H','N','state_enabled','state_prompt_capacity'):
+            if previous[key]!=config[key]:
+                raise ValueError('Historical pool prewarm mismatch: '+key)
+        if previous.get('m2_vision_pool_factor')!=2 or previous.get('m2_pool_view','both')!='both':
+            raise ValueError('Historical pool geometry mismatch')
+        requests=json.loads((run/'rtc/q5_requests.json').read_text())
+        text_lengths.extend(r['rtc_guidance']['valid_prefix_length']-128 for r in requests)
+        sources.append(str(run))
     low, high = min(text_lengths), max(text_lengths)
+    if allowed_text_range is not None:
+        floor, ceiling=allowed_text_range
+        if not floor<=low<=high<=ceiling:
+            raise ValueError('Observed text lengths outside verified tokenizer bounds')
+        margin=2 if mode=='pool2' else 0
+        low,high=max(floor,low-margin),min(ceiling,high+margin)
     if not 0<=low<=high<=200 or high-low+1>17:
         raise ValueError('Historical visual prefix envelope invalid')
     full = list(range(512+low,512+high+1))
     wrist = list(range(fast_tokens+low,fast_tokens+high+1))
     return full+wrist, dict(kind='historical_shape_envelope_not_exhaustive', sources=sources,
-        text_range=[low,high], full=full, fast_mode=mode, fast=wrist,
+        text_range=[low,high], theoretical_text_range=allowed_text_range,
+        margin_lengths=2 if mode=='pool2' and allowed_text_range is not None else 0,
+        full=full, fast_mode=mode, fast=wrist,
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
