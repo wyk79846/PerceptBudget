@@ -81,5 +81,9 @@ def test_historical_visual_prewarm_is_shapes_only_with_provenance_gate(tmp_path,
     assert coverage['text_range']==[150,157]
     assert pooled==list(range(662,670))+list(range(278,286))
     assert coverage['margin_lengths']==2
+    without,coverage=historical_visual_prefixes(dict(config,m2_visual_fast_mode='pool2_agent',m2_fast_no_state=True),
+        'suite',0,665,342,allowed_text_range=[141,157])
+    assert without==list(range(662,670))+[342]
+    assert not coverage['fast_state_enabled']
     with pytest.raises(ValueError,match='mismatch'):
         historical_visual_prefixes(dict(config,N=10),'suite',0,665,409)

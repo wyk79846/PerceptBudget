@@ -30,6 +30,7 @@ def main():
     visual_modes.add_argument('--pooled-alternation',action='store_true',help='Fresh dual-view factor2 token pooling Fast, not old KV')
     visual_modes.add_argument('--mixed-pooled-alternation',action='store_true',help='Pool external camera only; preserve full wrist tokens, total320')
     parser.add_argument('--full-per-fast',type=int,choices=(1,2),default=1,help='Fixed fresh-visual request ratio; does not change q')
+    parser.add_argument('--fast-no-state',action='store_true',help='Experimental mixed pooling only: Full keeps state, Fast omits it')
     parser.add_argument('--label',choices=('gentle-compression','less-fast'),help='Named controlled test for subsequent offline handoff analysis')
     parser.add_argument('--suites',nargs='+',choices=SUITES,help='Explicit subset for --cross-suite, avoids repeating completed task pairs')
     args=parser.parse_args()
@@ -42,7 +43,9 @@ def main():
         parser.error('gentle-compression label requires mixed pooling and ratio1')
     if args.label=='less-fast' and (visual_fast_mode!='pool2' or args.full_per_fast!=2):
         parser.error('less-fast label requires dual pooling and ratio2')
-    config=dict(config,m2_full_per_fast=args.full_per_fast,m2_test_label=args.label)
+    if args.fast_no_state and (not args.mixed_pooled_alternation or args.label):
+        parser.error('--fast-no-state requires mixed pooling and no existing comparison label')
+    config=dict(config,m2_full_per_fast=args.full_per_fast,m2_test_label=args.label,m2_fast_no_state=args.fast_no_state)
     if args.cross_suite and (args.single_insertion or args.task_id != 0):
         parser.error('--cross-suite requires task0 and cannot use --single-insertion')
     if args.visual_alternation and (args.single_insertion or args.split_delay):
@@ -58,9 +61,9 @@ def main():
             conditions=conditions,reuse='Full/fresh-'+visual_fast_mode+' context alternating; bootstrap always Full' if args.visual_alternation else 'Exactly one expert-only request after bootstrap; all other requests Full' if args.single_insertion else 'Full/expert-only alternating; bootstrap always Full',
             split_delay_comparison=split_delay or args.visual_alternation, single_insertion=args.single_insertion,
             visual_alternation=args.visual_alternation, fast_visual_mode=visual_fast_mode if args.visual_alternation else None,
-            full_per_fast=args.full_per_fast,label=args.label,
-            fast_inputs='fresh external pooled64, full wrist256 and current state' if args.mixed_pooled_alternation else 'fresh dual images, factor2 pooling and current state' if args.pooled_alternation else 'fresh wrist image and current state' if args.visual_alternation else 'old KV',
-            H=50,N=5,q=5,state=True,state_on_reuse='fresh state encoded on every call' if args.visual_alternation else 'last Full state remains in cached KV',
+            full_per_fast=args.full_per_fast,label=args.label,fast_state_enabled=not args.fast_no_state,
+            fast_inputs='fresh external pooled64, full wrist256; no state' if args.fast_no_state else 'fresh external pooled64, full wrist256 and current state' if args.mixed_pooled_alternation else 'fresh dual images, factor2 pooling and current state' if args.pooled_alternation else 'fresh wrist image and current state' if args.visual_alternation else 'old KV',
+            H=50,N=5,q=5,state=True,state_on_reuse='Full only; Fast state omitted' if args.fast_no_state else 'fresh state encoded on every call' if args.visual_alternation else 'last Full state remains in cached KV',
             original_kv_expiry_enforced=True,num_views=2,pool=1,seed=7,init=0,model_loads=1)))
         return 0
     if args.worker:
@@ -78,6 +81,7 @@ def main():
     run=create_run(cfg,'M2','fresh-mixed-pooled-alternation' if args.mixed_pooled_alternation else 'fresh-pooled-alternation' if args.pooled_alternation else 'fresh-wrist-alternation' if args.visual_alternation else 'expert-recompute-cross-suite' if args.cross_suite else 'expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
     print('run_dir='+str(run),flush=True)
     summary=dict(status='running',split_delay_comparison=split_delay or args.visual_alternation,
+        fast_state_enabled=not args.fast_no_state,
         visual_alternation=args.visual_alternation,fast_visual_mode=visual_fast_mode if args.visual_alternation else None,
         full_per_fast=args.full_per_fast,label=args.label,
         single_insertion=args.single_insertion,
@@ -97,6 +101,7 @@ def main():
             if args.suites:command+=['--suites',*args.suites]
             command+=['--full-per-fast',str(args.full_per_fast)]
             if args.label:command+=['--label',args.label]
+            if args.fast_no_state:command+=['--fast-no-state']
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode

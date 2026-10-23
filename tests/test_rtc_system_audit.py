@@ -46,17 +46,19 @@ def test_synthetic_valid_system_trace(tmp_path):
 
 
 @pytest.mark.parametrize('fast_mode',['wrist','pool2'])
-def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path,fast_mode):
+@pytest.mark.parametrize('fast_no_state',[False,True])
+def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path,fast_mode,fast_no_state):
     requests,events,save=fixture(tmp_path)
     metadata=json.loads((tmp_path/'run.json').read_text())
     metadata['config_snapshot'].update(rtc_paper_schedule=True,m2_visual_alternation=True,
         m2_visual_fast_enabled=True,m2_visual_fast_mode=fast_mode,m2_split_delay=True,m2_delay_modes=['full',fast_mode],
-        rtc_initial_delays_by_mode={'full':9,fast_mode:5})
+        rtc_initial_delays_by_mode={'full':9,fast_mode:5},m2_fast_no_state=fast_no_state)
     (tmp_path/'run.json').write_text(json.dumps(metadata))
     for i,r in enumerate(requests):
         mode=fast_mode if i else 'full'
         r['planned_context_mode']=mode
-        r['context_refresh']=dict(mode=mode,current_images_encoded=True,current_state_encoded=True,
+        r['rtc_guidance']['state_in_prompt']=not (i and fast_no_state)
+        r['context_refresh']=dict(mode=mode,current_images_encoded=True,current_state_encoded=not (i and fast_no_state),
             vision_pool_factor=2 if mode=='pool2' else 1,
             source_prediction_id=i,source_observation_step=r['observation_step'],
             num_views=1 if i and fast_mode=='wrist' else 2,

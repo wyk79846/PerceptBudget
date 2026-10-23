@@ -28,7 +28,8 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
     if mode not in ('wrist','pool2','pool2_agent'):
         raise ValueError('Unsupported fresh visual mode')
     fast_tokens = 320 if mode=='pool2_agent' else 128 if mode=='pool2' else 256
-    text_lengths = [full_valid-512, wrist_valid-fast_tokens]
+    no_fast_state = config.get('m2_fast_no_state',False)
+    text_lengths = [full_valid-512] if no_fast_state else [full_valid-512, wrist_valid-fast_tokens]
     sources = []
     for views, name in zip((2, 1), VISUAL_PREFIX_REFERENCES[suite]):
         run = root/name
@@ -62,15 +63,17 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
     if not 0<=low<=high<=200 or high-low+1>17:
         raise ValueError('Historical visual prefix envelope invalid')
     full = list(range(512+low,512+high+1))
-    wrist = list(range(fast_tokens+low,fast_tokens+high+1))
+    wrist = [wrist_valid] if no_fast_state else list(range(fast_tokens+low,fast_tokens+high+1))
     return full+wrist, dict(kind='historical_shape_envelope_not_exhaustive', sources=sources,
         text_range=[low,high], theoretical_text_range=allowed_text_range,
         margin_lengths=2 if mode.startswith('pool2') and allowed_text_range is not None else 0,
-        full=full, fast_mode=mode, fast=wrist,
+        full=full, fast_mode=mode, fast=wrist, fast_state_enabled=not no_fast_state,
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
-def wrist_frontend(full, torch, *, fast_kind='wrist'):
+def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False):
+    if no_state and fast_kind!='pool2_agent':
+        raise ValueError('Stateless Fast experiment supports mixed pooling only')
     if fast_kind not in ('wrist','pool2','pool2_agent'):
         raise ValueError('Unknown shared visual geometry')
     if full.num_views != 2 or full._vision_pool_factor != 1:
@@ -83,7 +86,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist'):
         from perceptbudget.mixed_view_pool import pipeline_type
         from flash_rt.models.pi05.pipeline_rtx import Pi05Pipeline
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
-                           pipeline_type=pipeline_type(Pi05Pipeline,'agent'))
+                           pipeline_type=pipeline_type(Pi05Pipeline,'agent'),exact_no_state=no_state)
         clone=kind.__new__(kind)
         clone.__dict__.update(full.__dict__)
     # Separate dictionaries so context-only cleanup cannot mutate the peer.

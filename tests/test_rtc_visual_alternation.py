@@ -39,7 +39,8 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
 
 
 @pytest.mark.parametrize('fast_mode',['wrist','pool2','pool2_agent'])
-def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode):
+@pytest.mark.parametrize('fast_no_state',[False,True])
+def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode,fast_no_state):
     calls=[]
     def predict(self, inputs, prompt, previous, delay, executed, request):
         calls.append((self.pipeline.num_views, inputs['images'], inputs['state']))
@@ -51,7 +52,7 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
         return SimpleNamespace(_pipe=SimpleNamespace(pipeline=SimpleNamespace(
             num_views=views,vision_seq_enc=256*views)))
     adapter._full_model=model(2)
-    adapter.config={'m2_visual_fast_enabled':True,'m2_visual_fast_mode':fast_mode}
+    adapter.config={'m2_visual_fast_enabled':True,'m2_visual_fast_mode':fast_mode,'m2_fast_no_state':fast_no_state}
     from perceptbudget.rtc_visual_alternation import visual_geometry
     geometry=visual_geometry(fast_mode)
     fast=model(geometry['num_views'])
@@ -68,10 +69,15 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
             adapter._predict(inputs,'task',None if i==0 else np.zeros((45,32)),5,5,request)
             info=request['context_refresh']
             modes.append(info['mode'])
-            assert info['current_images_encoded'] and info['current_state_encoded']
+            assert info['current_images_encoded']
+            assert info['current_state_encoded']==(planned=='full' or not fast_no_state)
             assert info['source_prediction_id']==i and info['source_observation_step']==i*5
             assert 'kv_recompute' not in request
-            np.testing.assert_array_equal(calls[-1][2],inputs['state'])
+            if planned!='full' and fast_no_state:
+                assert calls[-1][2] is None
+            else:
+                np.testing.assert_array_equal(calls[-1][2],inputs['state'])
+            assert inputs['state'] is not None  # Never mutate snapshots used by Full.
             assert len(calls[-1][1])==(1 if planned=='wrist' else 2)
             np.testing.assert_array_equal(calls[-1][1][-1],inputs['images'][1])
         assert modes==['full',fast_mode,'full',fast_mode,'full']

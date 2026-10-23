@@ -29,6 +29,13 @@ def episode_geometry(fast_mode, alternating):
 
 
 class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
+    def context_inputs(self, snapshot, mode):
+        from perceptbudget.device_profile import select_images
+        inputs = select_images(snapshot, 'wrist' if mode=='wrist' else 'full')
+        if mode!='full' and self.config.get('m2_fast_no_state',False):
+            inputs['state'] = None
+        return inputs
+
     def fast_mode(self):
         return getattr(self,'config',{}).get('m2_visual_fast_mode','wrist')
 
@@ -86,7 +93,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         from perceptbudget.device_profile import select_images
         self._activate(self.fast_mode())
         try:
-            return super()._prepare_context(select_images(snapshot, 'wrist' if self.fast_mode()=='wrist' else 'full'), prompt, {}, guided=False)
+            return super()._prepare_context(self.context_inputs(snapshot,self.fast_mode()), prompt, {}, guided=False)
         finally:
             self._activate('full')
 
@@ -109,7 +116,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         if request.get('planned_context_mode', mode) != mode:
             raise RuntimeError('Planned visual mode differs from executed mode')
         self._activate(mode)
-        inputs = select_images(snapshot, 'wrist' if mode == 'wrist' else 'full')
+        inputs = self.context_inputs(snapshot, mode)
         actions = super()._predict(inputs, prompt, previous_raw, delay, executed, request)
         request['context_refresh'] = dict(mode=mode, current_images_encoded=True,
             current_state_encoded=inputs.get('state') is not None,

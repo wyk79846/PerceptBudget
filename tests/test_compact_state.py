@@ -21,6 +21,19 @@ class FakeBase:
 
 
 class CompactStateTests(unittest.TestCase):
+    def test_stateless_path_preserves_custom_pipeline_and_exact_capacity(self):
+        f=frontend_type(FakeBase,200,pipeline_type=lambda **kw:types.SimpleNamespace(**kw),exact_no_state=True)()
+        f._set_prompt_per_length(None,19)
+        pipeline=f.pipeline
+        self.assertEqual(pipeline.max_prompt_len,19)
+        self.assertTrue(pipeline.fixed_shape)
+        f._set_prompt_per_length(None,19)
+        self.assertIs(f.pipeline,pipeline)
+        with self.assertRaisesRegex(ValueError,'prompt changed'):
+            f._set_prompt_per_length(None,20)
+        with self.assertRaisesRegex(ValueError,'received state'):
+            f._set_prompt_per_length([1],19)
+
     def make(self):
         return frontend_type(FakeBase,64,pipeline_type=lambda **kw:types.SimpleNamespace(**kw))()
 

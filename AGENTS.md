@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户指定仅温和Fast关闭state、Full仍带state，调度FullFast交替。新增隔离--fast-no-state（仅mixed且不能复用旧标签）；snapshot副本state=None，Full不改；无state精确文本capacity/项目MixedViewPipeline固定图，避免原生无statelegacy路径退回128。首次dcc96c5b池化布局预检查拦截320vs128、无闭环、不算失败。修复后5868ff4b完成Object0 Full142步8.637秒/候选143步8.932秒成功，2audit、初态配对、0断供、1model/1expert。Fast有效prefix333=320+13，state标志假；Full654–660、state真。Fast342.42ms vs此前e64d4bf1带state438.22ms，跨run单回合约快96ms/22%，但任务变慢，不改默认。461pass9skip110subtests，3既有环境警告。报告任务指导与相关参考/PerceptBudget_Fast关闭state小测_20261023.md；备份archive/pre-fast-no-state-20261023。FlashRT/根基线未改，全部进程结束。
+
 - 2026-10-23用户授权多测温和压缩：840507b5完成Spatial/Goal各Full+pool2_agent交替4回合，1model/1expert，初态配对、4audit、0underflow、功率coverage1。Spatial Full78步6.208s144.046J vs候选80步6.323s146.374J；Goal123步7.161s172.553J vs121步7.084s168.478J，均成功。Fast中位445.00/437.42ms；任务能量不含排空。加此前Object e64d4bf1温和成功138步8.294s（Full142/8.566），三不同task0均成功仅各1次，不宣称总体成功率或普遍节能。补离线交接cc6298ae，无动作修改。详见任务指导与相关参考/PerceptBudget_温和压缩补测_20261023.md。本轮无代码/FlashRT/参数修改，所有进程正常结束；保留候选不换基线。
 
 - 2026-10-23温和压缩368593f4失败原因已定位：Full Object0成功142步8.538秒/audit通过，进入候选前create_run用途fast-quality-pool2_agent_alternate长34超32字符，非内存保护/候选质量失败。仅将目录用途缩短pool2_agent_alt，语义view/condition不变，原始invalid证据不改。增加所有视觉候选用途长度/唯一性契约测试；less-fast原标签合法。需用户原命令重跑，不声称候选已有闭环结果。备份archive/pre-mixed-label-fix-20261023。

@@ -94,7 +94,9 @@ def audit(run):
             geometry=visual_geometry(expected_mode)
             check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
             check('fresh_visual_inputs',visual.get('current_images_encoded') is True
-                  and visual.get('current_state_encoded') is True,pid)
+                  and visual.get('current_state_encoded') == (expected_mode=='full' or not cfg.get('m2_fast_no_state',False)),pid)
+            if cfg.get('m2_fast_no_state',False):
+                check('fresh_visual_state_prompt',g.get('state_in_prompt') == (expected_mode=='full'),pid)
             check('fresh_visual_source',visual.get('source_observation_step')==origin
                   and visual.get('source_prediction_id')==pid,pid)
             check('fresh_visual_geometry',visual.get('num_views')==geometry['num_views']

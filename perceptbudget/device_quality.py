@@ -337,9 +337,13 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if visual_comparison:
                         from perceptbudget.shared_visual_context import wrist_frontend
                         from flash_rt.api import VLAModel
-                        wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode), 'torch')
+                        wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode,
+                            no_state=cfg.get('m2_fast_no_state',False)), 'torch')
                         enable(wrist_model)
-                        base._infer_actions(wrist_model, select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full'), task['instruction'], 50, {})
+                        fast_prepared = select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full')
+                        if cfg.get('m2_fast_no_state',False):
+                            fast_prepared['state'] = None
+                        base._infer_actions(wrist_model, fast_prepared, task['instruction'], 50, {})
                         if visual_fast_mode.startswith('pool2'):
                             from scripts.diagnose_pool_parity import pool_check
                             layout=pool_check(wrist_model._pipe.pipeline,torch,np,'agent' if visual_fast_mode=='pool2_agent' else 'both')
