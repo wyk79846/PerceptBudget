@@ -83,3 +83,20 @@ def test_visual_cross_suite_cli_uses_fresh_wrist_not_old_kv():
     assert plan['conditions']==['full','wrist_alternate']
     assert plan['visual_alternation'] and plan['q']==5 and plan['N']==5
     assert plan['fast_inputs']=='fresh wrist image and current state'
+
+
+def test_unseen_visual_prefix_stops_before_expert_without_padding(monkeypatch):
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'_prepare_context',lambda *a,**k:500)
+    adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    adapter.step_bank=SimpleNamespace(select=lambda valid: ('fallback',None))
+    with pytest.raises(RuntimeError,match='stopped before expert'):
+        adapter._prepare_context({},'task',{},guided=True)
+
+
+def test_visual_subset_does_not_repeat_completed_spatial_pair():
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    result=subprocess.run([sys.executable,str(script),'--visual-alternation','--cross-suite',
+        '--suites','libero_object','libero_goal','--dry-run'],capture_output=True,text=True,check=True)
+    plan=json.loads(result.stdout)
+    assert plan['episodes']==4 and plan['model_loads']==1
+    assert plan['task_plan']==[['libero_object',0],['libero_goal',0]]

@@ -4,6 +4,47 @@ import json
 import time
 from pathlib import Path
 
+VISUAL_PREFIX_REFERENCES = {
+    'libero_spatial': ('20261021T094320.446597Z-fast-quality-full-1e41ec3b',
+                      '20261021T101812.515387Z-fast-quality-wrist-f5d7b76c'),
+    'libero_object': ('20261021T095551.276524Z-fast-quality-full-56fd7548',
+                     '20261021T101944.442981Z-fast-quality-wrist-ab0a2ce9'),
+    'libero_goal': ('20261021T101328.104719Z-fast-quality-full-02768e71',
+                   '20261021T102104.966625Z-fast-quality-wrist-324c98dc'),
+}
+
+
+def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid):
+    """Prewarm observed shape envelope only; never reuse actions or select policy.
+
+    Unseen shapes must fail closed before the expert, not silently run slowly.
+    This is NOT exhaustive coverage of all tokenizer state bins.
+    """
+    if task_id != 0 or suite not in VISUAL_PREFIX_REFERENCES:
+        raise ValueError('Historical visual prewarm supports the three task0 probes only')
+    root = Path(config['output_root'])/'M2'
+    text_lengths = [full_valid-512, wrist_valid-256]
+    sources = []
+    for views, name in zip((2, 1), VISUAL_PREFIX_REFERENCES[suite]):
+        run = root/name
+        previous = json.loads((run/'run.json').read_text())['config_snapshot']
+        for key in ('checkpoint_provenance_revision','H','N','state_enabled','state_prompt_capacity'):
+            if previous[key] != config[key]:
+                raise ValueError('Historical visual prewarm mismatch: '+key)
+        if previous['m2_view'] != ('full' if views==2 else 'wrist'):
+            raise ValueError('Historical prewarm camera geometry mismatch')
+        requests = json.loads((run/'rtc/q5_requests.json').read_text())
+        text_lengths.extend(r['rtc_guidance']['valid_prefix_length']-views*256 for r in requests)
+        sources.append(str(run))
+    low, high = min(text_lengths), max(text_lengths)
+    if not 0<=low<=high<=200 or high-low+1>17:
+        raise ValueError('Historical visual prefix envelope invalid')
+    full = list(range(512+low,512+high+1))
+    wrist = list(range(256+low,256+high+1))
+    return full+wrist, dict(kind='historical_shape_envelope_not_exhaustive', sources=sources,
+        text_range=[low,high], full=full, wrist=wrist,
+        unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
+
 
 def wrist_frontend(full, torch):
     if full.num_views != 2 or full._vision_pool_factor != 1:

@@ -56,6 +56,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
     def _prepare_context(self, snapshot, prompt, request, *, guided):
         begin = time.monotonic()
         valid = super()._prepare_context(snapshot, prompt, request, guided=guided)
+        if self.step_bank is not None and self.step_bank.select(valid)[1] is None:
+            raise RuntimeError(f'Unprepared visual prefix {valid}; stopped before expert, no slow fallback')
         request['visual_context_seconds'] = time.monotonic()-begin
         return valid
 

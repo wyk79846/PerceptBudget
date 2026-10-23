@@ -26,15 +26,18 @@ def main():
     parser.add_argument('--single-insertion',action='store_true',help='Two episodes: Full vs one expert-only insertion, with per-mode delay history')
     parser.add_argument('--cross-suite',action='store_true',help='Spatial/Object/Goal task0, Full vs repeated Full/Fast alternation, six episodes')
     parser.add_argument('--visual-alternation',action='store_true',help='Fresh wrist-view context Fast instead of old KV; optionally combine --cross-suite')
+    parser.add_argument('--suites',nargs='+',choices=SUITES,help='Explicit subset for --cross-suite, avoids repeating completed task pairs')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT);validate(config)
     if args.cross_suite and (args.single_insertion or args.task_id != 0):
         parser.error('--cross-suite requires task0 and cannot use --single-insertion')
     if args.visual_alternation and (args.single_insertion or args.split_delay):
         parser.error('--visual-alternation cannot use old-KV insertion/split comparison flags')
+    if args.suites and (not args.cross_suite or len(set(args.suites))!=len(args.suites)):
+        parser.error('--suites requires --cross-suite and distinct suites')
     split_delay = args.split_delay or args.single_insertion or args.cross_suite
     conditions = ['full','wrist_alternate'] if args.visual_alternation else ['full','kv_reuse_split'] if args.cross_suite else ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
-    task_plan = [(suite,0) for suite in SUITES] if args.cross_suite else [(args.suite,args.task_id)]
+    task_plan = [(suite,0) for suite in (args.suites or SUITES)] if args.cross_suite else [(args.suite,args.task_id)]
     episode_count = len(conditions)*len(task_plan)
     if args.dry_run:
         print(json.dumps(dict(suite=args.suite,task_id=args.task_id,task_plan=task_plan,episodes=episode_count,
@@ -71,6 +74,7 @@ def main():
             if args.single_insertion:command+=['--single-insertion']
             if args.cross_suite:command+=['--cross-suite']
             if args.visual_alternation:command+=['--visual-alternation']
+            if args.suites:command+=['--suites',*args.suites]
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode

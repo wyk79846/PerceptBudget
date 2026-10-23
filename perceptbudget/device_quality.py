@@ -350,8 +350,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if visual_comparison:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    lengths = sorted(set(lengths) | set(h50_state_prefix_lengths(wrist_valid,
-                        task['instruction'], num_views=1)))
+                    from perceptbudget.shared_visual_context import historical_visual_prefixes
+                    lengths, coverage = historical_visual_prefixes(cfg, suite, tid,
+                        first['rtc_guidance']['valid_prefix_length'], wrist_valid)
+                    cfg['m2_visual_prefix_coverage'] = coverage
+                    record.setdefault('visual_prefix_coverage', []).append(dict(suite=suite,task_id=tid,**coverage))
                 cfg['source_step_prefixes'] = lengths
                 graph = adapter.prepare_step_bank(lengths, progress=lambda r: mem('prefix_'+str(r['valid'])))
                 record['graph_audits'].append(dict(suite=suite, task_id=tid, **graph))
