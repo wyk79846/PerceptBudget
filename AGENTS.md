@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23固定高频idle扫描61c1b2e9用户执行完成并审核：7点×3随机块/21恢复+21准备/1model，actiondiff0、0fallback、21freqmatch、恢复coverage1、全restore、静态物理通过/本体ticks620。名义0/.05/.1/.2/.5/1/2秒对应恢复中位455.66/455.35/453.17/453.58/456.09/453.02/452.62ms，范围交叠；非零点末段读数24.26/23.85/20.53/14.09/9.74/8.19W，连续下降无明确三状态分界，1到2s仍变不认定1s稳态。runtime21次active，suspended_time4332未增长，不能推内部railgate。INA hwmon update_interval读1但不当有效物理响应；sensor滤波/背景/真实负载响应原因未分离。报告任务指导与相关参考/PerceptBudget_M2_固定频率空闲时长扫描_20261023.md。不得把0.2/1作已验证阈值，按运行历史连续变化解释，不为凑三状态追加任意分档；本轮无代码/新硬件变更、只读审核。M1 q5内部402gap中位35.10ms来自相邻真实infer时戳，含控制边界/预处理/调度，不能直接当可降频窗口。
+
 - 2026-10-23用户纠正短/长idle应实测分类后授权扫描。新增原入口--idle-state-scan与device_idle_scan.py：Full带state固定高频baseline全程，同输入/噪声/旧动作/RTC建立起点，0/.05/.1/.2/.5/1/2秒每点3块打乱，共21恢复+21准备/1model，120s有限lease后恢复、20ms频率与功率、实际idle/恢复范围/runtime status、原始trace；不预划三状态。固定物理关闭图像，本体观测+sim.forward约50ms主线程持续，推理独立常驻线程；是设备诊断，不冒充Continue真实执行/安全buffer。无sudoGPU预检809fcbba七点/一块completed，14infer配对动作0差、实际idle均>=名义、静态物理检查通过，明确preflight_only/no_clock_writes，freq/root mock不作实测结论。474pass9skip110subtests，3既有环境警告。沙盒外sudo -n仍需密码，正式扫描未执行；用户需普通终端运行python scripts/profile_clock_screen.py --idle-state-scan（venv完整路径见docs/M2_CLOCK_CONTROL.md末节）。备份archive/pre-idle-state-scan-20261023，FlashRT/生产默认未改；后续若无稳定分界报告连续变化，不能硬凑三个设备状态或沿用0.2/1为已验证阈值。
 
 - 2026-10-23已按用户要求整理集中M2阶段报告：任务指导与相关参考/PerceptBudget_M2阶段交付报告_审阅稿_20261023.md。重新读Word第2/7.2–7.3/8.1节，明确初步交付非全部验收；包含真实控制节点/恢复指令、Fast选型/3task0限制、三频率完整服务与恢复表、Continue9条件、27格CSV/JSON链接、原图像异常、主要源码版本。已检查所有Markdown链接及27原始source存在、服务表数字与raw一致；本轮无新GPU/调频/代码变更，不重复跑测试。缺口：12格恢复仅prepared非live完整L、长测未做、首GPU时间、转换J/回本、硬件状态/railgate、监视开销、独立Fast质量。建议审阅接收初测产物并据此设计M3，不擅称M2完成；M3最小闭环先高频刷新/低频Continue、Full对照，完整动作前瞻与联合决策仍属M4。M2计划书已链接最新集中报告，历史报告/原始invalid均保留。
