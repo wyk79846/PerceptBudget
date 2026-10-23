@@ -35,6 +35,19 @@ def test_shared_context_refuses_released_or_wrong_geometry():
         wrist_frontend(SimpleNamespace(num_views=2,_vision_pool_factor=1,_pb_context_only=True),None)
 
 
+def test_pooled_frontend_keeps_both_images_and_shares_weights(monkeypatch):
+    created=[]
+    monkeypatch.setitem(sys.modules,'flash_rt.frontends.torch.pi05_rtx',SimpleNamespace(
+        RtxFlashAttnBackend=lambda **kw: created.append(kw) or object(),ENC_L=18))
+    full=SimpleNamespace(num_views=2,_vision_pool_factor=1,_ckpt_bf16={'w':object()},
+        _img_buf=['external','wrist'],max_prompt_len=200,chunk_size=50)
+    pooled=wrist_frontend(full,None,fast_kind='pool2')
+    assert pooled.num_views==2 and pooled._vision_pool_factor==2
+    assert pooled._img_buf is full._img_buf
+    assert pooled._ckpt_bf16['w'] is full._ckpt_bf16['w']
+    assert full._vision_pool_factor==1 and created[0]['encoder_seq_max']==712
+
+
 def test_historical_visual_prewarm_is_shapes_only_with_provenance_gate(tmp_path,monkeypatch):
     from perceptbudget.shared_visual_context import historical_visual_prefixes
     monkeypatch.setattr('perceptbudget.shared_visual_context.VISUAL_PREFIX_REFERENCES',{'suite':('full','wrist')})

@@ -88,14 +88,14 @@ def audit(run):
         check('state_normalization',eq(request['model_state'],normalized),pid)
         if cfg.get('m2_visual_alternation'):
             visual=request.get('context_refresh',{})
-            expected_mode='wrist' if cfg.get('m2_visual_fast_enabled') and pid%2 else 'full'
+            expected_mode=cfg.get('m2_visual_fast_mode','wrist') if cfg.get('m2_visual_fast_enabled') and pid%2 else 'full'
             check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
             check('fresh_visual_inputs',visual.get('current_images_encoded') is True
                   and visual.get('current_state_encoded') is True,pid)
             check('fresh_visual_source',visual.get('source_observation_step')==origin
                   and visual.get('source_prediction_id')==pid,pid)
             check('fresh_visual_geometry',visual.get('num_views')==(1 if expected_mode=='wrist' else 2)
-                  and visual.get('visual_tokens')==(256 if expected_mode=='wrist' else 512)
+                  and visual.get('visual_tokens')==(128 if expected_mode=='pool2' else 256 if expected_mode=='wrist' else 512)
                   and visual.get('camera_indices')==([1] if expected_mode=='wrist' else [0,1]),pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):

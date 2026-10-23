@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户指定Full/token池化交叉。新增显式--pooled-alternation，复用已验证双上下文/单权重专家与原RTC：Full最新双图512视觉token，Fast最新双图native factor2池化128，state每次新编码，bootstrapFull后交替，q5N5H50。共享frontend泛化，不增加另套模型/项目；池化CPU layout检查、模式pool2单独延迟历史/audit几何、历史文本形状包络移位、未知前缀停止/900和768保护保留。三任务各纯Full/交叉6回合，--cross-suite，相关37单测通过。备份archive/pre-m2-pooled-alternation-20261023。实际闭环即将运行，尚无质量结果，不改FlashRT/根配置。
+
 - 2026-10-23剩余新腕部交叉ea8a0f95已完成：4回合1model/suffix，初始配对/audit/覆盖1/0underflow/无fallback或内存保护；最低记录RAM1024.8MiB。Object Full成功142步8.547s208.415J、腕部超时280步16.115s401.406J；Goal Full成功123步7.142s171.659J、腕部超时300步17.436s434.033J。结合Spatial单独ba07092e Full78成功vs腕部82成功，共Full3/3腕部1/3（两次加载，非同一进程三任务），任务J不含排空，排空另记报告。当前q5持续新腕部交叉不通过，不当默认Fast，不盲扩任务/调参；仅记录审计通过非所有实现无bug证明，Object/Goal失败动作尚未逐步定因。报告失败原因审核第10节已更新。
 
 - 2026-10-23第二次腕部闭环e868b51f因RAM754.4触768保护，0回合：两family34图准备后RAM约1033MiB，进入回合重置峰值耗尽余量；非数量异常/任务失败。不降低保护线。修复为只按历史同任务Full/wrist观测前缀形状包络预热，核对权重revision/H/N/state/cap与视图；三任务每family6/6/7图，含当前initialvalid，记录明确非穷尽。未知prefix在上下文后、专家前立即报invalid，不padding/慢路径/运行时捕获，不用历史动作决策。本人GPU单任务ba07092e已验证：1model/专家，Spatial0 Full成功78步6.1949秒，腕部交叉成功82步6.4310秒，audit/初态配对/0underflow通过；回合前RAM1425/1435MiB。仅证明本任务修复后通过，不推断跨任务内存完全稳定。新增--suites子集防重复Spatial；后续命令--visual-alternation --cross-suite --suites libero_object libero_goal，4回合/单模型，尚未运行。33项相关单测通过，备份archive/pre-fresh-wrist-memory-fix-20261023。

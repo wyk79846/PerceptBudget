@@ -38,7 +38,8 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
         adapter.prepare_step_bank(list(range(650,668))+wrist)
 
 
-def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch):
+@pytest.mark.parametrize('fast_mode',['wrist','pool2'])
+def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode):
     calls=[]
     def predict(self, inputs, prompt, previous, delay, executed, request):
         calls.append((self.pipeline.num_views, inputs['images'], inputs['state']))
@@ -50,8 +51,10 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
         return SimpleNamespace(_pipe=SimpleNamespace(pipeline=SimpleNamespace(
             num_views=views,vision_seq_enc=256*views)))
     adapter._full_model=model(2)
-    adapter.attach_wrist(model(1))
-    adapter.config={'m2_visual_fast_enabled':True}
+    adapter.config={'m2_visual_fast_enabled':True,'m2_visual_fast_mode':fast_mode}
+    fast=model(2 if fast_mode=='pool2' else 1)
+    fast._pipe.pipeline.vision_seq_enc=128 if fast_mode=='pool2' else 256
+    adapter.attach_wrist(fast)
     adapter._guided_requests=0
     for episode in range(2):
         modes=[]
@@ -68,7 +71,7 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
             np.testing.assert_array_equal(calls[-1][2],inputs['state'])
             assert len(calls[-1][1])==(1 if planned=='wrist' else 2)
             np.testing.assert_array_equal(calls[-1][1][-1],inputs['images'][1])
-        assert modes==['full','wrist','full','wrist','full']
+        assert modes==['full',fast_mode,'full',fast_mode,'full']
     assert len(calls)==10  # Every request runs fresh context computation.
     with pytest.raises(RuntimeError,match='Planned visual'):
         adapter._predict(inputs,'task',np.zeros((45,32)),5,5,{'planned_context_mode':'full'})
@@ -100,3 +103,14 @@ def test_visual_subset_does_not_repeat_completed_spatial_pair():
     plan=json.loads(result.stdout)
     assert plan['episodes']==4 and plan['model_loads']==1
     assert plan['task_plan']==[['libero_object',0],['libero_goal',0]]
+
+
+def test_pooled_alternation_cli_is_six_fresh_dual_image_paired_episodes():
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    result=subprocess.run([sys.executable,str(script),'--pooled-alternation','--cross-suite','--dry-run'],
+        capture_output=True,text=True,check=True)
+    plan=json.loads(result.stdout)
+    assert plan['episodes']==6 and plan['model_loads']==1
+    assert plan['conditions']==['full','pool2_alternate'] and plan['fast_visual_mode']=='pool2'
+    assert plan['q']==5 and plan['N']==5 and plan['state']
+    assert 'fresh dual images' in plan['fast_inputs']

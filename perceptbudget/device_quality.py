@@ -160,7 +160,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False, paired_split=False, visual_comparison=False):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False, paired_split=False, visual_comparison=False, visual_fast_mode='wrist'):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -179,6 +179,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
+    if visual_fast_mode not in ('wrist','pool2'):
+        raise ValueError('Unsupported visual Fast mode')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
     if single_insertion and not (recompute_comparison and split_delay_comparison):
@@ -205,7 +207,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison:
         from perceptbudget.rtc_visual_alternation import FreshViewRTCAdapter as OriginalOpenPiRTCAdapter
         cfg.update(m2_expert_recompute=False, m2_visual_alternation=True,
-                   m2_visual_fast_enabled=False, m2_delay_modes=['full','wrist'])
+                   m2_visual_fast_enabled=False, m2_visual_fast_mode=visual_fast_mode,
+                   m2_delay_modes=['full',visual_fast_mode])
     from perceptbudget.model import vision_pool_factor
     pool_factor = vision_pool_factor(cfg)
     from perceptbudget.mixed_view_pool import visual_tokens
@@ -294,7 +297,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 if recompute_comparison:
                     views=('full','kv_once') if single_insertion else ('full','kv_reuse_split') if paired_split else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 if visual_comparison:
-                    views=('full','wrist_alternate')
+                    views=('full',visual_fast_mode+'_alternate')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -323,9 +326,15 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if visual_comparison:
                         from perceptbudget.shared_visual_context import wrist_frontend
                         from flash_rt.api import VLAModel
-                        wrist_model = VLAModel(wrist_frontend(model._pipe, torch), 'torch')
+                        wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode), 'torch')
                         enable(wrist_model)
-                        base._infer_actions(wrist_model, select_images(prepared, 'wrist'), task['instruction'], 50, {})
+                        base._infer_actions(wrist_model, select_images(prepared, 'full' if visual_fast_mode=='pool2' else 'wrist'), task['instruction'], 50, {})
+                        if visual_fast_mode=='pool2':
+                            from scripts.diagnose_pool_parity import pool_check
+                            layout=pool_check(wrist_model._pipe.pipeline,torch,np,'both')
+                            record['fast_pool_layout']=layout
+                            if layout['mismatched_elements']:
+                                raise RuntimeError('Shared pooled context layout mismatch')
                         if not all(model._pipe._ckpt_bf16[k] is wrist_model._pipe._ckpt_bf16[k]
                                    for k in model._pipe._ckpt_bf16):
                             raise RuntimeError('Visual alternation weight sharing failed')
@@ -390,15 +399,15 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         adapter._guided_requests=0  # Calibration only; episode bootstrap resets schedule.
                         request={'observation_step':5}
                         actions=adapter.predict(prepared,task['instruction'],previous,delay=5,executed=5,request=request)
-                        if request['context_refresh']['mode']!='wrist':
+                        if request['context_refresh']['mode']!=visual_fast_mode:
                             raise RuntimeError('Wrist delay calibration did not encode a new wrist context')
                         return actions
                     wrist_timing=timed(torch,wrist_probe,count=3)
                     cfg['m2_visual_fast_enabled']=False
-                    cfg['rtc_initial_delays_by_mode']=dict(full=cfg['rtc_initial_delay_steps'],
-                        wrist=math.ceil(wrist_timing['median_ms']/1000/calibration['median_seconds']))
+                    cfg['rtc_initial_delays_by_mode']={'full':cfg['rtc_initial_delay_steps'],
+                        visual_fast_mode:math.ceil(wrist_timing['median_ms']/1000/calibration['median_seconds'])}
                     record.setdefault('mode_delay_calibrations', []).append(dict(suite=suite,task_id=tid,
-                        full=timing,wrist=wrist_timing,initial_delays=cfg['rtc_initial_delays_by_mode'],
+                        full=timing,**{visual_fast_mode:wrist_timing},initial_delays=cfg['rtc_initial_delays_by_mode'],
                         control_period_seconds=calibration['median_seconds']))
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
@@ -411,8 +420,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
                         child_cfg['m2_single_reuse']=view=='kv_once'
                     if visual_comparison:
-                        child_cfg['m2_visual_fast_enabled']=view=='wrist_alternate'
-                        child_cfg['m2_split_delay']=view=='wrist_alternate'
+                        child_cfg['m2_visual_fast_enabled']=view!='full'
+                        child_cfg['m2_split_delay']=view!='full'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M2', 'fast-quality-'+label)
@@ -438,6 +447,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         steady_inference_median_ms=float(np.median([
                             (r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
                             for r in requests[1:]])) if len(requests)>1 else None)
+                    if visual_comparison:
+                        result['visual_tokens_by_mode']={'full':512,visual_fast_mode:128 if visual_fast_mode=='pool2' else 256}
+                        result['visual_tokens_scope']='base Full geometry; actual per-request geometry is in context_refresh'
                     info = initial_info(active, episode)
                     review = None
                     if kind == 'single':

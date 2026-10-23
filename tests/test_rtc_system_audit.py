@@ -45,20 +45,23 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
-def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path):
+@pytest.mark.parametrize('fast_mode',['wrist','pool2'])
+def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path,fast_mode):
     requests,events,save=fixture(tmp_path)
     metadata=json.loads((tmp_path/'run.json').read_text())
     metadata['config_snapshot'].update(rtc_paper_schedule=True,m2_visual_alternation=True,
-        m2_visual_fast_enabled=True,m2_split_delay=True,m2_delay_modes=['full','wrist'],
-        rtc_initial_delays_by_mode={'full':9,'wrist':5})
+        m2_visual_fast_enabled=True,m2_visual_fast_mode=fast_mode,m2_split_delay=True,m2_delay_modes=['full',fast_mode],
+        rtc_initial_delays_by_mode={'full':9,fast_mode:5})
     (tmp_path/'run.json').write_text(json.dumps(metadata))
     for i,r in enumerate(requests):
-        mode='wrist' if i else 'full'
+        mode=fast_mode if i else 'full'
         r['planned_context_mode']=mode
         r['context_refresh']=dict(mode=mode,current_images_encoded=True,current_state_encoded=True,
             source_prediction_id=i,source_observation_step=r['observation_step'],
-            num_views=1 if i else 2,visual_tokens=256 if i else 512,camera_indices=[1] if i else [0,1])
-    requests[1]['rtc_guidance'].update(delay_history_steps=[5],delay_history_mode='wrist',
+            num_views=1 if i and fast_mode=='wrist' else 2,
+            visual_tokens=(128 if fast_mode=='pool2' else 256) if i else 512,
+            camera_indices=[1] if i and fast_mode=='wrist' else [0,1])
+    requests[1]['rtc_guidance'].update(delay_history_steps=[5],delay_history_mode=fast_mode,
                                       delay_estimate_mode='mode_history_max')
     save()
     assert audit(tmp_path)['passed']

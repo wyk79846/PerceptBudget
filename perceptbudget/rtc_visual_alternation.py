@@ -5,6 +5,9 @@ from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
 class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
+    def fast_mode(self):
+        return getattr(self,'config',{}).get('m2_visual_fast_mode','wrist')
+
     def __init__(self, model, torch, config):
         super().__init__(model, torch, config)
         self._full_model = model
@@ -14,7 +17,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
     def prepare_step_bank(self, lengths, *, progress=None):
         """Two bounded geometry banks, not one enlarged global limit."""
         lengths = sorted(set(lengths))
-        wrist = [n for n in lengths if type(n) is int and 256 <= n <= 456]
+        fast_tokens = 128 if self.fast_mode()=='pool2' else 256
+        wrist = [n for n in lengths if type(n) is int and fast_tokens <= n <= fast_tokens+200]
         full = [n for n in lengths if type(n) is int and 512 <= n <= 712]
         if len(wrist)+len(full) != len(lengths) or not wrist or not full or max(len(wrist),len(full)) > 17:
             raise ValueError('Require both exact geometry families, at most17 lengths each')
@@ -31,12 +35,13 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             limitation='Two independently bounded banks; no runtime graph capture')
 
     def attach_wrist(self, model):
-        if model._pipe.pipeline.num_views != 1:
-            raise ValueError('Require actual single-view context')
+        expected_views, tokens = (2,128) if self.fast_mode()=='pool2' else (1,256)
+        if model._pipe.pipeline.num_views != expected_views or model._pipe.pipeline.vision_seq_enc != tokens:
+            raise ValueError('Fast context geometry mismatch')
         self._wrist_model = model
 
     def context_mode(self, prompt, step, *, guided):
-        return ('wrist' if guided and self.config.get('m2_visual_fast_enabled')
+        return (self.fast_mode() if guided and self.config.get('m2_visual_fast_enabled')
                 and self._guided_requests % 2 == 0 else 'full')
 
     def _activate(self, mode):
@@ -47,9 +52,9 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
 
     def prepare_wrist_context(self, snapshot, prompt):
         from perceptbudget.device_profile import select_images
-        self._activate('wrist')
+        self._activate(self.fast_mode())
         try:
-            return super()._prepare_context(select_images(snapshot, 'wrist'), prompt, {}, guided=False)
+            return super()._prepare_context(select_images(snapshot, 'full' if self.fast_mode()=='pool2' else 'wrist'), prompt, {}, guided=False)
         finally:
             self._activate('full')
 
@@ -76,6 +81,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             current_state_encoded=inputs.get('state') is not None,
             camera_indices=[1] if mode == 'wrist' else [0, 1],
             num_views=self.pipeline.num_views, visual_tokens=self.pipeline.vision_seq_enc,
+            vision_pool_factor=getattr(self.pipeline,'vision_pool_factor',1),
             source_observation_step=request.get('observation_step', 0),
             source_prediction_id=request.get('prediction_id'),
             image_input_sha256=[hashlib.sha256(x.tobytes()).hexdigest() for x in inputs['images']],

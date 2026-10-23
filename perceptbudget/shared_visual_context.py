@@ -23,7 +23,11 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid):
     if task_id != 0 or suite not in VISUAL_PREFIX_REFERENCES:
         raise ValueError('Historical visual prewarm supports the three task0 probes only')
     root = Path(config['output_root'])/'M2'
-    text_lengths = [full_valid-512, wrist_valid-256]
+    mode = config.get('m2_visual_fast_mode', 'wrist')
+    if mode not in ('wrist','pool2'):
+        raise ValueError('Unsupported fresh visual mode')
+    fast_tokens = 128 if mode=='pool2' else 256
+    text_lengths = [full_valid-512, wrist_valid-fast_tokens]
     sources = []
     for views, name in zip((2, 1), VISUAL_PREFIX_REFERENCES[suite]):
         run = root/name
@@ -40,13 +44,15 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid):
     if not 0<=low<=high<=200 or high-low+1>17:
         raise ValueError('Historical visual prefix envelope invalid')
     full = list(range(512+low,512+high+1))
-    wrist = list(range(256+low,256+high+1))
+    wrist = list(range(fast_tokens+low,fast_tokens+high+1))
     return full+wrist, dict(kind='historical_shape_envelope_not_exhaustive', sources=sources,
-        text_range=[low,high], full=full, wrist=wrist,
+        text_range=[low,high], full=full, fast_mode=mode, fast=wrist,
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
-def wrist_frontend(full, torch):
+def wrist_frontend(full, torch, *, fast_kind='wrist'):
+    if fast_kind not in ('wrist','pool2'):
+        raise ValueError('Unknown shared visual geometry')
     if full.num_views != 2 or full._vision_pool_factor != 1:
         raise ValueError('Require unpooled dual-view source')
     if getattr(full, '_pb_context_only', False):
@@ -55,8 +61,9 @@ def wrist_frontend(full, torch):
     # Separate dictionaries so context-only cleanup cannot mutate the peer.
     # Tensors themselves are deliberately shared, never cloned or reloaded.
     clone._ckpt_bf16 = dict(full._ckpt_bf16)
-    clone.num_views = 1
-    clone._img_buf = full._img_buf[1:]
+    clone.num_views = 2 if fast_kind=='pool2' else 1
+    clone._vision_pool_factor = 2 if fast_kind=='pool2' else 1
+    clone._img_buf = full._img_buf if fast_kind=='pool2' else full._img_buf[1:]
     clone.pipeline = clone._fixed_pipeline = None
     clone._prompt_pipeline_cache = {}
     clone.current_prompt_len = 0
@@ -65,8 +72,8 @@ def wrist_frontend(full, torch):
     clone._frame_count = 0
     clone._flashrt_subgraph_frontend_hooks = list(getattr(full, '_flashrt_subgraph_frontend_hooks', ()))
     from flash_rt.frontends.torch.pi05_rtx import RtxFlashAttnBackend, ENC_L
-    clone.attn_backend = RtxFlashAttnBackend(num_views=1,
-        encoder_seq_max=256+clone.max_prompt_len, chunk_size=clone.chunk_size, num_encoder_layers=ENC_L)
+    clone.attn_backend = RtxFlashAttnBackend(num_views=clone.num_views,
+        encoder_seq_max=256*clone.num_views+clone.max_prompt_len, chunk_size=clone.chunk_size, num_encoder_layers=ENC_L)
     return clone
 
 
