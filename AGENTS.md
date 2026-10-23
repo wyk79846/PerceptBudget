@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23已按用户要求整理集中M2阶段报告：任务指导与相关参考/PerceptBudget_M2阶段交付报告_审阅稿_20261023.md。重新读Word第2/7.2–7.3/8.1节，明确初步交付非全部验收；包含真实控制节点/恢复指令、Fast选型/3task0限制、三频率完整服务与恢复表、Continue9条件、27格CSV/JSON链接、原图像异常、主要源码版本。已检查所有Markdown链接及27原始source存在、服务表数字与raw一致；本轮无新GPU/调频/代码变更，不重复跑测试。缺口：12格恢复仅prepared非live完整L、长测未做、首GPU时间、转换J/回本、硬件状态/railgate、监视开销、独立Fast质量。建议审阅接收初测产物并据此设计M3，不擅称M2完成；M3最小闭环先高频刷新/低频Continue、Full对照，完整动作前瞻与联合决策仍属M4。M2计划书已链接最新集中报告，历史报告/原始invalid均保留。
+
 - 2026-10-23Continue续测affa4c98 completed/exit0：源c704c323保留34+新11=45窗口、累计2model加载；同历史跨频率物理终态/恢复framehash全同，动作0差、索引连续、无新推理、70ms周期0overrun、freqmatch、功率coverage1/missing0、全restore。无前置/3步/15步历史窗口J高4.139/3.764/3.204，中4.124/3.647/3.031，低3.863/3.287/2.449；实际hist0/.21/1.05s，约14.28Hz，不同动作阶段/负载尾迹限制，不称睡眠或20Hz认证。原图像异常未复现、不称根因已修。已更新27格阶段证据（6热新观测服务+12固定输入恢复诊断+9Continue历史窗），不同口径不冒充27完整服务。报告任务指导与相关参考/PerceptBudget_M2_Continue历史窗结果_20261023.md。原始invalid未覆盖，本轮仅数据审核整理；首GPU时刻、可靠转换能量/回本时间等仍缺，准备M2阶段审阅不无限扩测。
 
 - 2026-10-23Continue历史c704c323用户报错：34/45有效完成，高15中15低热4；35低热repeat4恢复图像hash不匹配。35的动作与参考完全同、finalsim逐元素0差/hash同；全部root logs RESTORED。失败图像未存，不能断言单像素渲染误差，未放宽阈值。新增--resume-continue先验配置/唯一键/索引/频率/功率/恢复检查，新run引用并保留34条，仅补11；保留原invalid/加载累计记账。再失败保存实际像素/expectedhash/actualhash/finalphysics，当前参考像素有时额外保存差值。不调频续测GPU预检c3c01993完成11缺项、配对/索引通过、原异常未复现，显式mock/preflight_only不填频率成本。471pass9skip110subtests，3既有环境警告。实际sudo续测未执行，命令docs/M2_CLOCK_CONTROL.md末节。报告任务指导与相关参考/PerceptBudget_M2_Continue历史窗中断排查_20261023.md；备份archive/pre-continue-history-resume-20261023，FlashRT/根基线不改。
