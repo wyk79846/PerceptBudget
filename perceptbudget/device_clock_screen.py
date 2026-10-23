@@ -120,7 +120,7 @@ def prepared_prediction(adapter, snapshot, prompt, previous, *, fast_clocks, see
     return request
 
 
-def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, fast_clocks=False):
+def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, fast_clocks=False, visual_clocks=False):
     import numpy as np
     directory = Path(directory)
     result = dict(metadata, status='running', conditions=[], clock_settings_changed=False,
@@ -128,7 +128,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, f
                         'task success, true Continue control load, or the 27-cell table',
                   repeats=5, fixed_delay_steps=5, fixed_executed_steps=5,
                   hold_seconds=3, lease_seconds=LEASE_SECONDS,
-                  profile_order=list(MATRIX_PROFILES if fast_clocks else SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
+                  profile_order=list(MATRIX_PROFILES if fast_clocks or visual_clocks else SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
+    if visual_clocks:
+        result['scope'] = 'Prepared single-wrist-view context and complete RTC compute; not live service, quality certification or task energy'
     if fast_clocks:
         result['scope'] = 'Isolated old-KV expert-only RTC compute; fresh Full before each sample excluded; not fresh perception, service L, success rate or task energy'
     _write_json_atomically(directory/'clock_screen.json', result)
@@ -208,14 +210,14 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, f
             row['clock_trace'] = lease.events
             row['compute_frequency_check'] = frequency_check(lease.events, profile, start, stop)
             row['hold_frequency_check'] = frequency_check(lease.events, profile, hold_start, hold_stop)
-            if fast_clocks and (not row['compute_frequency_check']['matches'] or not row['hold_frequency_check']['matches']):
+            if (fast_clocks or visual_clocks) and (not row['compute_frequency_check']['matches'] or not row['hold_frequency_check']['matches']):
                 raise RuntimeError('Fast frequency check failed')
             outputs = np.asarray(outputs)
             np.savez_compressed(directory/(profile+'_actions.npz'), actions=outputs)
             if reference_actions is None:
                 reference_actions = outputs
             row['max_abs_action_difference_vs_baseline'] = float(np.max(np.abs(outputs-reference_actions)))
-            if fast_clocks and row['max_abs_action_difference_vs_baseline'] != 0:
+            if (fast_clocks or visual_clocks) and row['max_abs_action_difference_vs_baseline'] != 0:
                 raise RuntimeError('Fast actions changed across clock profiles')
             result['conditions'].append(row)
             _write_json_atomically(directory/'clock_screen.json', result)

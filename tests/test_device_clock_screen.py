@@ -111,6 +111,19 @@ def test_fast_plan_and_fresh_context_preparation(capsys):
     assert adapter.config['m2_reuse_enabled'] and request['observation_step'] == 5
 
 
+def test_visual_clock_plan_is_one_resident_wrist_geometry(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv', ['probe', '--visual-clocks', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main() == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['model_loads'] == 1 and plan['samples'] == 15
+    assert plan['view'] == 'wrist' and plan['num_views'] == 1
+    assert plan['visual_tokens'] == 256 and plan['context_recomputed']
+    assert len(plan['profiles']) == 3 and not plan['service_measurement']
+    launch.assert_not_called()
+
+
 def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
     import numpy as np
     from perceptbudget.device_clock_screen import screen, SCREEN_PROFILES

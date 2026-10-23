@@ -213,6 +213,13 @@ cd /home/wyk/workspace/PerceptBudget
 继续保留900/768MiB保护、已验证硬重置渲染释放gate和root自动/独立恢复。原结果不改写。输出到新`full-service`目录的full_service.json、worker.log、逐请求动作提交包、频率和原始功率。五个请求只报中位/最大和平均能量，不报可信P95/P99。本轮尚未执行，需要用户终端运行后分析。
 # Fast旧KV专家重算三档短测（2026-10-23）
 
+后续单腕部视角成本补测：同一入口使用`--visual-clocks`，三档各5次、一个单视角模型。真实减少为1视角/256视觉token并重新上下文，不复用旧KV；现有质量风险不因成本测量而消除。固定输入计算成本，不是实时新观测完整服务。命令：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --visual-clocks
+```
+
 普通终端执行，需要sudo授权，模型普通用户运行且只加载一次：
 
 ```bash

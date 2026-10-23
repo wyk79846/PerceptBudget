@@ -113,7 +113,8 @@ def select_images(snapshot, view):
 
 def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_screen=False,
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
-                     continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False):
+                     continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
+                     visual_clocks=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -134,7 +135,9 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
 
     if kind not in ('full', 'single') or not 1 <= repeats <= 20:
         raise ValueError('Invalid fixed-view probe configuration')
-    config = dict(config, m2_profile=True, m2_view='full' if kind == 'full' else 'agent',
+    if visual_clocks and kind != 'single':
+        raise ValueError('Visual clock probe requires single-view geometry')
+    config = dict(config, m2_profile=True, m2_view='wrist' if visual_clocks else 'full' if kind == 'full' else 'agent',
                   rtc_audit_inputs=False, rtc_audit_attention_same_input=False,
                   rtc_audit_fused_norm=False)
     if fast_clocks:
@@ -166,7 +169,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     model = base._load_and_check_model(config, torch)
     from flash_rt.subgraphs.pi05.context_action import enable
     enable(model)
-    views = ('full',) if kind == 'full' else ('agent', 'wrist')
+    views = ('wrist',) if visual_clocks else ('full',) if kind == 'full' else ('agent', 'wrist')
     initial = select_images(snapshot, views[0])
     base._infer_actions(model, initial, task['instruction'], 50, {})
     cleanup = release_unused_native_expert(model, torch)
@@ -204,8 +207,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
         pooled_view=config.get('m2_pool_view','both'),pool_layout_audit=pool_layout,
         clock_settings_changed=False, flashrt_modified=False)
-    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks:
-        if kind != 'full':
+    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks or visual_clocks:
+        if kind != 'full' and not visual_clocks:
             raise ValueError('Clock screening requires unmodified Full views')
         if full_service:
             from perceptbudget.device_service import screen
@@ -222,7 +225,10 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
             kwargs['profiles'] = service_profiles
         if fast_clocks:
             kwargs['fast_clocks'] = True
-        return screen(adapter, snapshot, task['instruction'], previous, torch,
+        if visual_clocks:
+            kwargs['visual_clocks'] = True
+            result['selected_view'] = 'wrist'
+        return screen(adapter, initial if visual_clocks else snapshot, task['instruction'], previous, torch,
                       directory, result, **kwargs)
     for view in views:
         image_input_snapshot = select_images(snapshot, view)
