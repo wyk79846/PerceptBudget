@@ -180,6 +180,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     initial = select_images(snapshot, views[0])
     base._infer_actions(model, initial, task['instruction'], 50, {})
     full_cleanup=None
+    full_preparation_model=None
     if selected_fast_clocks:
         from perceptbudget.shared_visual_context import wrist_frontend
         from flash_rt.api import VLAModel
@@ -188,6 +189,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         snapshot=dict(snapshot,state=None)
         initial=select_images(snapshot,'full')
         base._infer_actions(fast_model,initial,task['instruction'],50,{})
+        if full_service:
+            full_preparation_model=model
         full_cleanup=release_unused_native_expert(model,torch)
         model=fast_model
         config.update(m2_vision_pool_factor=2,m2_pool_view='agent',m2_fast_no_state=True,
@@ -207,6 +210,9 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     adapter.bootstrap(initial, task['instruction'], {})
     valid = int(adapter.expert.prefix_mask.shape[1])
     audit = adapter.prepare_step_bank([valid])
+    if full_preparation_model is not None:
+        from perceptbudget.device_service import full_preparation_peer
+        adapter.full_preparation_adapter=full_preparation_peer(adapter,full_preparation_model)
     pl = model._pipe.pipeline
     expected_views = 2 if kind == 'full' else 1
     if pl.num_views != expected_views or pl.vision_seq != expected_views * 256:
@@ -258,7 +264,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         if visual_clocks:
             kwargs['visual_clocks'] = True
             result['selected_view'] = 'wrist'
-        if pooled_clocks or (selected_fast_clocks and not clock_matrix):
+        if pooled_clocks or (selected_fast_clocks and not clock_matrix and not full_service):
             kwargs['visual_clocks'] = True
         if camera_compare:
             kwargs['camera_compare'] = True

@@ -286,3 +286,20 @@ cd /home/wyk/workspace/PerceptBudget
 
 仍是320视觉token且不带state，固定观测/旧动作/d5s5；测量恢复发起到动作返回及含等待的循环能量，非实时新观测完整服务L或真实Continue。保存逐请求RTC/state/形状、恢复trace、实际频率/功率覆盖与动作；跨频率/历史动作非零差异拒绝。输出`clock_matrix.json`、`selected_fast_cost_table.csv`和`summary.json`，不使用误称Full的CSV文件名。GPU首算子时间未增加，不能把频率读回当首算子。
 
+# 已选Fast完整仿真服务测量（2026-10-23）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --selected-fast-clocks --live-service
+```
+
+普通终端输入sudo密码，不能与其他GPU实验并行。默认三频率各5次、共15服务请求，一个模型/专家加载。可用`--service-profiles baseline`指定子集，不和`--idle-recovery`混用。
+
+先用完整双图512token且带state的Full准备旧动作，实际执行5步；随后冻结物理，在每次设备读回准备完成后强制获取当前双图，Fast编码外部64+腕部256且不编码state，执行原RTC/d5s5，调用原队列commit准备动作提交包。Full与Fast共享冻结权重和专家，Full准备只用独立上下文与临时KV，不加载第二份模型。Full准备/离线建图不计入Fast服务；正式15请求不临时建图。
+
+完整计时包含设备准备、当前观测、预处理、Fast上下文/专家、提交包准备；生产异步不变。本实验物理冻结且推理期间实际消费0步，不能当真实异步成功率、物理相机通信延迟或安全缓冲证明。原Full服务采用相同测量边界，可在注明跨run条件后比较。
+
+输出`selected-fast-service`父目录的`selected_fast_service.json`、`summary.json`、逐请求动作包/功率和频率恢复记录。现有服务函数的通用日志可能仍带FULL_SERVICE字样，应以结果scope、selected_fast、state和320token几何为准。所有新观测/状态/噪声/动作配对、无慢路径、实际频率、功率覆盖与恢复检查保留；900/768MiB保护不放宽。首GPU算子时间仍未测。
+
+接入前已完成不调频GPU预检695d3ec4：5次真实仿真观测和提交包路径、Full准备带state、Fast不带、320token，物理/配对检查通过。预检中的软件就绪信号是占位，不认证频率或恢复耗时，结果显式preflight_only；不得替代本命令的三频率实测。
+

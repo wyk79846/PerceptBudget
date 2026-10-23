@@ -14,6 +14,17 @@ from perceptbudget.experiment import _write_json_atomically
 from perceptbudget.power import PowerMonitor
 
 
+def full_preparation_peer(adapter,model):
+    """Preparation-only eager Full context, sharing frozen suffix weights, no reload."""
+    import copy
+    peer=copy.copy(adapter)
+    peer.model,peer.pipe,peer.pipeline=model,model._pipe,model._pipe.pipeline
+    peer.expert=copy.copy(adapter.step_bank.fallback if adapter.step_bank is not None else adapter.expert)
+    peer.expert.keys=peer.expert.values=peer.expert.prefix_mask=None
+    peer.step_bank=peer.graph=peer.graph_expert=peer.fallback_expert=None
+    return peer
+
+
 def fresh_observation(env):
     """Force live camera/state sensors, without a zero-action physics step."""
     import numpy as np
@@ -53,17 +64,21 @@ def prepare_submission(actions, raw_actions, old_queue, observation_step, consum
                 limitation='Nominal H50 extent is not a validated safe buffer')
 
 
-def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, np):
+def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, np,state_enabled=True):
     """Start device timing is supplied by root SERVE; this covers new input to packet."""
     from scripts import eval_q as base
     obs, acquisition = fresh_observation(env)
     preprocess_start = time.monotonic()
-    snapshot = base._make_snapshot(obs, stats, True)
+    snapshot = base._make_snapshot(obs, stats, state_enabled)
     preprocess_end = time.monotonic()
     request = {'observation_step': 5, 'observation_monotonic': acquisition['start_monotonic']}
     infer_start = time.monotonic()
     actions = adapter.predict(snapshot, prompt, previous_raw, delay=5, executed=5, request=request)
     infer_end = time.monotonic()
+    if not state_enabled and (request.get('rtc_guidance',{}).get('state_in_prompt') is not False
+            or adapter.pipeline.vision_seq_enc!=320 or adapter.pipeline.num_views!=2
+            or adapter.pipeline.vision_pool_factor!=2):
+        raise RuntimeError('Selected Fast live-service state or geometry mismatch')
     if request.get('rtc_guidance', {}).get('variable_length_fallback'):
         raise RuntimeError('Live service used unprepared slow fallback')
     submit_start = time.monotonic()
@@ -133,7 +148,14 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
         power_boundary='INA3221 VDD_IN module input', clock_settings_changed=False,
         warmup_input_frame_sha256=metadata.get('input_frame_sha256'), input_frame_sha256=None,
         input_mode='fresh forced live camera/state at fixed physics step5')
-    path = directory/'full_service.json'
+    selected_fast=metadata.get('selected_fast',False)
+    if selected_fast:
+        result.update(scope='Selected Fast simulation-side service: device readiness, forced live dual images, '
+            'external64+wrist256 with no state, original RTC, queue commit preparation at static physics step5; '
+            'old queue prepared by Full with state; not asynchronous rollout or physical camera transport',
+            input_mode='fresh forced live dual camera at fixed physics step5; raw state audited but not encoded',
+            full_preparation_state=True)
+    path = directory/('selected_fast_service.json' if selected_fast else 'full_service.json')
     env = None
     monitor = None
     started = time.monotonic()
@@ -143,7 +165,15 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
         env._pb_lock_fixtures = True
         obs, _ = base._prepare_env_episode(env, task, np)
         first = {}
-        first_actions = adapter.bootstrap(base._make_snapshot(obs, stats, True), task['instruction'], first)
+        prep_adapter=getattr(adapter,'full_preparation_adapter',None) if selected_fast else adapter
+        if prep_adapter is None:
+            raise RuntimeError('Selected Fast service requires Full preparation peer')
+        first_actions = prep_adapter.bootstrap(base._make_snapshot(obs, stats, True), task['instruction'], first)
+        if selected_fast:
+            if first['rtc_guidance']['state_in_prompt'] is not True or prep_adapter.pipeline.vision_seq_enc!=512:
+                raise RuntimeError('Old action preparation did not use Full with state')
+            result['full_preparation_guidance']=first['rtc_guidance']
+            prep_adapter.expert.keys=prep_adapter.expert.values=prep_adapter.expert.prefix_mask=None
         queue = {}
         commit(queue, first_actions, 0, 0, 0, first['actions_raw'])
         for step in range(5):
@@ -161,13 +191,13 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
         gc.collect()
         torch.cuda.empty_cache()
         live_bootstrap = {}
-        adapter.bootstrap(base._make_snapshot(obs, stats, True), task['instruction'], live_bootstrap)
+        adapter.bootstrap(base._make_snapshot(obs, stats, not selected_fast), task['instruction'], live_bootstrap)
         valid = live_bootstrap['rtc_guidance']['valid_prefix_length']
         result['warmup_valid_prefix'] = result['valid_prefix']
         result['valid_prefix'] = valid
         result['live_graph_audit'] = adapter.prepare_step_bank([valid])
         for _ in range(2):
-            adapter.predict(base._make_snapshot(obs, stats, True), task['instruction'], previous_raw,
+            adapter.predict(base._make_snapshot(obs, stats, not selected_fast), task['instruction'], previous_raw,
                             delay=5, executed=5, request={})
         gc.collect()
         ctypes.CDLL(None).malloc_trim(0)
@@ -195,7 +225,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                         if event['serve_profile'] != profile:
                             raise RuntimeError('Wrong Full service frequency profile')
                         measured = measure_one(adapter, env, task['instruction'], stats,
-                                               previous_raw, queue, torch=torch, np=np)
+                                               previous_raw, queue, torch=torch, np=np,state_enabled=not selected_fast)
                         lease.send('DONE')
                         lease.receive('REQUEST_ACK', index)
                         monitor.sample()

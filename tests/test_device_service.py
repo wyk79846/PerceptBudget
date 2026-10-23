@@ -38,7 +38,8 @@ def test_submission_crops_elapsed_actions_without_extending_original_horizon():
     assert packet['target_steps'] == [] and packet['new_interval_steps'] == [60, 60]
 
 
-def test_measurement_acquires_and_preprocesses_after_device_readiness():
+@pytest.mark.parametrize('state_enabled',[True,False])
+def test_measurement_acquires_and_preprocesses_after_device_readiness(state_enabled):
     events = []
     observation = {'agentview_image': np.zeros((2, 2, 3), dtype=np.uint8),
                    'robot0_eye_in_hand_image': np.zeros((2, 2, 3), dtype=np.uint8)}
@@ -47,20 +48,51 @@ def test_measurement_acquires_and_preprocesses_after_device_readiness():
         events.append('acquire')
         return observation, acquisition
     def preprocess(obs, stats, enabled):
+        assert enabled is state_enabled
         events.append('preprocess')
         return {'raw_state': np.zeros(8)}
     def predict(snapshot, prompt, previous, **kw):
         events.append('predict')
         kw['request']['actions_raw'] = np.zeros((50, 32)).tolist()
+        kw['request']['rtc_guidance']={'state_in_prompt':state_enabled}
         return np.zeros((50, 7))
     with patch('perceptbudget.device_service.fresh_observation', side_effect=fresh), \
          patch('scripts.eval_q._make_snapshot', side_effect=preprocess):
-        row = measure_one(SimpleNamespace(predict=predict), object(), 'prompt', {},
-                          np.zeros((45, 32)), {}, torch=None, np=np)
+        row = measure_one(SimpleNamespace(predict=predict,pipeline=SimpleNamespace(vision_seq_enc=320,num_views=2,vision_pool_factor=2)), object(), 'prompt', {},
+                          np.zeros((45, 32)), {}, torch=None, np=np,state_enabled=state_enabled)
     assert events == ['acquire', 'preprocess', 'predict']
     assert row['submit_start_monotonic'] >= row['inference_stop_monotonic']
     assert row['ready_monotonic'] >= row['submit_start_monotonic']
     assert row['packet']['new_interval_steps'] == [5, 55]
+
+
+def test_full_preparation_peer_shares_weights_without_mutating_captured_fast_context():
+    from perceptbudget.device_service import full_preparation_peer
+    weights=object(); keys=object()
+    expert=SimpleNamespace(weights=weights,keys=keys,values=keys,prefix_mask=keys)
+    adapter=SimpleNamespace(expert=object(),step_bank=SimpleNamespace(fallback=expert),graph=object())
+    model=SimpleNamespace(_pipe=SimpleNamespace(pipeline=object()))
+    peer=full_preparation_peer(adapter,model)
+    assert peer.model is model and peer.expert.weights is weights
+    assert peer.expert is not expert and peer.expert.keys is None
+    assert expert.keys is keys and adapter.step_bank is not None
+    assert peer.step_bank is None and peer.graph is None
+
+
+def test_selected_fast_service_plan_and_mode_validation(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--selected-fast-clocks','--live-service','--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['services']==15 and len(plan['profiles'])==3 and plan['model_loads']==1
+    assert plan['state'] is False and plan['full_preparation_state'] is True
+    assert plan['visual_tokens']==320 and plan['live_observation']
+    assert plan['consumer_steps_during_service']==0 and not plan['extra_idle_scan']
+    launch.assert_not_called()
+    for args in (['--live-service'],['--selected-fast-clocks','--live-service','--idle-recovery']):
+        with patch('sys.argv',['probe',*args,'--dry-run']),pytest.raises(SystemExit):
+            main()
 
 
 def test_full_service_dry_run_is_small_and_not_an_idle_scan(capsys):

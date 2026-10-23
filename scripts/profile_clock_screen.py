@@ -72,6 +72,7 @@ def main():
     modes.add_argument('--pooled-clocks', action='store_true', help='Dual-view factor2 token pooling context plus RTC at three clock points')
     modes.add_argument('--selected-fast-clocks', action='store_true', help='Selected Fast: external pool2, full wrist, no state; three clocks, five requests each')
     parser.add_argument('--idle-recovery',action='store_true',help='With selected Fast only: three clocks by hot/0.2s/1s histories, five requests each')
+    parser.add_argument('--live-service',action='store_true',help='With selected Fast only: live observation through submission, Full-prepared old actions')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -79,16 +80,24 @@ def main():
     args = parser.parse_args()
     if args.idle_recovery and not args.selected_fast_clocks:
         parser.error('--idle-recovery requires --selected-fast-clocks')
-    if args.service_profiles and not args.full_service:
+    if args.live_service and (not args.selected_fast_clocks or args.idle_recovery):
+        parser.error('--live-service requires selected Fast without idle recovery')
+    if args.service_profiles and not (args.full_service or args.live_service):
         parser.error('--service-profiles requires --full-service')
     from perceptbudget.device_service import validate_profiles
-    service_profiles = validate_profiles(args.service_profiles or ('baseline',))
+    service_profiles = validate_profiles(args.service_profiles or (MATRIX_PROFILES if args.live_service else ('baseline',)))
     if os.geteuid() == 0:
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.live_service:
+            print(json.dumps(dict(model_loads=1,services=5*len(service_profiles),profiles=service_profiles,
+                visual_tokens=320,pooled_view='agent',state=False,full_preparation_state=True,
+                H=50,N=5,live_observation=True,consumer_steps_during_service=0,
+                runtime_commit_reused=True,extra_idle_scan=False)))
+            return 0
         if args.selected_fast_clocks:
             print(json.dumps(dict(model_loads=1,profiles=MATRIX_PROFILES,samples=45 if args.idle_recovery else 15,
                 num_views=2,pool_factor=2,pooled_view='agent',visual_tokens=320,H=50,N=5,
@@ -160,7 +169,7 @@ def main():
         fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
                          clock_matrix=args.matrix or args.idle_recovery, continue_control=args.continue_control or args.continue_camera_compare,
-                         full_service=args.full_service, service_profiles=service_profiles,
+                         full_service=args.full_service or args.live_service, service_profiles=service_profiles,
                          fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
                          pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
                          selected_fast_clocks=args.selected_fast_clocks)
@@ -169,15 +178,18 @@ def main():
     subprocess.run(['sudo', '-v'], check=True)
     if args.selected_fast_clocks:
         config=dict(config,m2_selected_fast_clocks=True,m2_fast_no_state=True,
-                    m2_selected_fast_geometry='external64_wrist256',m2_selected_fast_recovery=args.idle_recovery)
-    purpose = 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+                    m2_selected_fast_geometry='external64_wrist256',m2_selected_fast_recovery=args.idle_recovery,
+                    m2_selected_fast_live_service=args.live_service)
+    purpose = 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
+            if args.live_service:
+                clock_preflight(run,service_profiles,summary)
+            elif args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -207,13 +219,15 @@ def main():
                 command.append('--selected-fast-clocks')
             if args.idle_recovery:
                 command.append('--idle-recovery')
+            if args.live_service:
+                command.extend(['--live-service','--service-profiles',*service_profiles])
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
             if code:
                 raise RuntimeError('Worker failed; inspect worker.log and any clock logs for restoration')
-            if args.full_service:
-                record = json.loads((run/'full_service.json').read_text())
+            if args.full_service or args.live_service:
+                record = json.loads((run/('selected_fast_service.json' if args.live_service else 'full_service.json')).read_text())
                 if record['status'] != 'completed' or len(record['requests']) != 5*len(service_profiles):
                     raise RuntimeError('Incomplete live Full service measurement')
                 fields = ('service_median_ms', 'service_max_ms', 'mean_service_energy_j',
