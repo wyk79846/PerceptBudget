@@ -389,3 +389,7 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/profile_rtc_startup.py
 
 480项测试通过，9跳过、110子测试通过，3项既有环境警告；当前仅完成代码/时间分解/降权约束测试，未执行管理员初始化后降权的实机流程或模型首算子实测。不得据此先宣称启动开销已测得。
 
+最新实机结果3b79d566：管理员初始化后降权到UID/GID1001、三类capability均0，普通用户线程连续2次真实GPU事件采集通过。随后baseline预检仅输出`sudo: a password is required`，未启动频率工具、未改设置、未加载模型；`restored=False`在此意为预检没拿到恢复记录，不是已修改频率却恢复失败。原invalid产物保留。
+
+已在降权后的普通用户会话、任何模型加载之前新增交互`sudo -v`，再用`sudo -n true`核验调频工具将使用的凭据。需在可输入密码的普通终端执行原命令，首次sudo后可能再次提示密码；不传递/保存密码、不改sudo配置、不恢复root模型权限。只有频率预检成功才置`model_load_started=True`并进入模型加载，错误输出明确区分加载是否开始。`--permission-only`不请求调频凭据。
+

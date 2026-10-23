@@ -43,3 +43,25 @@ def test_startup_dry_plan_does_not_require_root_or_load_model(monkeypatch,capsys
     r=json.loads(capsys.readouterr().out)
     assert r['kernel_permission_gate_before_model'] and r['profiled_recovery_requests']==21
     assert r['profiler_armed_before_idle'] and not r['driver_settings_changed']
+
+
+def test_clock_credentials_refreshed_after_drop_before_noninteractive_helpers(monkeypatch):
+    from scripts import profile_rtc_startup as module
+    calls=[]
+    monkeypatch.setattr(module.os,'geteuid',lambda:1001)
+    monkeypatch.setattr(module.subprocess,'run',lambda command,**kw:calls.append((command,kw)))
+    module.authorize_clock_control()
+    assert calls==[(['sudo','-v'],{'check':True}),(['sudo','-n','true'],{'check':True})]
+    calls.clear()
+    monkeypatch.setattr(module.os,'geteuid',lambda:0)
+    with pytest.raises(RuntimeError,match='after privilege drop'):
+        module.authorize_clock_control()
+    assert not calls
+
+
+def test_permission_only_does_not_request_clock_credentials(monkeypatch,capsys):
+    from scripts import profile_rtc_startup as module
+    monkeypatch.setattr('sys.argv',['test','--permission-only'])
+    monkeypatch.setattr(module,'initialize_and_drop',lambda:(None,{'model_uid':1001}))
+    monkeypatch.setattr(module,'authorize_clock_control',lambda:pytest.fail('Permission-only must not access clocks'))
+    assert module.main()==0

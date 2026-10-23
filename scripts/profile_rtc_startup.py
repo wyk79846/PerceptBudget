@@ -11,12 +11,23 @@ import os
 from pathlib import Path
 import pwd
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+
+
+def authorize_clock_control():
+    """Refresh sudo's credential in the dropped-user session before any model load."""
+    if os.geteuid()==0:
+        raise RuntimeError('Clock authorization must occur after privilege drop')
+    print('CLOCK_AUTH: validating sudo after privilege drop; a second password prompt may appear; no model loaded',flush=True)
+    subprocess.run(['sudo','-v'],check=True)
+    # Check exactly the noninteractive credential mode used by the clock helper.
+    subprocess.run(['sudo','-n','true'],check=True)
 
 
 def identity():
@@ -110,11 +121,12 @@ def main():
             repeats=3,baseline_no_profiler_requests=2,profiled_recovery_requests=21,
             profiler_armed_before_idle=True,driver_settings_changed=False)))
         return 0
-    run=None;stop=threading.Event()
+    run=None;stop=threading.Event();model_load_started=False
     try:
         torch,proof=initialize_and_drop()
         print('PROFILE_PRIVILEGE_GATE='+json.dumps(proof),flush=True)
         if args.permission_only:return 0
+        authorize_clock_control()
         from perceptbudget.experiment import load_config,create_run,_write_json_atomically
         from perceptbudget.baseline import validate
         from scripts.profile_clock_screen import clock_preflight
@@ -124,7 +136,7 @@ def main():
         if available_ram_bytes()<RAM_FLOOR_BYTES:raise RuntimeError('RAM below768MiB')
         run=create_run(config,'M2','rtc-startup-timing',repo_root=ROOT)
         print('run_dir='+str(run),flush=True)
-        summary=dict(status='running',privilege_proof=proof,
+        summary=dict(status='running',privilege_proof=proof,model_load_started=False,
             scope='Profiler-assisted request-to-first-kernel and action-return diagnostics; not normal production latency')
         _write_json_atomically(run/'summary.json',summary)
         def memory_guard():
@@ -138,6 +150,9 @@ def main():
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             clock_preflight(run,('baseline',),summary)
+            model_load_started=True
+            summary['model_load_started']=True
+            _write_json_atomically(run/'summary.json',summary)
             result=run_scan(config,run,torch)
         summary.update(status='completed',model_loads=result['model_loads'],restored=result['restored'],
             conditions=result['summary'],unprofiled_request_ms=result['unprofiled_request_ms'],
@@ -148,7 +163,8 @@ def main():
     except BaseException as exc:
         print('STARTUP_TIMING_ERROR='+json.dumps(dict(error=f'{type(exc).__name__}: {exc}',
             uid=os.geteuid(),run=str(run) if run else None,
-            model_loaded=False if run is None else 'inspect run metadata')),flush=True)
+            model_load_started=model_load_started,
+            model_loaded=False if not model_load_started else 'inspect run metadata')),flush=True)
         if run is not None:
             from perceptbudget.experiment import _write_json_atomically
             s=json.loads((run/'summary.json').read_text());s.update(status='invalid',error=str(exc))
