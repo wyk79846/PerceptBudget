@@ -113,7 +113,7 @@ def select_images(snapshot, view):
 
 def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_screen=False,
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
-                     continue_control=False, full_service=False):
+                     continue_control=False, full_service=False, service_profiles=('baseline',)):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -214,6 +214,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         else:
             from perceptbudget.device_clock_screen import screen
         kwargs = dict(matrix=True) if clock_matrix else {}
+        if full_service:
+            kwargs['profiles'] = service_profiles
         return screen(adapter, snapshot, task['instruction'], previous, torch,
                       directory, result, **kwargs)
     for view in views:

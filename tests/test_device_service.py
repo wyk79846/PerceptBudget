@@ -74,3 +74,26 @@ def test_full_service_dry_run_is_small_and_not_an_idle_scan(capsys):
     assert plan['consumer_steps_during_service'] == 0
     assert plan['extra_idle_scan'] is False
     launch.assert_not_called()
+
+
+def test_multi_profile_service_plan(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv', ['probe', '--full-service', '--service-profiles',
+                           'baseline', 'balanced', 'gpu_emc', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main() == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['services'] == 15 and plan['model_loads'] == 1
+    assert plan['profiles'] == ['baseline', 'balanced', 'gpu_emc']
+    launch.assert_not_called()
+
+
+def test_service_profiles_reject_duplicates_and_wrong_mode():
+    from perceptbudget.device_service import validate_profiles
+    from scripts.profile_clock_screen import main
+    for profiles in ([], ['baseline', 'baseline'], ['unknown']):
+        with pytest.raises(ValueError):
+            validate_profiles(profiles)
+    with patch('sys.argv', ['probe', '--service-profiles', 'baseline', '--dry-run']):
+        with pytest.raises(SystemExit):
+            main()

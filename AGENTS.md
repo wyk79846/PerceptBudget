@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23 Full实时观测服务03c505a5已完成：高频5次、1模型，服务中位476.703ms、均值11.499J，频率/功率覆盖/恢复通过。继续准备同轮三档比较：`--full-service --service-profiles baseline balanced gpu_emc`，各5次共15次、模型/环境各一次；逐次固定种子核对图像/state/raw动作一致，分别保存功率与恢复证据。仍冻结物理step5、非真实异步闭环/成功率，不新增空闲扫描、不进入M3。未执行本轮三档硬件测试。备份archive/pre-m2-full-service-profiles-20261023。
+
 - 2026-10-23用户暂缓空闲时长扫描，要求按M2推进，明确当前Word第2节/M2计划4.5，不转入M3/M4优化混合调度。准备原入口--full-service：新增device_service.py，1model/专家、baseline高频5服务，先实际Spatial0初始chunk执行5步，剩45步做RTC参考；在真实step5上释放原准备bank、复用专家/建图流准备对应精确前缀图。每次root准备后force_update真实双图/state传感器（安装robosuite源码确实render，不用零action推进），原预处理/RTC/原commit函数在队列副本上生成提交包；计时设备准备→包就绪、保存功率/频率/观测年龄和分段。物理冻结在step5，实际消费0步，d5/s5仅输入条件；非异步成功率/控制竞争下生产服务或真机，额外重渲染须与旧prepared-input分表，GPU首算子仍null不伪造，名义[5,55)非Bsafe。900/768保护/硬重置释放gate/FlashRT和根配置不改。尚未启动真实硬件流程；用户执行docs/M2_CLOCK_CONTROL.md末节命令后读取结果。备份archive/pre-m2-full-service-20261023。
 
 - 2026-10-22用户同意汇总M2成本并做Full/Fast配对。核查发现完全对应7dce5182在10-21已做且原始power完整，本次不重复GPU实验。离线重新audit full695/split1740项全pass、初sim/raw/frame配对、配置模型/H50N5/state/精度/beta/autotune匹配当前，GPU/CPU历史采样1173/1497.6；EMC历史未采不能额外声称验证。重积分任务/含排空能量均与原记录一致coverage1/0missing：Full77success6.2168s143.403J，含排空6.4057s148.458J；split176success12.8984s277.178J，含排空13.0698s281.332J。交替guided14Full/14expert占50%、专家171ms但总时间+107.5%/含排空J+89.5%，不当默认、不以单任务否定更稀疏/其他Fast候选，不盲目扩测。报告任务指导与相关参考/PerceptBudget_M2阶段成本表与Fast配对复核_20261022.md汇总所有M2成本及缺口；未改生产代码/频率/FlashRT/根配置，无新GPU任务。备份archive/pre-m2-cost-review-20261022。

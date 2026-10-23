@@ -9,6 +9,7 @@ import time
 from perceptbudget.device_clock_recovery import RecoveryLease
 from perceptbudget.device_clock_screen import energy_window, frequency_check
 from perceptbudget.device_control import inventory
+from perceptbudget.device_clocks import MATRIX_PROFILES
 from perceptbudget.experiment import _write_json_atomically
 from perceptbudget.power import PowerMonitor
 
@@ -77,7 +78,29 @@ def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, 
                 raw_state=snapshot['raw_state'].tolist())
 
 
-def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
+def validate_profiles(profiles):
+    profiles = tuple(profiles)
+    if not profiles or len(set(profiles)) != len(profiles) or any(p not in MATRIX_PROFILES for p in profiles):
+        raise ValueError('Use distinct supported Full service profiles')
+    return profiles
+
+
+def summarize_services(rows):
+    return dict(services=len(rows),
+        service_median_ms=statistics.median(r['service_ms'] for r in rows),
+        service_max_ms=max(r['service_ms'] for r in rows),
+        mean_service_energy_j=statistics.mean(r['energy']['energy_j'] for r in rows),
+        acquisition_median_ms=statistics.median((r['measured']['acquisition']['stop_monotonic']-
+            r['measured']['acquisition']['start_monotonic'])*1000 for r in rows),
+        preprocess_median_ms=statistics.median((r['measured']['preprocess_stop_monotonic']-
+            r['measured']['preprocess_start_monotonic'])*1000 for r in rows),
+        predict_median_ms=statistics.median((r['measured']['inference_stop_monotonic']-
+            r['measured']['inference_start_monotonic'])*1000 for r in rows),
+        submit_median_ms=statistics.median((r['measured']['ready_monotonic']-
+            r['measured']['submit_start_monotonic'])*1000 for r in rows))
+
+
+def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, profiles=('baseline',)):
     import gc
     import ctypes
     import numpy as np
@@ -89,6 +112,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
     from perceptbudget.rtc_memory import memory_record
 
     directory = Path(directory)
+    profiles = validate_profiles(profiles)
     cfg = adapter.config
     gate = json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases']) != 6 or gate['render_cleanup']['errors']:
@@ -102,8 +126,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
         scope='Full simulation-side service: device readiness, forced live dual-view/state acquisition, '
               'preprocess, original RTC, existing queue commit preparation at static physics step5; '
               'not asynchronous rollout, physical camera transport, or success-rate test',
-        suite='libero_spatial', task_id=0, profile='baseline', requested_extra_idle_seconds=0.,
-        planned_requests=5, conditioning_delay_steps=5, conditioning_executed_steps=5,
+        suite='libero_spatial', task_id=0, profile=profiles[0] if len(profiles)==1 else None,
+        profiles=list(profiles), reference_profile=profiles[0], requested_extra_idle_seconds=0.,
+        planned_requests=5*len(profiles), conditioning_delay_steps=5, conditioning_executed_steps=5,
         actual_control_steps_during_each_service=0, first_gpu_operator_timestamp=None,
         power_boundary='INA3221 VDD_IN module input', clock_settings_changed=False,
         warmup_input_frame_sha256=metadata.get('input_frame_sha256'), input_frame_sha256=None,
@@ -153,67 +178,80 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
             raise RuntimeError('Full service RAM below900MiB')
         device = inventory()
         result['device_before_service'] = dict(power_mode=device['power_mode'], thermal=device['thermal'])
-        monitor = PowerMonitor(.02, max_gap_seconds=.1)
-        monitor.start()
-        with RecoveryLease('baseline', 0., directory, 'full_service') as lease:
-            result['clock_settings_changed'] = True
-            for index in range(5):
-                torch.manual_seed(20261023+index)
-                lease.send('RUN')
-                event = lease.receive('SERVE', index)
-                if event['serve_profile'] != 'baseline':
-                    raise RuntimeError('Wrong Full service frequency profile')
-                measured = measure_one(adapter, env, task['instruction'], stats,
-                                       previous_raw, queue, torch=torch, np=np)
-                lease.send('DONE')
-                lease.receive('REQUEST_ACK', index)
-                monitor.sample()
-                begin = event['up']['command_monotonic']
-                ready = measured['ready_monotonic']
-                energy = energy_window(monitor, begin, ready)
-                if energy['energy_j'] is None:
-                    raise RuntimeError('Full service power coverage incomplete')
-                if measured['acquisition']['physics_sha256'] != result['initial_physics_sha256']:
-                    raise RuntimeError('Physics changed during isolated service measurement')
-                packet = measured['packet']
-                np.savez_compressed(directory/f'packet_{index}.npz',
-                                    actions=packet.pop('action_payload'),
-                                    raw_actions=np.asarray(measured['request']['actions_raw']))
-                row = dict(index=index, timing=event, measured=measured, energy=energy,
-                           service_ms=(ready-begin)*1000,
-                           observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
-                result['requests'].append(row)
-                _write_json_atomically(path, result)
-                print('FULL_SERVICE_REQUEST='+str(index)+' ms='+str(row['service_ms']), flush=True)
-        monitor.stop()
-        result['thermal_after_service'] = inventory()['thermal']
-        for row in result['requests']:
-            check = frequency_check(lease.events, 'baseline', row['timing']['up']['command_monotonic'],
-                                    row['measured']['ready_monotonic'])
-            check['note'] = '20ms software polling, not GPU launch timestamp'
-            if not check['matches']:
-                raise RuntimeError('Full service actual frequency mismatch')
-            row['frequency_check'] = check
-        rows = result['requests']
-        result.update(status='completed', restored=True,
-            service_median_ms=statistics.median(r['service_ms'] for r in rows),
-            service_max_ms=max(r['service_ms'] for r in rows),
-            mean_service_energy_j=statistics.mean(r['energy']['energy_j'] for r in rows),
-            acquisition_median_ms=statistics.median((r['measured']['acquisition']['stop_monotonic']-
-                r['measured']['acquisition']['start_monotonic'])*1000 for r in rows),
-            preprocess_median_ms=statistics.median((r['measured']['preprocess_stop_monotonic']-
-                r['measured']['preprocess_start_monotonic'])*1000 for r in rows),
-            predict_median_ms=statistics.median((r['measured']['inference_stop_monotonic']-
-                r['measured']['inference_start_monotonic'])*1000 for r in rows),
-            submit_median_ms=statistics.median((r['measured']['ready_monotonic']-
-                r['measured']['submit_start_monotonic'])*1000 for r in rows))
+        references = {}
+        for profile in profiles:
+            rows = []
+            thermal_before = inventory()['thermal']
+            monitor = PowerMonitor(.02, max_gap_seconds=.1)
+            monitor.start()
+            try:
+                with RecoveryLease(profile, 0., directory, 'full_service_'+profile,
+                                   serve_profile=profile) as lease:
+                    result['clock_settings_changed'] = True
+                    for index in range(5):
+                        torch.manual_seed(20261023+index)
+                        lease.send('RUN')
+                        event = lease.receive('SERVE', index)
+                        if event['serve_profile'] != profile:
+                            raise RuntimeError('Wrong Full service frequency profile')
+                        measured = measure_one(adapter, env, task['instruction'], stats,
+                                               previous_raw, queue, torch=torch, np=np)
+                        lease.send('DONE')
+                        lease.receive('REQUEST_ACK', index)
+                        monitor.sample()
+                        begin = event['up']['command_monotonic']
+                        ready = measured['ready_monotonic']
+                        energy = energy_window(monitor, begin, ready)
+                        if energy['energy_j'] is None:
+                            raise RuntimeError('Full service power coverage incomplete')
+                        if measured['acquisition']['physics_sha256'] != result['initial_physics_sha256']:
+                            raise RuntimeError('Physics changed during isolated service measurement')
+                        packet = measured['packet']
+                        payload = packet.pop('action_payload')
+                        raw = np.asarray(measured['request']['actions_raw'], dtype=np.float32)
+                        np.savez_compressed(directory/f'packet_{profile}_{index}.npz', actions=payload, raw_actions=raw)
+                        if index not in references:
+                            references[index] = (measured['frame_sha256'], measured['raw_state'], raw.copy())
+                        ref_frame, ref_state, ref_actions = references[index]
+                        difference = float(np.max(np.abs(raw-ref_actions)))
+                        row = dict(profile=profile, index=index, seed=20261023+index,
+                            timing=event, measured=measured, energy=energy,
+                            service_ms=(ready-begin)*1000,
+                            frame_matches_reference=measured['frame_sha256']==ref_frame,
+                            state_matches_reference=measured['raw_state']==ref_state,
+                            raw_action_max_abs_difference_vs_reference=difference,
+                            observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
+                        rows.append(row)
+                        result['requests'].append(row)
+                        _write_json_atomically(path, result)
+                        if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
+                            raise RuntimeError('Paired observation/state/actions changed across service profiles')
+                        print('FULL_SERVICE_REQUEST='+profile+'/'+str(index)+' ms='+str(row['service_ms']), flush=True)
+            finally:
+                monitor.stop()
+                _write_json_atomically(directory/f'full_service_{profile}_power.json',
+                                       [asdict(r) for r in monitor.readings])
+            for row in rows:
+                check = frequency_check(lease.events, profile, row['timing']['up']['command_monotonic'],
+                                        row['measured']['ready_monotonic'])
+                check['note'] = '20ms software polling, not GPU launch timestamp'
+                if not check['matches']:
+                    raise RuntimeError('Full service actual frequency mismatch')
+                row['frequency_check'] = check
+            result['conditions'].append(dict(profile=profile, restored=True,
+                thermal_before=thermal_before, thermal_after=inventory()['thermal'],
+                max_raw_action_difference_vs_reference=max(r['raw_action_max_abs_difference_vs_reference'] for r in rows),
+                **summarize_services(rows)))
+            _write_json_atomically(path, result)
+        result.update(status='completed', restored=True)
+        if len(profiles)==1:
+            result.update(summarize_services(result['requests']))
     except BaseException as exc:
         result.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
         raise
     finally:
         if monitor is not None:
             monitor.stop()
-            _write_json_atomically(directory/'full_service_power.json', [asdict(r) for r in monitor.readings])
         if env is not None:
             env.close()
         _write_json_atomically(path, result)

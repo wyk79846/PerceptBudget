@@ -57,7 +57,7 @@ def monitored_worker(command, out):
 def main():
     from perceptbudget.baseline import validate
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
-    from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES
+    from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES, MATRIX_PROFILES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
     modes = parser.add_mutually_exclusive_group()
@@ -66,9 +66,15 @@ def main():
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
     modes.add_argument('--continue-control', action='store_true', help='Fifteen bounded live LIBERO Continue windows, five fresh actions each')
     modes.add_argument('--full-service', action='store_true', help='Five high-frequency Full services including live sensor acquisition and queue preparation')
+    parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
+                        help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.service_profiles and not args.full_service:
+        parser.error('--service-profiles requires --full-service')
+    from perceptbudget.device_service import validate_profiles
+    service_profiles = validate_profiles(args.service_profiles or ('baseline',))
     if os.geteuid() == 0:
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
@@ -76,7 +82,7 @@ def main():
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
         if args.full_service:
-            print(json.dumps(dict(model_loads=1, services=5, profile='baseline', H=50, N=5,
+            print(json.dumps(dict(model_loads=1, services=5*len(service_profiles), profiles=service_profiles, H=50, N=5,
                                   state=True, live_observation=True, observation_step=5,
                                   consumer_steps_during_service=0, runtime_commit_reused=True,
                                   extra_idle_scan=False)))
@@ -117,7 +123,7 @@ def main():
         fixed_view_probe(config, args.run_dir, source, 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
                          clock_matrix=args.matrix, continue_control=args.continue_control,
-                         full_service=args.full_service)
+                         full_service=args.full_service, service_profiles=service_profiles)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
@@ -132,7 +138,7 @@ def main():
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
-                clock_preflight(run, ('baseline',), summary)
+                clock_preflight(run, service_profiles, summary)
             command = [config['python_executable'], '-u', str(Path(__file__).resolve()),
                        '--worker', '--run-dir', str(run)]
             if args.transitions:
@@ -145,6 +151,7 @@ def main():
                 command.append('--continue-control')
             if args.full_service:
                 command.append('--full-service')
+                command.extend(['--service-profiles', *service_profiles])
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
@@ -152,13 +159,14 @@ def main():
                 raise RuntimeError('Worker failed; inspect worker.log and any clock logs for restoration')
             if args.full_service:
                 record = json.loads((run/'full_service.json').read_text())
-                if record['status'] != 'completed' or len(record['requests']) != 5:
+                if record['status'] != 'completed' or len(record['requests']) != 5*len(service_profiles):
                     raise RuntimeError('Incomplete live Full service measurement')
                 fields = ('service_median_ms', 'service_max_ms', 'mean_service_energy_j',
                           'acquisition_median_ms', 'preprocess_median_ms', 'predict_median_ms',
                           'submit_median_ms', 'restored')
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
-                               services=5, **{key: record[key] for key in fields})
+                               services=len(record['requests']), conditions=record['conditions'],
+                               **{key: record[key] for key in fields if key in record})
                 return 0
             if args.continue_control:
                 record = json.loads((run/'continue_control.json').read_text())
