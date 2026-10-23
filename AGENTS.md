@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 最新用户已同意采用Fast候选：外部factor2池化64+腕部完整256、Fast不带state，Full双图512带state；暂不扩factor4。仅选定M2候选，正式基线不改，不将三task0一次成功当总体质量证明。目前4.5补表：新候选三频率/完整服务/起始历史成本缺失，旧双图128token三频率数值不能移用。Full/Continue和调频恢复已有证据保留，空闲扩展仍暂缓。已更新M2计划书最新状态，避免沿用旧“Fast未选定”。
+
 - 2026-10-23补采Fast无state：a40094a3完成Spatial纯Full77步6.051s140.569J vs候选79步6.252s142.211J，均success/audit/0underflow；切Goal触exact无state文本长度断言，父invalid，已完成子记录保留非任务失败。只补缺失Goal1591e7c4 completed：Full123步7.175s171.289J vs候选124步7.183s168.979J，均success/audit/0underflow/初态匹配/coverage1。2次model/专家load，非单进程全完成，无内存保护。Fast中位347.78/346.96ms，连Object342.42ms三task0均成功各1次；相比此前Fast带state约快21–22%，任务时间和能量不一致，不宣称系统节能或总体成功率。当前无state前端跨不同任务文本长度不能直接复用，保留精确长度fail-closed，不擅改。报告任务指导与相关参考/PerceptBudget_Fast无state补充采集_20261023.md；本轮无代码/FlashRT/根基线修改，进程已结束。
 
 - 2026-10-23用户指定仅温和Fast关闭state、Full仍带state，调度FullFast交替。新增隔离--fast-no-state（仅mixed且不能复用旧标签）；snapshot副本state=None，Full不改；无state精确文本capacity/项目MixedViewPipeline固定图，避免原生无statelegacy路径退回128。首次dcc96c5b池化布局预检查拦截320vs128、无闭环、不算失败。修复后5868ff4b完成Object0 Full142步8.637秒/候选143步8.932秒成功，2audit、初态配对、0断供、1model/1expert。Fast有效prefix333=320+13，state标志假；Full654–660、state真。Fast342.42ms vs此前e64d4bf1带state438.22ms，跨run单回合约快96ms/22%，但任务变慢，不改默认。461pass9skip110subtests，3既有环境警告。报告任务指导与相关参考/PerceptBudget_Fast关闭state小测_20261023.md；备份archive/pre-fast-no-state-20261023。FlashRT/根基线未改，全部进程结束。
