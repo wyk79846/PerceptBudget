@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户要求尝试Continue不获取图像。新增独立实验continue_camera.py/probe_continue_camera.py，不改生产基线/FlashRT/安装包。通过robosuite image Observable.set_enabled跳过传感器计算，不是mask/缓存假图；finally恢复，下一次推理前必须force_update新观测。实际GPU小测M2/20261023T024854.600352Z-continue-camera-check-c0a826a5：Spatial0同初态旧记录首5动作，on/off各3次30步，所有逐步physics/reward/done/success及恢复新图完全一致，渲染10→0，envstep约54→49ms，恢复双图约5.7–5.9ms。无模型加载/调频，无任务成功率或能量结论，尚未接入异步闭环或正式Continue成本表。更早6aab593b沙盒GPU访问失败后软件渲染，耗时不用于设备结论。7项单测通过，备份archive/pre-continue-no-camera-20261023。
+
 - 2026-10-23 Full实时观测服务03c505a5已完成：高频5次、1模型，服务中位476.703ms、均值11.499J，频率/功率覆盖/恢复通过。继续准备同轮三档比较：`--full-service --service-profiles baseline balanced gpu_emc`，各5次共15次、模型/环境各一次；逐次固定种子核对图像/state/raw动作一致，分别保存功率与恢复证据。仍冻结物理step5、非真实异步闭环/成功率，不新增空闲扫描、不进入M3。未执行本轮三档硬件测试。备份archive/pre-m2-full-service-profiles-20261023。
 
 - 2026-10-23用户暂缓空闲时长扫描，要求按M2推进，明确当前Word第2节/M2计划4.5，不转入M3/M4优化混合调度。准备原入口--full-service：新增device_service.py，1model/专家、baseline高频5服务，先实际Spatial0初始chunk执行5步，剩45步做RTC参考；在真实step5上释放原准备bank、复用专家/建图流准备对应精确前缀图。每次root准备后force_update真实双图/state传感器（安装robosuite源码确实render，不用零action推进），原预处理/RTC/原commit函数在队列副本上生成提交包；计时设备准备→包就绪、保存功率/频率/观测年龄和分段。物理冻结在step5，实际消费0步，d5/s5仅输入条件；非异步成功率/控制竞争下生产服务或真机，额外重渲染须与旧prepared-input分表，GPU首算子仍null不伪造，名义[5,55)非Bsafe。900/768保护/硬重置释放gate/FlashRT和根配置不改。尚未启动真实硬件流程；用户执行docs/M2_CLOCK_CONTROL.md末节命令后读取结果。备份archive/pre-m2-full-service-20261023。
