@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23新Fast完整服务89d41dc4用户执行完成并审核：15请求/1model/1expert/exit0，Full准备stateTrue/prefix665；FastFalse/340=320+20、0fallback，同轮跨频率图像/rawstate/噪声/动作一致、raw差0、freqmatch、coverage1/missing0、全restore，准备RAM1832MiB。高335.14ms7.4889J/中361.73ms7.5435J/低483.84ms7.3889J，低只省1.3%但慢44%，非显著性或整任务结论。与旧Full服务初始物理/旧动作/计时阶段framehash不同，不能当严格配对算35%收益。报告任务指导与相关参考/PerceptBudget_M2_新Fast完整服务结果_20261023.md。本项完成，接下来Continue历史窗必须在无推理期间持续执行且接续实际未执行索引，不能等完重放旧chunk开头，保持H50/观测年龄保护。
+
 - 2026-10-23用户继续推进：新增原入口--selected-fast-clocks --live-service，默认三频率各5次15请求/1model/1expert，服务前Full双图带state生成旧动作并实际走5步，随后物理冻结每请求强制新观测，Fast320token无state处理、原RTC/d5s5、原commit提交包；非异步闭环成功率。device_service.full_preparation_peer共享冻结专家权重且独立临时KV/Full上下文，不加载第二模型；Full原入口不变。无调频GPU预检695d3ec4 completed：5次真实传感/提交路径，Full stateTrue、FastFalse/320、两次图parity0、物理/配对通过；软件就绪及频率检查为显式mock，preflight_only/no_clock_writes，不能当真实服务恢复/频率证据。468pass9skip110subtests，3既有环境警告。真实三频率仍未执行，需用户普通终端sudo执行docs/M2_CLOCK_CONTROL.md最新命令。产物应为selected_fast_service.json而非旧Full或prepared成本。备份archive/pre-selected-fast-service-20261023；FlashRT/根基线未改、预检进程已结束。
 
 - 2026-10-23第2项0614d2a4用户执行完并审核：45请求/9条件/1model，state全false、0fallback、各条件配对动作0差、等待及推理freqmatch、功率coverage1、全restore、exit0。高/中/低热恢复+计算325.47/353.46/471.25ms；0.2等待343.11/371.24/469.98；1秒342.92/369.25/470.37。高/中升频读回约18ms，非首GPU算子；恢复J有明显历史/传感器边界效应，不能推算可靠转换能量或回本时间。已汇报第2项完成。第3项数据整理d1f6dd02完成27格JSON/CSV（3冻结物理新观测service+15prepared恢复diagnostic+3Continue短窗+6未测），字段分开/每格source，非M2验收。报告任务指导与相关参考/PerceptBudget_M2_恢复结果与统一成本表_20261023.md。剩余重点Fast完整新观测服务，Continue历史窗、首GPU时刻/可靠转换能量仍缺；无新GPU实验/无频率设置改动。
