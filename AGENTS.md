@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23第2项0614d2a4用户执行完并审核：45请求/9条件/1model，state全false、0fallback、各条件配对动作0差、等待及推理freqmatch、功率coverage1、全restore、exit0。高/中/低热恢复+计算325.47/353.46/471.25ms；0.2等待343.11/371.24/469.98；1秒342.92/369.25/470.37。高/中升频读回约18ms，非首GPU算子；恢复J有明显历史/传感器边界效应，不能推算可靠转换能量或回本时间。已汇报第2项完成。第3项数据整理d1f6dd02完成27格JSON/CSV（3冻结物理新观测service+15prepared恢复diagnostic+3Continue短窗+6未测），字段分开/每格source，非M2验收。报告任务指导与相关参考/PerceptBudget_M2_恢复结果与统一成本表_20261023.md。剩余重点Fast完整新观测服务，Continue历史窗、首GPU时刻/可靠转换能量仍缺；无新GPU实验/无频率设置改动。
+
 - 第2项已准备：原入口--selected-fast-clocks --idle-recovery，沿用恢复MATRIX_PLAN（三频率×热/0.2/1秒，每格5次45请求/1model），非新idle扫描、非完整新观测服务L；静止等待无Continue质量主张。复用原RecoveryLease/白名单与恢复不改root控制；逐请求state/320几何/回退检查，跨历史频率动作0差否则拒绝；CSV为selected_fast_cost_table.csv。28相关测试、全回归465pass9skip110subtests，3既有环境警告。真实GPU及调频恢复尚未执行，需用户普通终端sudo；命令见docs/M2_CLOCK_CONTROL.md最新节。备份archive/pre-selected-fast-recovery-20261023；FlashRT/根基线未改。待用户执行后先核查第2项，不把第1项的高频静止值当Continue或填满27格。
 
 - 2026-10-23第1项新Fast三频率110744d9用户执行完，已审核completed/exit0/1model/15请求：高326.97ms8.3222J，中351.69ms7.9412J，低467.50ms7.6044J；静止保持8.6897/8.1142/6.2181W非Continue。真实320token/prefix340/64+256、布局0差、state全false、0fallback、跨频率动作0差、计算/保持频率匹配、功率coverage1/missing0、3档及预检restore全通过。固定输入计算成本不是完整服务L。报告任务指导与相关参考/PerceptBudget_M2_第1项_新Fast三频率成本_20261023.md。已先向用户汇报第1项完成；下一项检查已选Fast沿用0.2/1秒等待的恢复测量，不扩idle扫描，完整服务口径仍缺。
