@@ -97,6 +97,7 @@ def audit(run):
             check('fresh_visual_geometry',visual.get('num_views')==(1 if expected_mode=='wrist' else 2)
                   and visual.get('visual_tokens')==(128 if expected_mode=='pool2' else 256 if expected_mode=='wrist' else 512)
                   and visual.get('camera_indices')==([1] if expected_mode=='wrist' else [0,1]),pid)
+            check('fresh_visual_pool_factor',visual.get('vision_pool_factor',1)==(2 if expected_mode=='pool2' else 1),pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})

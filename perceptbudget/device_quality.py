@@ -247,6 +247,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         record.update(recompute_comparison=True,
             scope='paired Full vs alternating stale-KV expert-only RTC; no spatial compression',
             reuse_contract='bootstrap Full; at most one expert-only request after each Full; execution before original H-step nominal expiry')
+    if visual_comparison:
+        from perceptbudget.rtc_visual_alternation import episode_geometry
+        record.update(visual_comparison=True,fast_visual_mode=visual_fast_mode,
+            scope='Paired Full vs alternating fresh '+visual_fast_mode+' contexts; complete RTC, no stale KV',
+            **episode_geometry(visual_fast_mode,True))
     expected = {(s, 0, v) for s, _, v in calibration_plan(kind)}
     completed = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
     if calibration_only and expected <= completed:
@@ -449,8 +454,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             (r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
                             for r in requests[1:]])) if len(requests)>1 else None)
                     if visual_comparison:
-                        result['visual_tokens_by_mode']={'full':512,visual_fast_mode:128 if visual_fast_mode=='pool2' else 256}
-                        result['visual_tokens_scope']='base Full geometry; actual per-request geometry is in context_refresh'
+                        result.update(episode_geometry(visual_fast_mode,view!='full'))
                     info = initial_info(active, episode)
                     review = None
                     if kind == 'single':
@@ -469,6 +473,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         wall_seconds=episode['real_seconds'], audit_passed=True,
                         underflow_steps=len(episode['underflow_steps']), initial=info,
                         initial_pair_review=review, inference_median_ms=result['steady_inference_median_ms']))
+                    if visual_comparison:
+                        record['episodes'][-1].update(episode_geometry(visual_fast_mode,view!='full'))
                     record['status'] = 'running'
                     save()
                     print('quality_episode='+json.dumps(record['episodes'][-1]), flush=True)

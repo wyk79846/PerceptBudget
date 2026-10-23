@@ -54,6 +54,7 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
     adapter.config={'m2_visual_fast_enabled':True,'m2_visual_fast_mode':fast_mode}
     fast=model(2 if fast_mode=='pool2' else 1)
     fast._pipe.pipeline.vision_seq_enc=128 if fast_mode=='pool2' else 256
+    fast._pipe.pipeline.vision_pool_factor=2 if fast_mode=='pool2' else 1
     adapter.attach_wrist(fast)
     adapter._guided_requests=0
     for episode in range(2):
@@ -114,3 +115,23 @@ def test_pooled_alternation_cli_is_six_fresh_dual_image_paired_episodes():
     assert plan['conditions']==['full','pool2_alternate'] and plan['fast_visual_mode']=='pool2'
     assert plan['q']==5 and plan['N']==5 and plan['state']
     assert 'fresh dual images' in plan['fast_inputs']
+
+
+def test_mixed_geometry_metadata_does_not_claim_full_only_tokens():
+    from perceptbudget.rtc_visual_alternation import episode_geometry
+    mixed=episode_geometry('pool2',True)
+    assert mixed['visual_tokens'] is None and mixed['vision_pool_factor'] is None
+    assert mixed['geometry_by_mode']['full']['visual_tokens']==512
+    assert mixed['geometry_by_mode']['pool2']['visual_tokens']==128
+    assert mixed['geometry_by_mode']['pool2']['vision_pool_factor']==2
+    assert episode_geometry('pool2',False)['visual_tokens']==512
+
+
+def test_prefix_offset_guard_checks_native_actual_valid_length(monkeypatch):
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'_prepare_context',lambda *a,**kw:273)
+    adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    adapter.step_bank=None
+    adapter.pipeline=SimpleNamespace(vision_seq_enc=128)
+    adapter.pipe=SimpleNamespace(current_prompt_len=144)
+    with pytest.raises(RuntimeError,match='prefix offset'):
+        adapter._prepare_context({},'task',{},guided=True)

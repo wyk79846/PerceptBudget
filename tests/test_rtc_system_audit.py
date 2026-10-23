@@ -57,6 +57,7 @@ def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_
         mode=fast_mode if i else 'full'
         r['planned_context_mode']=mode
         r['context_refresh']=dict(mode=mode,current_images_encoded=True,current_state_encoded=True,
+            vision_pool_factor=2 if mode=='pool2' else 1,
             source_prediction_id=i,source_observation_step=r['observation_step'],
             num_views=1 if i and fast_mode=='wrist' else 2,
             visual_tokens=(128 if fast_mode=='pool2' else 256) if i else 512,

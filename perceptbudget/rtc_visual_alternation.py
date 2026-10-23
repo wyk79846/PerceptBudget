@@ -4,6 +4,24 @@ import time
 from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
+def visual_geometry(mode):
+    if mode not in ('full','wrist','pool2'):
+        raise ValueError('Unknown visual context mode')
+    return dict(num_views=1 if mode=='wrist' else 2,
+                visual_tokens=128 if mode=='pool2' else 256 if mode=='wrist' else 512,
+                vision_pool_factor=2 if mode=='pool2' else 1)
+
+
+def episode_geometry(fast_mode, alternating):
+    modes=('full',fast_mode) if alternating else ('full',)
+    geometry={mode:visual_geometry(mode) for mode in modes}
+    return dict(base_geometry=visual_geometry('full'),geometry_by_mode=geometry,
+        visual_tokens_by_mode={mode:g['visual_tokens'] for mode,g in geometry.items()},
+        visual_tokens=None if alternating else 512,
+        vision_pool_factor=None if alternating else 1,
+        geometry_scope='Mixed geometry; use per-request context_refresh' if alternating else 'Full only')
+
+
 class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
     def fast_mode(self):
         return getattr(self,'config',{}).get('m2_visual_fast_mode','wrist')
@@ -35,8 +53,10 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             limitation='Two independently bounded banks; no runtime graph capture')
 
     def attach_wrist(self, model):
-        expected_views, tokens = (2,128) if self.fast_mode()=='pool2' else (1,256)
-        if model._pipe.pipeline.num_views != expected_views or model._pipe.pipeline.vision_seq_enc != tokens:
+        geometry=visual_geometry(self.fast_mode())
+        pl=model._pipe.pipeline
+        if (pl.num_views!=geometry['num_views'] or pl.vision_seq_enc!=geometry['visual_tokens']
+                or getattr(pl,'vision_pool_factor',1)!=geometry['vision_pool_factor']):
             raise ValueError('Fast context geometry mismatch')
         self._wrist_model = model
 
@@ -45,10 +65,16 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
                 and self._guided_requests % 2 == 0 else 'full')
 
     def _activate(self, mode):
+        if mode not in ('full',self.fast_mode()):
+            raise ValueError('Mode does not belong to this visual adapter')
         model = self._full_model if mode == 'full' else self._wrist_model
         if model is None:
             raise RuntimeError('Wrist context not prepared')
         self.model, self.pipe, self.pipeline = model, model._pipe, model._pipe.pipeline
+        geometry=visual_geometry(mode)
+        if (self.pipeline.num_views!=geometry['num_views'] or self.pipeline.vision_seq_enc!=geometry['visual_tokens']
+                or getattr(self.pipeline,'vision_pool_factor',1)!=geometry['vision_pool_factor']):
+            raise RuntimeError('Active visual pipeline geometry changed')
 
     def prepare_wrist_context(self, snapshot, prompt):
         from perceptbudget.device_profile import select_images
@@ -63,6 +89,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         valid = super()._prepare_context(snapshot, prompt, request, guided=guided)
         if self.step_bank is not None and self.step_bank.select(valid)[1] is None:
             raise RuntimeError(f'Unprepared visual prefix {valid}; stopped before expert, no slow fallback')
+        if valid!=self.pipeline.vision_seq_enc+self.pipe.current_prompt_len:
+            raise RuntimeError('Visual prefix offset differs from actual tokenized input')
         request['visual_context_seconds'] = time.monotonic()-begin
         return valid
 

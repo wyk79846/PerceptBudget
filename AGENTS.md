@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户要求严查池化路径。静态逐项核查FlashRT pool位置/128token/语言与RoPE偏移、共享权重/独立KV及串行输入；FlashRT仓库clean未改。新增audit_pooled_path.py取Object失败request1/19/35顺反序，独立正常构造pool2 vs实际共享Full扰动后pool2，双方各6回放/各1load、无环境。生产autotune审计f16f1ccf：pool/位置0差，KV和动作有差，最终action最大0.019773；shared raw与原记录0差、源帧预处理hash一致。控制实验f341f9f4仅双侧heuristic-first全部token/KV/位置/raw/7维action0差，更支持算法选择/BF16数值路径差异，不是池化接入错误；无实际algoID/闭环验证，不声称唯一因果或数值差无害。未替换生产autotune。修正混合回合summary沿用Full512/pool1及错误scope为逐模式几何；加激活几何/pool factor/真实prefix=vision+prompt断言、独立audit检查，纯日志断言无数值改变。449pass9skip110subtests、3既有环境警告。新报告任务指导与相关参考/PerceptBudget_池化接入核查_20261023.md。备份archive/pre-pooling-path-audit-20261023及archive/pre-pool-audit-guards-20261023。跨任务RAM问题未解决，不新开闭环/调参/训练。
+
 - 2026-10-23 Full/pool2交叉完成有效三组6回合：98163542的Spatial Full78success6.151s143.132J/交叉134success10.027s237.643J；0bb5adbd的Object Full142success8.633s210.045J/交叉280timeout16.120s399.134J；b7f00c7a的Goal Full123success7.229s172.077J/交叉118success6.942s162.235J。全部有效子run audit/配对初态/覆盖1/无underflow/fallback通过；最新双图/state，Full512/pool2=128token，布局0差，Fast约341–343ms。Full3/3池化2/3仅样本数，当前q5高比例轮换不合格；Goal单对有小收益，不能全否定或当显著性证明。前两父run分别换Object时767.1/进入Goal时716.2MiB触768保护，invalid但各已完成一组合法数据；第三独立Goal completed。有效6回合分3个进程/模型加载，不称一次常驻成功，跨任务内存峰值仍未解决。另eb069c20因未知279前缀中断，不计策略失败；已补历史池化证据/边界内2长度余量，不改实际输入或RTC。结果详见失败原因审核第11节。不再自动扩测/调参，基线/FlashRT未改。
 
 - 2026-10-23用户指定Full/token池化交叉。新增显式--pooled-alternation，复用已验证双上下文/单权重专家与原RTC：Full最新双图512视觉token，Fast最新双图native factor2池化128，state每次新编码，bootstrapFull后交替，q5N5H50。共享frontend泛化，不增加另套模型/项目；池化CPU layout检查、模式pool2单独延迟历史/audit几何、历史文本形状包络移位、未知前缀停止/900和768保护保留。三任务各纯Full/交叉6回合，--cross-suite，相关37单测通过。备份archive/pre-m2-pooled-alternation-20261023。实际闭环即将运行，尚无质量结果，不改FlashRT/根配置。
