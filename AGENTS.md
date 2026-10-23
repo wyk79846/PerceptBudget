@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23 Continue相机节能独立小测e619a28b完成，probe_continue_camera.py新增--energy：1环境/0模型，不调频，交替顺序10对，每回合旧记录首5动作，双方共同70ms/步以隔离速度，强制刷新新双图后再观察200ms尾迹。20窗口物理/奖励/恢复图像完全一致，能量完整覆盖。on/off执行J3.168887/3.127343（−1.311%），双方均force刷新后J3.221360/3.181039（−1.252%），再计200ms尾迹J5.023179/4.932117（−1.813%）；step均55.47/50.77ms。小量差且窗口短/INA响应有限，不宣称确定整任务节能或常驻模型M2成本；70ms实验节奏不是生产20Hz修改，未改正式Continue路径。备份archive/pre-continue-camera-energy-20261023。
+
 - 2026-10-23用户要求尝试Continue不获取图像。新增独立实验continue_camera.py/probe_continue_camera.py，不改生产基线/FlashRT/安装包。通过robosuite image Observable.set_enabled跳过传感器计算，不是mask/缓存假图；finally恢复，下一次推理前必须force_update新观测。实际GPU小测M2/20261023T024854.600352Z-continue-camera-check-c0a826a5：Spatial0同初态旧记录首5动作，on/off各3次30步，所有逐步physics/reward/done/success及恢复新图完全一致，渲染10→0，envstep约54→49ms，恢复双图约5.7–5.9ms。无模型加载/调频，无任务成功率或能量结论，尚未接入异步闭环或正式Continue成本表。更早6aab593b沙盒GPU访问失败后软件渲染，耗时不用于设备结论。7项单测通过，备份archive/pre-continue-no-camera-20261023。
 
 - 2026-10-23 Full实时观测服务03c505a5已完成：高频5次、1模型，服务中位476.703ms、均值11.499J，频率/功率覆盖/恢复通过。继续准备同轮三档比较：`--full-service --service-profiles baseline balanced gpu_emc`，各5次共15次、模型/环境各一次；逐次固定种子核对图像/state/raw动作一致，分别保存功率与恢复证据。仍冻结物理step5、非真实异步闭环/成功率，不新增空闲扫描、不进入M3。未执行本轮三档硬件测试。备份archive/pre-m2-full-service-profiles-20261023。
