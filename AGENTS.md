@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23第1项新Fast三频率110744d9用户执行完，已审核completed/exit0/1model/15请求：高326.97ms8.3222J，中351.69ms7.9412J，低467.50ms7.6044J；静止保持8.6897/8.1142/6.2181W非Continue。真实320token/prefix340/64+256、布局0差、state全false、0fallback、跨频率动作0差、计算/保持频率匹配、功率coverage1/missing0、3档及预检restore全通过。固定输入计算成本不是完整服务L。报告任务指导与相关参考/PerceptBudget_M2_第1项_新Fast三频率成本_20261023.md。已先向用户汇报第1项完成；下一项检查已选Fast沿用0.2/1秒等待的恢复测量，不扩idle扫描，完整服务口径仍缺。
+
 - 2026-10-23用户要求M2逐条执行并逐步汇报。当前第1项新Fast三频率计算成本：已新增原入口--selected-fast-clocks，高/中/低各5请求、1model，共享Full权重构建external64+wrist256/no-state前端，保留原频率预检/lease恢复/GPU锁/内存保护，非完整服务L。GPU无调频预检a96c4784 completed：320视觉token、有效prefix340、池化布局0差、两次同seed动作0差、无state/慢回退，step图parity0；462pass9skip110subtests，3既有环境警告。正式三频率实测未启动：沙盒外sudo -n仍要求密码，不能代输；用户需普通终端运行python scripts/profile_clock_screen.py --selected-fast-clocks（venv路径见docs/M2_CLOCK_CONTROL.md）。待用户完成后先审查动作/频率/功率覆盖/恢复再汇报第1项，不跳做第2项或称成本已测完。FlashRT/生产默认未改；备份archive/pre-selected-fast-clocks-20261023。
 
 - 最新用户已同意采用Fast候选：外部factor2池化64+腕部完整256、Fast不带state，Full双图512带state；暂不扩factor4。仅选定M2候选，正式基线不改，不将三task0一次成功当总体质量证明。目前4.5补表：新候选三频率/完整服务/起始历史成本缺失，旧双图128token三频率数值不能移用。Full/Continue和调频恢复已有证据保留，空闲扩展仍暂缓。已更新M2计划书最新状态，避免沿用旧“Fast未选定”。
