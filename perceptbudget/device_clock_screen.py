@@ -130,7 +130,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, f
                   hold_seconds=3, lease_seconds=LEASE_SECONDS,
                   profile_order=list(MATRIX_PROFILES if fast_clocks or visual_clocks else SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
     if visual_clocks:
-        result['scope'] = 'Prepared single-wrist-view context and complete RTC compute; not live service, quality certification or task energy'
+        result['scope'] = ('Prepared '+('dual-view factor2 token-pooling' if metadata.get('vision_pool_factor') == 2 else 'single-wrist-view')+
+                           ' context and complete RTC compute; not live service, quality certification or task energy')
     if fast_clocks:
         result['scope'] = 'Isolated old-KV expert-only RTC compute; fresh Full before each sample excluded; not fresh perception, service L, success rate or task energy'
     _write_json_atomically(directory/'clock_screen.json', result)

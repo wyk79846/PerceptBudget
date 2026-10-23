@@ -124,6 +124,20 @@ def test_visual_clock_plan_is_one_resident_wrist_geometry(capsys):
     launch.assert_not_called()
 
 
+def test_pooled_clock_plan_keeps_both_images_but_reduces_encoder_tokens(capsys):
+    from scripts.profile_clock_screen import main
+    from perceptbudget.mixed_view_pool import visual_tokens
+    with patch('sys.argv', ['probe', '--pooled-clocks', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main() == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['model_loads'] == 1 and plan['samples'] == 15
+    assert plan['num_views'] == 2 and plan['pool_factor'] == 2
+    assert plan['visual_tokens'] == visual_tokens({'m2_vision_pool_factor': 2}) == 128
+    assert plan['context_recomputed'] and not plan['service_measurement']
+    launch.assert_not_called()
+
+
 def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
     import numpy as np
     from perceptbudget.device_clock_screen import screen, SCREEN_PROFILES

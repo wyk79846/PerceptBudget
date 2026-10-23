@@ -68,6 +68,7 @@ def main():
     modes.add_argument('--full-service', action='store_true', help='Five high-frequency Full services including live sensor acquisition and queue preparation')
     modes.add_argument('--fast-clocks', action='store_true', help='Old-KV expert-only fixed-input RTC, three clock points, five samples each')
     modes.add_argument('--visual-clocks', action='store_true', help='Single wrist camera context plus RTC at three clock points')
+    modes.add_argument('--pooled-clocks', action='store_true', help='Dual-view factor2 token pooling context plus RTC at three clock points')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -83,6 +84,11 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.pooled_clocks:
+            print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, samples=15,
+                num_views=2, pool_factor=2, pooled_view='both', visual_tokens=128, H=50, N=5,
+                service_measurement=False, context_recomputed=True)))
+            return 0
         if args.visual_clocks:
             print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, samples=15,
                 num_views=1, view='wrist', visual_tokens=256, H=50, N=5,
@@ -136,18 +142,19 @@ def main():
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
                          clock_matrix=args.matrix, continue_control=args.continue_control,
                          full_service=args.full_service, service_profiles=service_profiles,
-                         fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks)
+                         fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
+                         pooled_clocks=args.pooled_clocks)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    purpose = 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix or args.continue_control or args.fast_clocks or args.visual_clocks:
+            if args.matrix or args.continue_control or args.fast_clocks or args.visual_clocks or args.pooled_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -169,6 +176,8 @@ def main():
                 command.append('--fast-clocks')
             if args.visual_clocks:
                 command.append('--visual-clocks')
+            if args.pooled_clocks:
+                command.append('--pooled-clocks')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
@@ -194,7 +203,7 @@ def main():
                 return 0
             filename = 'clock_matrix.json' if args.matrix else 'clock_recovery.json' if args.recovery else 'clock_transitions.json' if args.transitions else 'clock_screen.json'
             record = json.loads((run/filename).read_text())
-            if record['status'] != 'completed' or len(record['conditions']) != (3 if args.fast_clocks or args.visual_clocks else 9 if args.matrix else 6 if args.recovery else 4):
+            if record['status'] != 'completed' or len(record['conditions']) != (3 if args.fast_clocks or args.visual_clocks or args.pooled_clocks else 9 if args.matrix else 6 if args.recovery else 4):
                 raise RuntimeError('Incomplete clock screen')
             if args.transitions or args.recovery or args.matrix:
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
