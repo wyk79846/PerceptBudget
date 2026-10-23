@@ -16,24 +16,28 @@ REPEATS = 5
 
 
 class ContinueLease(Lease):
-    def __init__(self, profile, directory, label):
+    def __init__(self, profile, directory, label, *, duration=2):
         if profile not in MATRIX_PROFILES:
             raise ValueError('Continue profile outside whitelist')
         super().__init__(profile, directory)
         self.path = directory/(label+'_clocks.jsonl')
-        self.duration = 2
+        if duration not in (2,4):
+            raise ValueError('Continue lease duration outside whitelist')
+        self.duration = duration
 
     def command(self):
         return super().command()+['--trace-interval', '.02']
 
 
 def control_window(env, observation, actions, lease, scene, frame, trace, *, np,
-                   period=.05, capture_frames=True):
+                   period=.05, capture_frames=True,steps=STEPS,source_offset=0):
     """Five sequential committed indices, stop on terminal, no inference API."""
     actions = np.asarray(actions, dtype=np.float32)
-    if actions.ndim != 2 or actions.shape[0] < STEPS or actions.shape[1] != 7 or not np.isfinite(actions[:STEPS]).all():
+    if type(steps) is not int or steps<1 or type(source_offset) is not int or source_offset<0 or source_offset+steps>50:
+        raise ValueError('Continue indices outside original H50')
+    if actions.ndim != 2 or actions.shape[0] < steps or actions.shape[1] != 7 or not np.isfinite(actions[:steps]).all():
         raise ValueError('Need at least five finite seven-dimensional actions')
-    committed = actions[:STEPS].copy()
+    committed = actions[:steps].copy()
     rows, frames = [], []
     start = deadline = time.monotonic()
     for index, action in enumerate(committed):
@@ -48,11 +52,11 @@ def control_window(env, observation, actions, lease, scene, frame, trace, *, np,
         after = scene(env, observation)
         success = bool(env.check_success())
         deadline += period
-        row = dict(step=index, source_action_index=index, source_prediction_id='fresh_bootstrap',
+        row = dict(step=source_offset+index, source_action_index=source_offset+index, source_prediction_id='fresh_bootstrap',
                    tick_monotonic=tick, action_start_monotonic=action_start, action_end_monotonic=action_end,
                    before=before, after=after, action=action.tolist(), reward=float(reward),
                    success=success, env_done=bool(done), inference_active=False,
-                   queue_after_step_actions=STEPS-index-1,
+                   queue_after_step_actions=steps-index-1,
                    deadline_overrun_seconds=max(0., time.monotonic()-deadline))
         rows.append(row)
         trace(row)
@@ -73,7 +77,7 @@ def control_window(env, observation, actions, lease, scene, frame, trace, *, np,
                 rows=rows), frames
 
 
-def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, camera_compare=False):
+def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, camera_compare=False,history_windows=False):
     import gc
     import ctypes
     import numpy as np
@@ -103,10 +107,16 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
         result.update(planned_windows=30, max_control_steps=150, comparison_period_seconds=.07,
             scope='Resident-model paired camera-on/off Continue, five committed actions at shared 70ms period; '
                   'fresh dual images after both; not production cadence, safe-buffer validation, task success or steady idle power')
+    if history_windows:
+        if camera_compare:
+            raise ValueError('History windows cannot compare camera modes')
+        result.update(planned_windows=45,max_control_steps=495,comparison_period_seconds=.07,
+            scope='No-inference Continue history at fixed target clocks: execute0/3/15 original actions, then measure next5 at70ms ticks; no repeated prefix, no hardware sleep or safe-buffer claim')
     path = directory/'continue_control.json'
     env = None
     reference = None
     refreshed_reference = None
+    history_frame_references={}
     def frame(obs):
         return np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1)
     try:
@@ -116,8 +126,14 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
         for profile in MATRIX_PROFILES:
             plan = [(r, off) for r in range(REPEATS)
                     for off in ((False, True) if r%2==0 else (True, False))] if camera_compare else [(r, False) for r in range(REPEATS)]
-            for repeat, cameras_disabled in plan:
+            if history_windows:
+                plan=[(r,True,h) for h in (0.,.2,1.) for r in range(REPEATS)]
+            else:
+                plan=[(r,off,0.) for r,off in plan]
+            for repeat, cameras_disabled,history in plan:
                 label = profile+'_'+str(repeat)+('_off' if cameras_disabled else '_on') if camera_compare else profile+'_'+str(repeat)
+                if history_windows:
+                    label+='_'+str(history)
                 print('CONTINUE_START='+label, flush=True)
                 base._seed_process(7, np, torch)
                 observation, hz = base._prepare_env_episode(env, task, np)
@@ -147,7 +163,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                     action_error = float(np.max(np.abs(prefix-reference[2])))
                     if action_error != 0:
                         raise RuntimeError('Fresh committed prefixes differ; not a controlled clock comparison')
-                    with ContinueLease(profile, directory, label) as lease:
+                    with ContinueLease(profile, directory, label,duration=4 if history_windows else 2) as lease:
                         result['clock_settings_changed'] = True
                         if config.get('reuse_control_forward'):
                             from perceptbudget.env_forward import reuse_control_forward
@@ -157,11 +173,22 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                         from perceptbudget.continue_camera import suspend_cameras
                         with (directory/(label+'_trace.jsonl')).open('w') as stream, context, \
                                 (suspend_cameras(env) if cameras_disabled else nullcontext()):
-                            window, frames = control_window(env, observation, actions, lease,
+                            consumed=0; history_record=None
+                            if history_windows and history:
+                                import math
+                                consumed=math.ceil(history/.07)
+                                history_record,_=control_window(env,observation,actions,lease,
+                                    probe.snapshot_scene,frame,lambda row:base._trace(stream,'history_control_step',**row),
+                                    np=np,period=.07,capture_frames=False,steps=consumed)
+                                if history_record['executed_steps']!=consumed or history_record['rows'][-1]['success'] or history_record['rows'][-1]['env_done']:
+                                    raise RuntimeError('History ended before valid measurement window')
+                                observation=env.env._get_observations(force_update=True)
+                            window, frames = control_window(env, observation, actions[consumed:], lease,
                                 probe.snapshot_scene, frame,
                                 lambda row: base._trace(stream, 'control_step', **row), np=np,
-                                period=.07 if camera_compare else .05, capture_frames=not camera_compare)
-                        if camera_compare:
+                                period=.07 if camera_compare or history_windows else .05,
+                                capture_frames=not (camera_compare or history_windows),source_offset=consumed)
+                        if camera_compare or history_windows:
                             if window['deadline_overruns']:
                                 raise RuntimeError('Shared 70ms cadence missed; camera energy comparison invalid')
                             from perceptbudget.device_service import fresh_observation
@@ -169,8 +196,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                             refreshed = frame(fresh)
                             if refreshed_reference is None:
                                 refreshed_reference = refreshed.copy()
-                            if not np.array_equal(refreshed, refreshed_reference):
+                            if camera_compare and not np.array_equal(refreshed, refreshed_reference):
                                 raise RuntimeError('Restored fresh camera images differ across paired windows')
+                            if history_windows:
+                                reference_frame=history_frame_references.setdefault(history,refreshed.copy())
+                                if not np.array_equal(refreshed,reference_frame):
+                                    raise RuntimeError('Restored history camera images differ across paired clocks')
                             window['refreshed_frame_sha256'] = hashlib.sha256(refreshed.tobytes()).hexdigest()
                             window['fresh_acquisition'] = acquisition
                             refreshed_stop = time.monotonic()
@@ -178,7 +209,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                         power = energy_window(monitor, window['start_monotonic'], window['stop_monotonic'])
                         if power['energy_j'] is None:
                             raise RuntimeError('Continue power coverage incomplete')
-                        if camera_compare:
+                        if camera_compare or history_windows:
                             window['including_fresh_images'] = energy_window(monitor, window['start_monotonic'], refreshed_stop)
                             if window['including_fresh_images']['energy_j'] is None:
                                 raise RuntimeError('Fresh camera energy coverage incomplete')
@@ -196,27 +227,29 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 np.savez_compressed(directory/(label+'_frames.npz'), frames=np.asarray(frames))
                 window.update(profile=profile, repeat=repeat, restored=True,
                     cameras_disabled=cameras_disabled,
+                    requested_history_seconds=history,history_execution=history_record,
+                    consumed_before_window=consumed,
                     frequency_check=check, transient_continue=power,
                     initial_sim_sha256=initial_hash, initial_frame_sha256=initial_frame_hash,
                     committed_prefix_max_abs_error=action_error,
                     prediction=request, nominal_committed_seconds=.25,
-                    source_observation_step=0, committed_indices=list(range(STEPS)),
+                    source_observation_step=0, committed_indices=list(range(consumed,consumed+STEPS)),
                     source_observation_monotonic=observation_time,
                     prediction_ready_monotonic=request['inference_ended_monotonic'],
-                    committed_interval_steps=[0, STEPS],
+                    committed_interval_steps=[consumed, consumed+STEPS],
                     nominal_expected_execution_interval_monotonic=[window['start_monotonic'],
                                                                   window['start_monotonic']+.25],
                     full_end_to_control_start_seconds=window['start_monotonic']-request['inference_ended_monotonic'],
                     final_sim_sha256=hashlib.sha256(np.asarray(window['rows'][-1]['after']['sim_state'], dtype=np.float64).tobytes()).hexdigest())
-                if camera_compare:
+                if camera_compare or history_windows:
                     window['nominal_expected_execution_interval_monotonic'][1] = window['start_monotonic']+STEPS*.07
                 result['windows'].append(window)
                 _write_json_atomically(path, result)
                 print('CONTINUE_DONE='+label+' hz='+str(window['actual_hz']), flush=True)
         result['summary'] = []
         for profile in MATRIX_PROFILES:
-          for disabled in ((False, True) if camera_compare else (False,)):
-            rows = [w for w in result['windows'] if w['profile']==profile and w['cameras_disabled']==disabled]
+          for disabled,history in ([(True,h) for h in (0.,.2,1.)] if history_windows else [(off,0.) for off in ((False, True) if camera_compare else (False,))]):
+            rows = [w for w in result['windows'] if w['profile']==profile and w['cameras_disabled']==disabled and w['requested_history_seconds']==history]
             summary = dict(profile=profile, cameras_disabled=disabled, windows=len(rows),
                 executed_steps=sum(w['executed_steps'] for w in rows),
                 mean_actual_hz=statistics.mean(w['actual_hz'] for w in rows),
@@ -226,10 +259,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 deadline_overruns=sum(w['deadline_overruns'] for w in rows),
                 paired_final_state_equal=len({w['final_sim_sha256'] for w in rows})==1,
                 restored=all(w['restored'] for w in rows))
-            if camera_compare:
+            summary['requested_history_seconds']=history
+            if camera_compare or history_windows:
                 summary['mean_energy_including_fresh_images_j'] = statistics.mean(w['including_fresh_images']['energy_j'] for w in rows)
             result['summary'].append(summary)
-        result.update(status='completed', all_final_states_equal=len({w['final_sim_sha256'] for w in result['windows']})==1)
+        paired=all(len({w['final_sim_sha256'] for w in result['windows'] if w['requested_history_seconds']==h})==1 for h in (0.,.2,1.)) if history_windows else len({w['final_sim_sha256'] for w in result['windows']})==1
+        result.update(status='completed', all_final_states_equal=paired)
         if not result['all_final_states_equal']:
             raise RuntimeError('Paired actions produced different final physics; do not qualify clock comparison')
     except BaseException as exc:

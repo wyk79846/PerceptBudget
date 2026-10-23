@@ -34,6 +34,35 @@ def test_terminal_stops_without_padding_or_restarting_chunk():
     assert result['executed_steps'] == 1
 
 
+def test_history_then_window_consumes_unique_indices_without_restarting():
+    actions=np.arange(50*7,dtype=np.float32).reshape(50,7)
+    used=[];trace=[]
+    env=SimpleNamespace(step=lambda a:(used.append(a.copy()) or {},0.,False,{}),check_success=lambda:False)
+    lease=SimpleNamespace(ensure=lambda *a:None)
+    with patch('perceptbudget.device_continue.time.sleep'):
+        history,_=control_window(env,{},actions,lease,lambda *a:{},lambda o:None,trace.append,
+            np=np,capture_frames=False,steps=15)
+        measured,_=control_window(env,{},actions[15:],lease,lambda *a:{},lambda o:None,trace.append,
+            np=np,capture_frames=False,source_offset=15)
+    np.testing.assert_array_equal(used,actions[:20])
+    assert [r['source_action_index'] for r in trace]==list(range(20))
+    assert measured['rows'][0]['source_action_index']==15 and history['executed_steps']==15
+    with pytest.raises(ValueError,match='H50'):
+        control_window(env,{},actions,lease,None,None,None,np=np,source_offset=48)
+
+
+def test_continue_history_plan_has_no_new_inference_and_bounded_indices(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--continue-history','--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['windows']==45 and result['model_loads']==1
+    assert result['history_actions']==[0,3,15] and result['measured_actions']==5
+    assert result['max_control_steps']==495 and not result['hardware_sleep_claim']
+    launch.assert_not_called()
+
+
 def test_short_or_nonfinite_prefix_rejected_before_environment_step():
     env = SimpleNamespace(step=lambda a: pytest.fail('Should not execute'))
     for actions in (np.zeros((4, 7)), np.full((5, 7), np.nan)):

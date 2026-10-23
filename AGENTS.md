@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户续推后准备Continue历史窗：新增原入口--continue-history，45窗=3频率×0/.2/1秒无神经推理历史×5，沿用70ms配对周期，历史实际执行0/3/15旧动作后再执行5步，最多20/H50不重复前缀，最大495环境步；同目标频率下真实控制而非静止睡眠/升频恢复，不作硬件idle或安全B_safe证明。相机暂停但控制继续，结束后强制新图；同历史跨频率物理终态/恢复图像配对。4秒lease沿用既有白名单，默认生产不改。无调频预检436ca88a9窗 completed（1重复，共99步）：源索引连续/终态与恢复图像配对/无内存中断；频率与root为显式mock/preflight_only，不能当成本证据。470pass9skip110subtests，3既有环境警告。真实sudo调频尚未执行，命令docs/M2_CLOCK_CONTROL.md末节；备份archive/pre-continue-history-20261023。先审核本项后再更新27格，不能提前称M2完成；FlashRT未改。
+
 - 2026-10-23新Fast完整服务89d41dc4用户执行完成并审核：15请求/1model/1expert/exit0，Full准备stateTrue/prefix665；FastFalse/340=320+20、0fallback，同轮跨频率图像/rawstate/噪声/动作一致、raw差0、freqmatch、coverage1/missing0、全restore，准备RAM1832MiB。高335.14ms7.4889J/中361.73ms7.5435J/低483.84ms7.3889J，低只省1.3%但慢44%，非显著性或整任务结论。与旧Full服务初始物理/旧动作/计时阶段framehash不同，不能当严格配对算35%收益。报告任务指导与相关参考/PerceptBudget_M2_新Fast完整服务结果_20261023.md。本项完成，接下来Continue历史窗必须在无推理期间持续执行且接续实际未执行索引，不能等完重放旧chunk开头，保持H50/观测年龄保护。
 
 - 2026-10-23用户继续推进：新增原入口--selected-fast-clocks --live-service，默认三频率各5次15请求/1model/1expert，服务前Full双图带state生成旧动作并实际走5步，随后物理冻结每请求强制新观测，Fast320token无state处理、原RTC/d5s5、原commit提交包；非异步闭环成功率。device_service.full_preparation_peer共享冻结专家权重且独立临时KV/Full上下文，不加载第二模型；Full原入口不变。无调频GPU预检695d3ec4 completed：5次真实传感/提交路径，Full stateTrue、FastFalse/320、两次图parity0、物理/配对通过；软件就绪及频率检查为显式mock，preflight_only/no_clock_writes，不能当真实服务恢复/频率证据。468pass9skip110subtests，3既有环境警告。真实三频率仍未执行，需用户普通终端sudo执行docs/M2_CLOCK_CONTROL.md最新命令。产物应为selected_fast_service.json而非旧Full或prepared成本。备份archive/pre-selected-fast-service-20261023；FlashRT/根基线未改、预检进程已结束。

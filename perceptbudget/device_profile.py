@@ -115,7 +115,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
                      continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
                      visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False,
-                     shared_view_kind='wrist',selected_fast_clocks=False):
+                     shared_view_kind='wrist',selected_fast_clocks=False,continue_history=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -268,6 +268,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
             kwargs['visual_clocks'] = True
         if camera_compare:
             kwargs['camera_compare'] = True
+        if continue_history:
+            kwargs['history_windows']=True
         return screen(adapter, initial if visual_clocks else snapshot, task['instruction'], previous, torch,
                       directory, result, **kwargs)
     for view in views:

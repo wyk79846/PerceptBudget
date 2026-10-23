@@ -66,6 +66,7 @@ def main():
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
     modes.add_argument('--continue-control', action='store_true', help='Fifteen bounded live LIBERO Continue windows, five fresh actions each')
     modes.add_argument('--continue-camera-compare', action='store_true', help='Resident paired camera-on/off Continue at three clock points')
+    modes.add_argument('--continue-history',action='store_true',help='Continue windows after0/0.2/1s of actual no-inference action execution, three clock points')
     modes.add_argument('--full-service', action='store_true', help='Five high-frequency Full services including live sensor acquisition and queue preparation')
     modes.add_argument('--fast-clocks', action='store_true', help='Old-KV expert-only fixed-input RTC, three clock points, five samples each')
     modes.add_argument('--visual-clocks', action='store_true', help='Single wrist camera context plus RTC at three clock points')
@@ -92,6 +93,12 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.continue_history:
+            print(json.dumps(dict(model_loads=1,profiles=MATRIX_PROFILES,windows=45,
+                histories_seconds=[0,.2,1.],history_actions=[0,3,15],measured_actions=5,
+                max_control_steps=495,step_period_seconds=.07,cameras_disabled=True,
+                inference_during_continue=False,hardware_sleep_claim=False)))
+            return 0
         if args.live_service:
             print(json.dumps(dict(model_loads=1,services=5*len(service_profiles),profiles=service_profiles,
                 visual_tokens=320,pooled_view='agent',state=False,full_preparation_state=True,
@@ -168,11 +175,11 @@ def main():
         from perceptbudget.device_profile import fixed_view_probe
         fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
-                         clock_matrix=args.matrix or args.idle_recovery, continue_control=args.continue_control or args.continue_camera_compare,
+                         clock_matrix=args.matrix or args.idle_recovery, continue_control=args.continue_control or args.continue_camera_compare or args.continue_history,
                          full_service=args.full_service or args.live_service, service_profiles=service_profiles,
                          fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
                          pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
-                         selected_fast_clocks=args.selected_fast_clocks)
+                         selected_fast_clocks=args.selected_fast_clocks,continue_history=args.continue_history)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
@@ -180,7 +187,9 @@ def main():
         config=dict(config,m2_selected_fast_clocks=True,m2_fast_no_state=True,
                     m2_selected_fast_geometry='external64_wrist256',m2_selected_fast_recovery=args.idle_recovery,
                     m2_selected_fast_live_service=args.live_service)
-    purpose = 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    if args.continue_history:
+        config=dict(config,m2_continue_history=True)
+    purpose = 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
@@ -189,7 +198,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.live_service:
                 clock_preflight(run,service_profiles,summary)
-            elif args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
+            elif args.matrix or args.continue_control or args.continue_camera_compare or args.continue_history or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -206,6 +215,8 @@ def main():
                 command.append('--continue-control')
             if args.continue_camera_compare:
                 command.append('--continue-camera-compare')
+            if args.continue_history:
+                command.append('--continue-history')
             if args.full_service:
                 command.append('--full-service')
                 command.extend(['--service-profiles', *service_profiles])
@@ -237,9 +248,9 @@ def main():
                                services=len(record['requests']), conditions=record['conditions'],
                                **{key: record[key] for key in fields if key in record})
                 return 0
-            if args.continue_control or args.continue_camera_compare:
+            if args.continue_control or args.continue_camera_compare or args.continue_history:
                 record = json.loads((run/'continue_control.json').read_text())
-                if record['status'] != 'completed' or len(record['windows']) != (30 if args.continue_camera_compare else 15):
+                if record['status'] != 'completed' or len(record['windows']) != (45 if args.continue_history else 30 if args.continue_camera_compare else 15):
                     raise RuntimeError('Incomplete Continue control screen')
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                conditions=record['summary'], all_final_states_equal=record['all_final_states_equal'])
