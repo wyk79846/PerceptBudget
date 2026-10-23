@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户纠正短/长idle应实测分类后授权扫描。新增原入口--idle-state-scan与device_idle_scan.py：Full带state固定高频baseline全程，同输入/噪声/旧动作/RTC建立起点，0/.05/.1/.2/.5/1/2秒每点3块打乱，共21恢复+21准备/1model，120s有限lease后恢复、20ms频率与功率、实际idle/恢复范围/runtime status、原始trace；不预划三状态。固定物理关闭图像，本体观测+sim.forward约50ms主线程持续，推理独立常驻线程；是设备诊断，不冒充Continue真实执行/安全buffer。无sudoGPU预检809fcbba七点/一块completed，14infer配对动作0差、实际idle均>=名义、静态物理检查通过，明确preflight_only/no_clock_writes，freq/root mock不作实测结论。474pass9skip110subtests，3既有环境警告。沙盒外sudo -n仍需密码，正式扫描未执行；用户需普通终端运行python scripts/profile_clock_screen.py --idle-state-scan（venv完整路径见docs/M2_CLOCK_CONTROL.md末节）。备份archive/pre-idle-state-scan-20261023，FlashRT/生产默认未改；后续若无稳定分界报告连续变化，不能硬凑三个设备状态或沿用0.2/1为已验证阈值。
+
 - 2026-10-23已按用户要求整理集中M2阶段报告：任务指导与相关参考/PerceptBudget_M2阶段交付报告_审阅稿_20261023.md。重新读Word第2/7.2–7.3/8.1节，明确初步交付非全部验收；包含真实控制节点/恢复指令、Fast选型/3task0限制、三频率完整服务与恢复表、Continue9条件、27格CSV/JSON链接、原图像异常、主要源码版本。已检查所有Markdown链接及27原始source存在、服务表数字与raw一致；本轮无新GPU/调频/代码变更，不重复跑测试。缺口：12格恢复仅prepared非live完整L、长测未做、首GPU时间、转换J/回本、硬件状态/railgate、监视开销、独立Fast质量。建议审阅接收初测产物并据此设计M3，不擅称M2完成；M3最小闭环先高频刷新/低频Continue、Full对照，完整动作前瞻与联合决策仍属M4。M2计划书已链接最新集中报告，历史报告/原始invalid均保留。
 
 - 2026-10-23Continue续测affa4c98 completed/exit0：源c704c323保留34+新11=45窗口、累计2model加载；同历史跨频率物理终态/恢复framehash全同，动作0差、索引连续、无新推理、70ms周期0overrun、freqmatch、功率coverage1/missing0、全restore。无前置/3步/15步历史窗口J高4.139/3.764/3.204，中4.124/3.647/3.031，低3.863/3.287/2.449；实际hist0/.21/1.05s，约14.28Hz，不同动作阶段/负载尾迹限制，不称睡眠或20Hz认证。原图像异常未复现、不称根因已修。已更新27格阶段证据（6热新观测服务+12固定输入恢复诊断+9Continue历史窗），不同口径不冒充27完整服务。报告任务指导与相关参考/PerceptBudget_M2_Continue历史窗结果_20261023.md。原始invalid未覆盖，本轮仅数据审核整理；首GPU时刻、可靠转换能量/回本时间等仍缺，准备M2阶段审阅不无限扩测。

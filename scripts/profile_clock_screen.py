@@ -61,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--idle-state-scan',action='store_true',help='Fixed high clocks, seven idle durations, three randomized blocks; no preassigned states')
     modes.add_argument('--transitions', action='store_true', help='Resident static combination holds and transition cost')
     modes.add_argument('--recovery', action='store_true', help='Short/long idle recovery followed by prepared-input Full RTC')
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
@@ -100,6 +101,13 @@ def main():
         config=dict(config,m2_continue_resume_run=str(args.resume_continue.resolve()))
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.idle_state_scan:
+            from perceptbudget.device_idle_scan import scan_plan,DELAYS
+            print(json.dumps(dict(model_loads=1,profile='baseline',idle_points_seconds=DELAYS,
+                plan=scan_plan(),recovery_requests=21,preparation_requests=21,
+                static_physics=True,ongoing_proprioception=True,frequency_switch_during_scan=False,
+                state_classification=None,service_measurement=False)))
+            return 0
         if args.continue_history:
             print(json.dumps(dict(model_loads=1,profiles=MATRIX_PROFILES,windows=45,
                 histories_seconds=[0,.2,1.],history_actions=[0,3,15],measured_actions=5,
@@ -186,7 +194,8 @@ def main():
                          full_service=args.full_service or args.live_service, service_profiles=service_profiles,
                          fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
                          pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
-                         selected_fast_clocks=args.selected_fast_clocks,continue_history=args.continue_history)
+                         selected_fast_clocks=args.selected_fast_clocks,continue_history=args.continue_history,
+                         idle_state_scan=args.idle_state_scan)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
@@ -196,14 +205,16 @@ def main():
                     m2_selected_fast_live_service=args.live_service)
     if args.continue_history:
         config=dict(config,m2_continue_history=True)
-    purpose = 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.live_service:
+            if args.idle_state_scan:
+                clock_preflight(run,('baseline',),summary)
+            elif args.live_service:
                 clock_preflight(run,service_profiles,summary)
             elif args.matrix or args.continue_control or args.continue_camera_compare or args.continue_history or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
@@ -224,6 +235,8 @@ def main():
                 command.append('--continue-camera-compare')
             if args.continue_history:
                 command.append('--continue-history')
+            if args.idle_state_scan:
+                command.append('--idle-state-scan')
             if args.resume_continue:
                 command.extend(['--resume-continue',str(args.resume_continue.resolve())])
             if args.full_service:
@@ -246,6 +259,13 @@ def main():
             summary['worker_exit_code'] = code
             if code:
                 raise RuntimeError('Worker failed; inspect worker.log and any clock logs for restoration')
+            if args.idle_state_scan:
+                record=json.loads((run/'idle_scan.json').read_text())
+                if record['status']!='completed' or len(record['rows'])!=21:
+                    raise RuntimeError('Incomplete idle state scan')
+                summary.update(status='completed',scope=record['scope'],model_loads=record['model_loads'],
+                    conditions=record['summary'],restored=record['restored'],state_classification=None)
+                return 0
             if args.full_service or args.live_service:
                 record = json.loads((run/('selected_fast_service.json' if args.live_service else 'full_service.json')).read_text())
                 if record['status'] != 'completed' or len(record['requests']) != 5*len(service_profiles):
