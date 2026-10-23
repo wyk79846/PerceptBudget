@@ -20,6 +20,16 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 
+def configure_runtime_environment():
+    """CuBLAS reads this at first handle creation, including the tiny root probe."""
+    prior=sys.modules.get('torch')
+    if (prior is not None and prior.cuda.is_initialized()
+            and os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8'):
+        raise RuntimeError('CUDA initialized before deterministic CuBLAS configuration; restart process')
+    os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',
+                      PYOPENGL_PLATFORM='egl',MUJOCO_EGL_DEVICE_ID='0')
+
+
 def authorize_clock_control():
     """Refresh sudo's credential in the dropped-user session before any model load."""
     if os.geteuid()==0:
@@ -57,11 +67,14 @@ def drop_to_invoker():
 
 
 def initialize_and_drop():
+    configure_runtime_environment()
     import torch
     from concurrent.futures import ThreadPoolExecutor
     from scripts.probe_gpu_start_timing import first_kernel_offset
     if os.geteuid()!=0 or not int(os.environ.get('SUDO_UID','0')):
         raise RuntimeError('Run using sudo from the normal project account')
+    # Fail in the tiny gate rather than only after reaching the VLA loader.
+    torch.use_deterministic_algorithms(True)
     a=torch.ones((128,128),device='cuda');stream=torch.cuda.Stream()
     with torch.cuda.stream(stream):
         for _ in range(3):b=a@a

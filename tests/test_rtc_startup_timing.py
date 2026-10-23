@@ -65,3 +65,21 @@ def test_permission_only_does_not_request_clock_credentials(monkeypatch,capsys):
     monkeypatch.setattr(module,'initialize_and_drop',lambda:(None,{'model_uid':1001}))
     monkeypatch.setattr(module,'authorize_clock_control',lambda:pytest.fail('Permission-only must not access clocks'))
     assert module.main()==0
+
+
+def test_deterministic_workspace_is_set_before_first_cuda_initialization(monkeypatch):
+    import sys
+    from scripts import profile_rtc_startup as module
+    monkeypatch.delenv('CUBLAS_WORKSPACE_CONFIG',raising=False)
+    for name in ('MUJOCO_GL','PYOPENGL_PLATFORM','MUJOCO_EGL_DEVICE_ID'):
+        monkeypatch.setenv(name,'before')
+    monkeypatch.setitem(sys.modules,'torch',SimpleNamespace(cuda=SimpleNamespace(is_initialized=lambda:False)))
+    module.configure_runtime_environment()
+    assert module.os.environ['CUBLAS_WORKSPACE_CONFIG']==':4096:8'
+    assert module.os.environ['MUJOCO_GL']=='egl'
+    monkeypatch.setitem(sys.modules,'torch',SimpleNamespace(cuda=SimpleNamespace(is_initialized=lambda:True)))
+    module.configure_runtime_environment()  # Already configured at context creation.
+    monkeypatch.delenv('CUBLAS_WORKSPACE_CONFIG')
+    with pytest.raises(RuntimeError,match='restart process'):
+        module.configure_runtime_environment()
+    assert 'CUBLAS_WORKSPACE_CONFIG' not in module.os.environ

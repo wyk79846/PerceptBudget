@@ -393,3 +393,7 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/profile_rtc_startup.py
 
 已在降权后的普通用户会话、任何模型加载之前新增交互`sudo -v`，再用`sudo -n true`核验调频工具将使用的凭据。需在可输入密码的普通终端执行原命令，首次sudo后可能再次提示密码；不传递/保存密码、不改sudo配置、不恢复root模型权限。只有频率预检成功才置`model_load_started=True`并进入模型加载，错误输出明确区分加载是否开始。`--permission-only`不请求调频凭据。
 
+后续实机a2cd8650通过降权GPU采集和频率预检（RESTORED），在模型路径遇CuBLAS确定性错误。根因：初版先用tiny root探针创建CuBLAS句柄，后续fixed_view_probe才设置CUBLAS_WORKSPACE_CONFIG，设置已太晚。现在initialize_and_drop第一步、import torch/任何CUDA初始化前设置`:4096:8`及EGL环境；若已提前初始化CUDA但配置不符则拒绝并要求新进程。tiny探针预热之前已开启确定性算法，保持后续模型同一约束，绝不通过关闭确定性规避。
+
+普通用户实际GPU复核：同顺序开启确定性、3次matmul预热、CUDA图捕获/重放、后续再次确定性matmul均通过；无模型加载、调频或精度改动。完整sudo模型计时仍需重跑原命令；旧失败记录保留。
+
