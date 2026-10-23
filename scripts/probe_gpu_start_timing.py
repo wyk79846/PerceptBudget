@@ -24,7 +24,8 @@ def trace_diagnostics(trace,marker):
 
 def first_kernel_offset(trace,marker):
     events=trace.get('traceEvents',[])
-    ranges=[e for e in events if e.get('name')==marker and e.get('ph')=='X']
+    ranges=[e for e in events if e.get('name')==marker and e.get('ph')=='X'
+            and e.get('cat')=='user_annotation']
     if len(ranges)!=1:
         raise RuntimeError(f'Expected one complete CPU marker, found {len(ranges)}; inspect saved trace and diagnostic counts')
     r=ranges[0]

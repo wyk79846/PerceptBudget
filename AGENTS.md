@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户第二次root探针trace9v3l03bu显示CPU user_annotation与GPU gpu_user_annotation同名，旧parser按name/ph匹配导致found2；根因已定位为category遗漏，不是采集失败。已严格选CPU user_annotation，kernel仍要求真实catkernel。直接读取原roottrace验证：1个目标实际kernel ampere_sgemm_32x32_sliced1x4_nn，CPUmarker后87.871us启动/dur9.472us；仅tinyprobe不是VLA延迟。3解析测试通过，新增同名CPU/GPU回归场景；无需用户重跑、不改原root证据，派生M2gpu-start-probe-trace-audit保存解析结果。rootCUPTI确实可采kernel，但普通用户权限仍未解决；未授权root模型/setcap或驱动权限修改，VLA实际首kernel测量仍未完成。备份archive/pre-gpu-marker-category-fix-20261023。
+
 - 2026-10-23用户sudo tinyGPU首算子探针effectiveuid0返回Missing unique CPU marker。原实现失败自动删除trace是诊断缺陷，旧root trace已不可恢复，不能推断marker0或重复、kernel是否有。新增profiler内部预热、失败也保留可读随机/tmp trace+summary、category/phase/marker/kernel计数；不放宽真实kernel要求。3解析测试通过。普通用户复核2279367：CPUmarker1/kernel0/CUPTI权限35，trace=/tmp/perceptbudget-gpu-start-4a3ll_n0/trace.json，正确拒绝时间结论。需要用户再次sudo运行原probe_gpu_start_timing.py，root问题尚未验证修复；无模型/root模型/频率/持久权限改动。备份archive/pre-gpu-probe-trace-diagnostics-20261023，docs已更新不再称trace自动删除。
 
 - 2026-10-23用户要求补启动开销（请求→真实首GPU算子）。初查本机无nsys，Torch Kineto可见CUDA但普通用户CUPTI返回INSUFFICIENT_PRIVILEGES35，tiny CUDA图trace只有CPU user_annotation无kernel；/proc/driver/nvidia/params RmProfilingAdminOnly1，sudo -n仍需密码。绝不拿CPU调用/频率读回/CUDA哨兵代首kernel。新增scripts/probe_gpu_start_timing.py极小128矩阵/图采集权限探针，允许用户sudo仅运行tiny探针，不加载VLA/调频/持久权限修改，临时trace解析后删，无kernel则失败。2个解析测试通过。用户需终端sudo venvpython scripts/probe_gpu_start_timing.py，命令及边界docs/M2_CLOCK_CONTROL.md末节；等待输出后再选非root模型计时方案，不setcap全局Python/不改驱动或sudo。实际模型首GPU计时尚未完成，未运行root模型或声称已得到启动开销。备份archive/pre-gpu-start-timing-20261023，FlashRT/生产默认未改。

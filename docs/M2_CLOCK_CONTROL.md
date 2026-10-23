@@ -366,3 +366,5 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/probe_gpu_start_timing.py
 
 2026-10-23用户首次sudo探针报缺少唯一CPU标记，原版失败后删除临时trace，无法确定是marker缺失还是重复，更不能判断GPU事件是否存在。已增加Profiler采集内预热和原始trace/事件诊断保留，解析仍严格要求完整marker与kernel，不放宽。普通用户复核：marker可见、kernel0、CUPTI权限35明确，证明诊断路径有效；管理员重测结果仍待用户执行同一命令，不声称根因已修复。
 
+最新管理员trace `/tmp/perceptbudget-gpu-start-9v3l03bu/trace.json`已定位并修正：同名CPU/GPU标记各一个，原parser遗漏cat条件导致found2；现仅选择cat=user_annotation的CPU范围，实际kernel独立查找。原trace无需重跑，离线解析得到目标kernel在CPU标记后87.871us启动，仅证明root探针采集可用，不能当VLA启动时间。原trace/原summary保持不变，派生解析结果保存M2/gpu-start-probe-trace-audit目录。普通用户模型采集权限仍需独立解决，不因此允许root模型或永久权限更改。
+
