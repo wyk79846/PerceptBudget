@@ -213,6 +213,17 @@ cd /home/wyk/workspace/PerceptBudget
 继续保留900/768MiB保护、已验证硬重置渲染释放gate和root自动/独立恢复。原结果不改写。输出到新`full-service`目录的full_service.json、worker.log、逐请求动作提交包、频率和原始功率。五个请求只报中位/最大和平均能量，不报可信P95/P99。本轮尚未执行，需要用户终端运行后分析。
 # Fast旧KV专家重算三档短测（2026-10-23）
 
+模型常驻Continue有图/无图配对（后续补项）：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --continue-camera-compare
+```
+
+一次模型加载/一个环境。三频率各5对，30短窗口150控制步；每窗口Full准备后只执行首5步，不延长或重播尾段。双方共同70ms节奏，期间不做推理、不保存视频帧，记录状态/trace。相机off只禁用image传感器，物理与机械臂状态保留；结束后恢复并强制获取新双图。分别报告执行窗口及补图后的能量，保持实际频率校验与原恢复/内存/GPU锁保护；节奏超期或刷新图像/终态不一致判无效。
+
+这是M2配对成本小测，不改生产20Hz、不代表成功率/Bsafe/稳态空闲功率。Full紧邻窗口可能影响功耗传感器读数，原始功率整段保留。结束读取新run内continue_control.json和summary.json。
+
 双视角token压缩候选成本补测：`--pooled-clocks`，原生factor2池化，两个256-token视觉网格各变64，总encoder视觉token128；SigLIP视觉骨干仍完整。每档5次/单model、layout检查、不改RTC/权重/安装包，不代表质量通过或完整服务。
 
 ```bash

@@ -60,3 +60,25 @@ def test_continue_dry_run_has_one_model_no_long_open_loop_claim(capsys):
     assert result['inference_during_continue'] is False
     assert result['steady_hold_claim'] is False
     run.assert_not_called()
+
+
+def test_camera_comparison_plan_is_resident_and_paired(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv', ['probe', '--continue-camera-compare', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as run:
+        assert main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['model_loads'] == 1 and result['windows'] == 30
+    assert result['max_control_steps'] == 150 and result['step_period_seconds'] == .07
+    assert result['fresh_images_after_both'] and not result['production_baseline_changed']
+    run.assert_not_called()
+
+
+def test_control_without_frames_does_not_access_camera_observation():
+    env = SimpleNamespace(step=lambda a: ({'state': 1}, 0., False, {}), check_success=lambda: False)
+    with patch('perceptbudget.device_continue.time.sleep'):
+        result, frames = control_window(env, {'state': 0}, np.zeros((50, 7)),
+            SimpleNamespace(ensure=lambda *a: None), lambda e,o: o.copy(),
+            lambda o: pytest.fail('No image access allowed'), lambda row: None,
+            np=np, period=.07, capture_frames=False)
+    assert result['executed_steps'] == 5 and frames == []

@@ -65,6 +65,7 @@ def main():
     modes.add_argument('--recovery', action='store_true', help='Short/long idle recovery followed by prepared-input Full RTC')
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
     modes.add_argument('--continue-control', action='store_true', help='Fifteen bounded live LIBERO Continue windows, five fresh actions each')
+    modes.add_argument('--continue-camera-compare', action='store_true', help='Resident paired camera-on/off Continue at three clock points')
     modes.add_argument('--full-service', action='store_true', help='Five high-frequency Full services including live sensor acquisition and queue preparation')
     modes.add_argument('--fast-clocks', action='store_true', help='Old-KV expert-only fixed-input RTC, three clock points, five samples each')
     modes.add_argument('--visual-clocks', action='store_true', help='Single wrist camera context plus RTC at three clock points')
@@ -84,6 +85,12 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.continue_camera_compare:
+            print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, windows=30,
+                max_control_steps=150, repeats_per_camera_mode=5, step_period_seconds=.07,
+                fresh_images_after_both=True, inference_during_continue=False,
+                production_baseline_changed=False)))
+            return 0
         if args.pooled_clocks:
             print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, samples=15,
                 num_views=2, pool_factor=2, pooled_view='both', visual_tokens=128, H=50, N=5,
@@ -140,21 +147,21 @@ def main():
         from perceptbudget.device_profile import fixed_view_probe
         fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
-                         clock_matrix=args.matrix, continue_control=args.continue_control,
+                         clock_matrix=args.matrix, continue_control=args.continue_control or args.continue_camera_compare,
                          full_service=args.full_service, service_profiles=service_profiles,
                          fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
-                         pooled_clocks=args.pooled_clocks)
+                         pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    purpose = 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix or args.continue_control or args.fast_clocks or args.visual_clocks or args.pooled_clocks:
+            if args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -169,6 +176,8 @@ def main():
                 command.append('--matrix')
             if args.continue_control:
                 command.append('--continue-control')
+            if args.continue_camera_compare:
+                command.append('--continue-camera-compare')
             if args.full_service:
                 command.append('--full-service')
                 command.extend(['--service-profiles', *service_profiles])
@@ -194,9 +203,9 @@ def main():
                                services=len(record['requests']), conditions=record['conditions'],
                                **{key: record[key] for key in fields if key in record})
                 return 0
-            if args.continue_control:
+            if args.continue_control or args.continue_camera_compare:
                 record = json.loads((run/'continue_control.json').read_text())
-                if record['status'] != 'completed' or len(record['windows']) != 15:
+                if record['status'] != 'completed' or len(record['windows']) != (30 if args.continue_camera_compare else 15):
                     raise RuntimeError('Incomplete Continue control screen')
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                conditions=record['summary'], all_final_states_equal=record['all_final_states_equal'])
