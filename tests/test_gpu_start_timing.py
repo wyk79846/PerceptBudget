@@ -18,3 +18,12 @@ def test_first_kernel_uses_device_event_not_cpu_api_or_marker():
 def test_cpu_only_trace_cannot_pass_as_gpu_start_evidence():
     with pytest.raises(RuntimeError,match='No actual GPU kernel'):
         first_kernel_offset({'traceEvents':[{'name':'range','ph':'X','ts':100.,'dur':10.}]},'range')
+
+
+def test_missing_marker_diagnostics_preserve_actual_gpu_evidence_without_claiming_timing():
+    from scripts.probe_gpu_start_timing import trace_diagnostics
+    trace={'traceEvents':[{'name':'real_kernel','cat':'kernel','ph':'X','ts':20.,'dur':1.}]}
+    d=trace_diagnostics(trace,'range')
+    assert d['actual_kernel_count']==1 and d['marker_events']==[]
+    with pytest.raises(RuntimeError,match='found 0'):
+        first_kernel_offset(trace,'range')

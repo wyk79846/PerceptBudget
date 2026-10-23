@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户sudo tinyGPU首算子探针effectiveuid0返回Missing unique CPU marker。原实现失败自动删除trace是诊断缺陷，旧root trace已不可恢复，不能推断marker0或重复、kernel是否有。新增profiler内部预热、失败也保留可读随机/tmp trace+summary、category/phase/marker/kernel计数；不放宽真实kernel要求。3解析测试通过。普通用户复核2279367：CPUmarker1/kernel0/CUPTI权限35，trace=/tmp/perceptbudget-gpu-start-4a3ll_n0/trace.json，正确拒绝时间结论。需要用户再次sudo运行原probe_gpu_start_timing.py，root问题尚未验证修复；无模型/root模型/频率/持久权限改动。备份archive/pre-gpu-probe-trace-diagnostics-20261023，docs已更新不再称trace自动删除。
+
 - 2026-10-23用户要求补启动开销（请求→真实首GPU算子）。初查本机无nsys，Torch Kineto可见CUDA但普通用户CUPTI返回INSUFFICIENT_PRIVILEGES35，tiny CUDA图trace只有CPU user_annotation无kernel；/proc/driver/nvidia/params RmProfilingAdminOnly1，sudo -n仍需密码。绝不拿CPU调用/频率读回/CUDA哨兵代首kernel。新增scripts/probe_gpu_start_timing.py极小128矩阵/图采集权限探针，允许用户sudo仅运行tiny探针，不加载VLA/调频/持久权限修改，临时trace解析后删，无kernel则失败。2个解析测试通过。用户需终端sudo venvpython scripts/probe_gpu_start_timing.py，命令及边界docs/M2_CLOCK_CONTROL.md末节；等待输出后再选非root模型计时方案，不setcap全局Python/不改驱动或sudo。实际模型首GPU计时尚未完成，未运行root模型或声称已得到启动开销。备份archive/pre-gpu-start-timing-20261023，FlashRT/生产默认未改。
 
 - 2026-10-23固定高频idle扫描61c1b2e9用户执行完成并审核：7点×3随机块/21恢复+21准备/1model，actiondiff0、0fallback、21freqmatch、恢复coverage1、全restore、静态物理通过/本体ticks620。名义0/.05/.1/.2/.5/1/2秒对应恢复中位455.66/455.35/453.17/453.58/456.09/453.02/452.62ms，范围交叠；非零点末段读数24.26/23.85/20.53/14.09/9.74/8.19W，连续下降无明确三状态分界，1到2s仍变不认定1s稳态。runtime21次active，suspended_time4332未增长，不能推内部railgate。INA hwmon update_interval读1但不当有效物理响应；sensor滤波/背景/真实负载响应原因未分离。报告任务指导与相关参考/PerceptBudget_M2_固定频率空闲时长扫描_20261023.md。不得把0.2/1作已验证阈值，按运行历史连续变化解释，不为凑三状态追加任意分档；本轮无代码/新硬件变更、只读审核。M1 q5内部402gap中位35.10ms来自相邻真实infer时戳，含控制边界/预处理/调度，不能直接当可降频窗口。

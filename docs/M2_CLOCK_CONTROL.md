@@ -360,7 +360,9 @@ cd /home/wyk/workspace/PerceptBudget
 sudo /home/wyk/venvs/lutvla/bin/python -u scripts/probe_gpu_start_timing.py
 ```
 
-这条允许sudo的原因仅是采集权限检查：只运行128×128矩阵乘及一个CUDA图，**不加载VLA模型、不调频、不永久授予任何权限**。临时trace在独立临时目录内解析后清除；控制台输出`GPU_START_PROBE`的status、实际首kernel名称和时间偏移。有CPU marker而无kernel必须返回unavailable/退出2，不能假称已测GPU启动。
+这条允许sudo的原因仅是采集权限检查：只运行128×128矩阵乘及一个CUDA图，**不加载VLA模型、不调频、不永久授予任何权限**。trace和summary保存在独立随机`/tmp/perceptbudget-gpu-start-*`目录，即使解析失败也保留；目录和文件仅含合成小矩阵事件，显式设为用户可读，便于读取sudo生成的证据。控制台输出`GPU_START_PROBE`的status、trace_path、事件类别统计、实际kernel数量和marker；只有同时拿到明确CPU标记和实际GPU事件才报告时间偏移。有CPU marker而无kernel必须返回unavailable/退出2，不能假称已测GPU启动。
 
 探针的时间不代表模型启动成本，Profiler本身会引入额外开销。先确认管理员采集可用，再选择不改变生产默认、模型不作为root运行的采集方案；未确定具体方案前，不运行root模型、不setcap全局Python、不重载驱动或放开所有用户性能计数权限。完整模型的首算子/提交计时尚未完成，也不以此步骤声称补齐M2。
+
+2026-10-23用户首次sudo探针报缺少唯一CPU标记，原版失败后删除临时trace，无法确定是marker缺失还是重复，更不能判断GPU事件是否存在。已增加Profiler采集内预热和原始trace/事件诊断保留，解析仍严格要求完整marker与kernel，不放宽。普通用户复核：marker可见、kernel0、CUPTI权限35明确，证明诊断路径有效；管理员重测结果仍待用户执行同一命令，不声称根因已修复。
 
