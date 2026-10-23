@@ -38,7 +38,7 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
         adapter.prepare_step_bank(list(range(650,668))+wrist)
 
 
-@pytest.mark.parametrize('fast_mode',['wrist','pool2'])
+@pytest.mark.parametrize('fast_mode',['wrist','pool2','pool2_agent'])
 def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode):
     calls=[]
     def predict(self, inputs, prompt, previous, delay, executed, request):
@@ -52,9 +52,11 @@ def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monke
             num_views=views,vision_seq_enc=256*views)))
     adapter._full_model=model(2)
     adapter.config={'m2_visual_fast_enabled':True,'m2_visual_fast_mode':fast_mode}
-    fast=model(2 if fast_mode=='pool2' else 1)
-    fast._pipe.pipeline.vision_seq_enc=128 if fast_mode=='pool2' else 256
-    fast._pipe.pipeline.vision_pool_factor=2 if fast_mode=='pool2' else 1
+    from perceptbudget.rtc_visual_alternation import visual_geometry
+    geometry=visual_geometry(fast_mode)
+    fast=model(geometry['num_views'])
+    fast._pipe.pipeline.vision_seq_enc=geometry['visual_tokens']
+    fast._pipe.pipeline.vision_pool_factor=geometry['vision_pool_factor']
     adapter.attach_wrist(fast)
     adapter._guided_requests=0
     for episode in range(2):
@@ -135,3 +137,16 @@ def test_prefix_offset_guard_checks_native_actual_valid_length(monkeypatch):
     adapter.pipe=SimpleNamespace(current_prompt_len=144)
     with pytest.raises(RuntimeError,match='prefix offset'):
         adapter._prepare_context({},'task',{},guided=True)
+
+
+def test_two_full_one_fast_schedule_and_labeled_cli_plans():
+    from perceptbudget.rtc_visual_alternation import scheduled_visual_mode
+    assert [scheduled_visual_mode(i,'pool2',True,2) for i in range(9)]==['full','full','pool2']*3
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    for options,mode,ratio in ((['--mixed-pooled-alternation','--label','gentle-compression'],'pool2_agent',1),
+                              (['--pooled-alternation','--full-per-fast','2','--label','less-fast'],'pool2',2)):
+        r=subprocess.run([sys.executable,str(script),*options,'--suite','libero_object','--dry-run'],
+            capture_output=True,text=True,check=True)
+        plan=json.loads(r.stdout)
+        assert plan['episodes']==2 and plan['model_loads']==1 and plan['q']==5
+        assert plan['fast_visual_mode']==mode and plan['full_per_fast']==ratio

@@ -48,6 +48,20 @@ def test_pooled_frontend_keeps_both_images_and_shares_weights(monkeypatch):
     assert full._vision_pool_factor==1 and created[0]['encoder_seq_max']==712
 
 
+def test_mixed_frontend_uses_existing_project_pipeline_without_reloading(monkeypatch):
+    monkeypatch.setitem(sys.modules,'flash_rt.frontends.torch.pi05_rtx',SimpleNamespace(
+        RtxFlashAttnBackend=lambda **kw: object(),ENC_L=18))
+    monkeypatch.setitem(sys.modules,'flash_rt.models.pi05.pipeline_rtx',SimpleNamespace(Pi05Pipeline=type('Pipeline',(),{})))
+    full=SimpleNamespace(num_views=2,_vision_pool_factor=1,_ckpt_bf16={'w':object()},
+        _img_buf=['external','wrist'],max_prompt_len=200,chunk_size=50,
+        _fixed_pipeline=SimpleNamespace(max_prompt_len=200))
+    mixed=wrist_frontend(full,None,fast_kind='pool2_agent')
+    assert mixed.num_views==2 and mixed._vision_pool_factor==2
+    assert mixed._img_buf is full._img_buf
+    assert mixed._ckpt_bf16['w'] is full._ckpt_bf16['w']
+    assert callable(mixed._set_prompt_fixed) and mixed.pipeline is None
+
+
 def test_historical_visual_prewarm_is_shapes_only_with_provenance_gate(tmp_path,monkeypatch):
     from perceptbudget.shared_visual_context import historical_visual_prefixes
     monkeypatch.setattr('perceptbudget.shared_visual_context.VISUAL_PREFIX_REFERENCES',{'suite':('full','wrist')})

@@ -179,7 +179,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
-    if visual_fast_mode not in ('wrist','pool2'):
+    if visual_fast_mode not in ('wrist','pool2','pool2_agent'):
         raise ValueError('Unsupported visual Fast mode')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
@@ -333,10 +333,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         from flash_rt.api import VLAModel
                         wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode), 'torch')
                         enable(wrist_model)
-                        base._infer_actions(wrist_model, select_images(prepared, 'full' if visual_fast_mode=='pool2' else 'wrist'), task['instruction'], 50, {})
-                        if visual_fast_mode=='pool2':
+                        base._infer_actions(wrist_model, select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full'), task['instruction'], 50, {})
+                        if visual_fast_mode.startswith('pool2'):
                             from scripts.diagnose_pool_parity import pool_check
-                            layout=pool_check(wrist_model._pipe.pipeline,torch,np,'both')
+                            layout=pool_check(wrist_model._pipe.pipeline,torch,np,'agent' if visual_fast_mode=='pool2_agent' else 'both')
                             record['fast_pool_layout']=layout
                             if layout['mismatched_elements']:
                                 raise RuntimeError('Shared pooled context layout mismatch')
@@ -402,7 +402,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 if visual_comparison:
                     cfg['m2_visual_fast_enabled']=True
                     def wrist_probe():
-                        adapter._guided_requests=0  # Calibration only; episode bootstrap resets schedule.
+                        adapter._guided_requests=cfg.get('m2_full_per_fast',1)-1  # Calibration only.
                         request={'observation_step':5}
                         actions=adapter.predict(prepared,task['instruction'],previous,delay=5,executed=5,request=request)
                         if request['context_refresh']['mode']!=visual_fast_mode:

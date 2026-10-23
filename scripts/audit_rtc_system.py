@@ -87,17 +87,22 @@ def audit(run):
             normalized=(np.asarray(scene['raw_state'],dtype=np.float32)-low)/(high-low+1e-6)*2-1
         check('state_normalization',eq(request['model_state'],normalized),pid)
         if cfg.get('m2_visual_alternation'):
+            from perceptbudget.rtc_visual_alternation import scheduled_visual_mode,visual_geometry
             visual=request.get('context_refresh',{})
-            expected_mode=cfg.get('m2_visual_fast_mode','wrist') if cfg.get('m2_visual_fast_enabled') and pid%2 else 'full'
+            expected_mode=scheduled_visual_mode(pid,cfg.get('m2_visual_fast_mode','wrist'),
+                cfg.get('m2_visual_fast_enabled'),cfg.get('m2_full_per_fast',1))
+            geometry=visual_geometry(expected_mode)
             check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
             check('fresh_visual_inputs',visual.get('current_images_encoded') is True
                   and visual.get('current_state_encoded') is True,pid)
             check('fresh_visual_source',visual.get('source_observation_step')==origin
                   and visual.get('source_prediction_id')==pid,pid)
-            check('fresh_visual_geometry',visual.get('num_views')==(1 if expected_mode=='wrist' else 2)
-                  and visual.get('visual_tokens')==(128 if expected_mode=='pool2' else 256 if expected_mode=='wrist' else 512)
+            check('fresh_visual_geometry',visual.get('num_views')==geometry['num_views']
+                  and visual.get('visual_tokens')==geometry['visual_tokens']
                   and visual.get('camera_indices')==([1] if expected_mode=='wrist' else [0,1]),pid)
-            check('fresh_visual_pool_factor',visual.get('vision_pool_factor',1)==(2 if expected_mode=='pool2' else 1),pid)
+            check('fresh_visual_pool_factor',visual.get('vision_pool_factor',1)==geometry['vision_pool_factor'],pid)
+            if expected_mode=='pool2_agent':
+                check('fresh_visual_pooled_camera',visual.get('pooled_view')=='agent',pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})

@@ -5,11 +5,17 @@ from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
 def visual_geometry(mode):
-    if mode not in ('full','wrist','pool2'):
+    if mode not in ('full','wrist','pool2','pool2_agent'):
         raise ValueError('Unknown visual context mode')
     return dict(num_views=1 if mode=='wrist' else 2,
-                visual_tokens=128 if mode=='pool2' else 256 if mode=='wrist' else 512,
-                vision_pool_factor=2 if mode=='pool2' else 1)
+                visual_tokens=320 if mode=='pool2_agent' else 128 if mode=='pool2' else 256 if mode=='wrist' else 512,
+                vision_pool_factor=2 if mode.startswith('pool2') else 1)
+
+
+def scheduled_visual_mode(prediction_id, fast_mode, enabled, full_per_fast=1):
+    if type(full_per_fast) is not int or full_per_fast not in (1,2):
+        raise ValueError('Use one or two Full requests per Fast')
+    return fast_mode if enabled and prediction_id>0 and prediction_id%(full_per_fast+1)==full_per_fast else 'full'
 
 
 def episode_geometry(fast_mode, alternating):
@@ -35,7 +41,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
     def prepare_step_bank(self, lengths, *, progress=None):
         """Two bounded geometry banks, not one enlarged global limit."""
         lengths = sorted(set(lengths))
-        fast_tokens = 128 if self.fast_mode()=='pool2' else 256
+        fast_tokens = visual_geometry(self.fast_mode())['visual_tokens']
         wrist = [n for n in lengths if type(n) is int and fast_tokens <= n <= fast_tokens+200]
         full = [n for n in lengths if type(n) is int and 512 <= n <= 712]
         if len(wrist)+len(full) != len(lengths) or not wrist or not full or max(len(wrist),len(full)) > 17:
@@ -61,8 +67,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         self._wrist_model = model
 
     def context_mode(self, prompt, step, *, guided):
-        return (self.fast_mode() if guided and self.config.get('m2_visual_fast_enabled')
-                and self._guided_requests % 2 == 0 else 'full')
+        return scheduled_visual_mode(self._guided_requests+1 if guided else 0,self.fast_mode(),
+            self.config.get('m2_visual_fast_enabled'),self.config.get('m2_full_per_fast',1))
 
     def _activate(self, mode):
         if mode not in ('full',self.fast_mode()):
@@ -80,7 +86,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         from perceptbudget.device_profile import select_images
         self._activate(self.fast_mode())
         try:
-            return super()._prepare_context(select_images(snapshot, 'full' if self.fast_mode()=='pool2' else 'wrist'), prompt, {}, guided=False)
+            return super()._prepare_context(select_images(snapshot, 'wrist' if self.fast_mode()=='wrist' else 'full'), prompt, {}, guided=False)
         finally:
             self._activate('full')
 
@@ -110,6 +116,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             camera_indices=[1] if mode == 'wrist' else [0, 1],
             num_views=self.pipeline.num_views, visual_tokens=self.pipeline.vision_seq_enc,
             vision_pool_factor=getattr(self.pipeline,'vision_pool_factor',1),
+            pooled_view='agent' if mode=='pool2_agent' else 'both' if mode=='pool2' else None,
             source_observation_step=request.get('observation_step', 0),
             source_prediction_id=request.get('prediction_id'),
             image_input_sha256=[hashlib.sha256(x.tobytes()).hexdigest() for x in inputs['images']],

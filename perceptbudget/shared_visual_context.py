@@ -25,9 +25,9 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
         raise ValueError('Historical visual prewarm supports the three task0 probes only')
     root = Path(config['output_root'])/'M2'
     mode = config.get('m2_visual_fast_mode', 'wrist')
-    if mode not in ('wrist','pool2'):
+    if mode not in ('wrist','pool2','pool2_agent'):
         raise ValueError('Unsupported fresh visual mode')
-    fast_tokens = 128 if mode=='pool2' else 256
+    fast_tokens = 320 if mode=='pool2_agent' else 128 if mode=='pool2' else 256
     text_lengths = [full_valid-512, wrist_valid-fast_tokens]
     sources = []
     for views, name in zip((2, 1), VISUAL_PREFIX_REFERENCES[suite]):
@@ -57,7 +57,7 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
         floor, ceiling=allowed_text_range
         if not floor<=low<=high<=ceiling:
             raise ValueError('Observed text lengths outside verified tokenizer bounds')
-        margin=2 if mode=='pool2' else 0
+        margin=2 if mode.startswith('pool2') else 0
         low,high=max(floor,low-margin),min(ceiling,high+margin)
     if not 0<=low<=high<=200 or high-low+1>17:
         raise ValueError('Historical visual prefix envelope invalid')
@@ -65,25 +65,33 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
     wrist = list(range(fast_tokens+low,fast_tokens+high+1))
     return full+wrist, dict(kind='historical_shape_envelope_not_exhaustive', sources=sources,
         text_range=[low,high], theoretical_text_range=allowed_text_range,
-        margin_lengths=2 if mode=='pool2' and allowed_text_range is not None else 0,
+        margin_lengths=2 if mode.startswith('pool2') and allowed_text_range is not None else 0,
         full=full, fast_mode=mode, fast=wrist,
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
 def wrist_frontend(full, torch, *, fast_kind='wrist'):
-    if fast_kind not in ('wrist','pool2'):
+    if fast_kind not in ('wrist','pool2','pool2_agent'):
         raise ValueError('Unknown shared visual geometry')
     if full.num_views != 2 or full._vision_pool_factor != 1:
         raise ValueError('Require unpooled dual-view source')
     if getattr(full, '_pb_context_only', False):
         raise ValueError('Prepare shared frontend before releasing native expert')
     clone = copy.copy(full)
+    if fast_kind=='pool2_agent':
+        from perceptbudget.compact_state import frontend_type
+        from perceptbudget.mixed_view_pool import pipeline_type
+        from flash_rt.models.pi05.pipeline_rtx import Pi05Pipeline
+        kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
+                           pipeline_type=pipeline_type(Pi05Pipeline,'agent'))
+        clone=kind.__new__(kind)
+        clone.__dict__.update(full.__dict__)
     # Separate dictionaries so context-only cleanup cannot mutate the peer.
     # Tensors themselves are deliberately shared, never cloned or reloaded.
     clone._ckpt_bf16 = dict(full._ckpt_bf16)
-    clone.num_views = 2 if fast_kind=='pool2' else 1
-    clone._vision_pool_factor = 2 if fast_kind=='pool2' else 1
-    clone._img_buf = full._img_buf if fast_kind=='pool2' else full._img_buf[1:]
+    clone.num_views = 1 if fast_kind=='wrist' else 2
+    clone._vision_pool_factor = 1 if fast_kind=='wrist' else 2
+    clone._img_buf = full._img_buf[1:] if fast_kind=='wrist' else full._img_buf
     clone.pipeline = clone._fixed_pipeline = None
     clone._prompt_pipeline_cache = {}
     clone.current_prompt_len = 0
@@ -97,7 +105,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist'):
     return clone
 
 
-def probe(model, snapshot, prompt, previous, torch, config, directory, metadata):
+def probe(model, snapshot, prompt, previous, torch, config, directory, metadata, *, fast_kind='wrist'):
     import gc
     import numpy as np
     from flash_rt.api import VLAModel
@@ -106,11 +114,13 @@ def probe(model, snapshot, prompt, previous, torch, config, directory, metadata)
     from perceptbudget.experiment import _write_json_atomically
     from perceptbudget.rtc_memory import memory_record, release_unused_native_expert
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    from perceptbudget.rtc_visual_alternation import visual_geometry
     from scripts import eval_q as base
 
     directory = Path(directory)
     result = dict(metadata, status='running', measurements=[], memory=[],
-        scope='Fixed-input Full/wrist context switching feasibility, one shared checkpoint and one expert; not rollout or quality proof')
+        fast_kind=fast_kind,
+        scope='Fixed-input Full/'+fast_kind+' switching feasibility, one shared checkpoint and expert; not rollout or quality proof')
     def check_memory(stage):
         r = memory_record(torch, stage)
         result['memory'].append(r)
@@ -118,12 +128,18 @@ def probe(model, snapshot, prompt, previous, torch, config, directory, metadata)
             raise RuntimeError('Shared context RAM below900MiB; stop, do not reload per request')
     try:
         check_memory('before_second_context')
-        wrist = VLAModel(wrist_frontend(model._pipe, torch), 'torch')
+        wrist = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=fast_kind), 'torch')
         enable(wrist)
-        small = select_images(snapshot, 'wrist')
+        small = select_images(snapshot, 'wrist' if fast_kind=='wrist' else 'full')
         base._infer_actions(wrist, small, prompt, 50, {})
-        if wrist._pipe.pipeline.num_views != 1 or wrist._pipe.pipeline.vision_seq_enc != 256:
-            raise RuntimeError('Wrist context did not use actual single-view geometry')
+        geometry=visual_geometry(fast_kind)
+        if wrist._pipe.pipeline.num_views!=geometry['num_views'] or wrist._pipe.pipeline.vision_seq_enc!=geometry['visual_tokens']:
+            raise RuntimeError('Candidate context geometry mismatch')
+        if fast_kind.startswith('pool2'):
+            from scripts.diagnose_pool_parity import pool_check
+            result['pool_layout']=pool_check(wrist._pipe.pipeline,torch,np,'agent' if fast_kind=='pool2_agent' else 'both')
+            if result['pool_layout']['mismatched_elements']:
+                raise RuntimeError('Candidate pooling layout mismatch')
         check_memory('second_context_prepared')
         full_weights, small_weights = model._pipe._ckpt_bf16, wrist._pipe._ckpt_bf16
         if not all(full_weights[k] is small_weights[k] for k in full_weights):
@@ -151,7 +167,7 @@ def probe(model, snapshot, prompt, previous, torch, config, directory, metadata)
         gc.collect()
         check_memory('shared_expert_graphs_ready')
         references = {}
-        for index, mode in enumerate(('full','wrist')*3):
+        for index, mode in enumerate(('full',fast_kind)*3):
             adapter, inputs = (full, snapshot) if mode == 'full' else (fast, small)
             torch.manual_seed(20261023)
             r = {}

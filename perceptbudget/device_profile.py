@@ -114,7 +114,8 @@ def select_images(snapshot, view):
 def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_screen=False,
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
                      continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
-                     visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False):
+                     visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False,
+                     shared_view_kind='wrist'):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -182,7 +183,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         from perceptbudget.shared_visual_context import probe
         return probe(model, snapshot, task['instruction'], previous, torch, config, directory,
                      dict(model_loads=1, source_run=str(source_run),
-                          load_and_prepare_seconds=time.monotonic()-start_load))
+                          load_and_prepare_seconds=time.monotonic()-start_load),fast_kind=shared_view_kind)
     cleanup = release_unused_native_expert(model, torch)
     adapter = OriginalOpenPiRTCAdapter(model, torch, config)
     gate = json.loads((Path(config['verified_reference_run'])/'summary.json').read_text())
