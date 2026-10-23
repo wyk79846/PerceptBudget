@@ -397,3 +397,9 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/profile_rtc_startup.py
 
 普通用户实际GPU复核：同顺序开启确定性、3次matmul预热、CUDA图捕获/重放、后续再次确定性matmul均通过；无模型加载、调频或精度改动。完整sudo模型计时仍需重跑原命令；旧失败记录保留。
 
+模型计时4a2efda9已采到首个完整模型trace（约18MB、20506个准备/恢复kernel，目标恢复范围内10253个）。因Profiler停止/导出期间同进程功率轮询出现0.678秒和0.368秒间隙，原idle扫描的严格能量覆盖检查在第一行保存前拒绝；root日志确认RESTORED。旧trace可确认CPU恢复marker后约2.841ms出现第一个实际kernel，但原请求发出/CPU单调时钟区间未单独保存，不能将此数当完整请求启动等待，也不回填缺失能量。
+
+已将此次**首算子计时诊断**与能量标定判据分离：只有m2_gpu_start_trace模式下，功率覆盖不足时保留原读数、原coverage和energy_j=None，标power_evidence_valid=False及原因，继续收集有效GPU时间。正常idle-state-scan/其他能量标定仍缺测即失败，不放宽采样间隙，不插值填补，不将带Profiler能量写入正式M2能量表。CPU/GPU真实事件、动作、频率和内存检查仍保持。
+
+每次恢复结束后、Profiler stop/export之前先保存独立PB_MODEL_RECOVERY_N_timing.json，含请求发出、动作返回和CPU marker时钟区间；解析后更新completed及GPU分段时间。即使后续附带采样或汇总报错，也能从sidecar和trace复核时间，不再丢掉有效记录。summary显式列power_unavailable_rows，不将“计时完成”等同“能量有效”。重跑原sudo模型计时命令即可；原invalid和trace不改写。
+

@@ -15,6 +15,13 @@ from perceptbudget.power import PowerMonitor
 DELAYS=(0.,.05,.1,.2,.5,1.,2.)
 
 
+def validate_recovery_power(window,*,startup_timing=False):
+    complete=window['energy_j'] is not None
+    if not complete and not startup_timing:
+        raise RuntimeError('Recovery power coverage incomplete')
+    return complete
+
+
 def scan_plan(repeats=3):
     if repeats not in (1,3):
         raise ValueError('Idle scan supports one preflight or three measured blocks')
@@ -76,6 +83,7 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
         first_gpu_operator_timestamp=None,clock_settings_changed=False)
     if adapter.config.get('m2_gpu_start_trace'):
         result['scope']='Profiler-assisted request-to-first-real-GPU-kernel/action-return at fixed high clocks, saved Full inputs and static physical service; not uninstrumented latency, full live service or task energy'
+        result['power_role']='Opportunistic diagnostics only; coverage gaps are retained as unavailable energy, never interpolated or used as calibrated energy'
     path=directory/'idle_scan.json'
     gate=json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases'])!=6 or gate['render_cleanup']['errors']:
@@ -153,7 +161,11 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
                     row['gpu_start_timing']=recovery['gpu_start_timing']
                     row['request_issued_monotonic']=issued
                     row['request_to_actions_ready_ms']=(end-issued)*1000
-                if row['recovery']['energy_j'] is None:raise RuntimeError('Recovery power coverage incomplete')
+                row['power_evidence_valid']=validate_recovery_power(row['recovery'],
+                    startup_timing=bool(adapter.config.get('m2_gpu_start_trace')))
+                if not row['power_evidence_valid']:
+                    row['power_unavailable_reason']='Profiler-assisted run has incomplete sampling coverage; no valid recovery energy'
+                    row['idle_tail_mean_power_w']=None
                 row['frequency_check']=frequency_check(lease.events,'baseline',prepared['inference_started_monotonic'],end)
                 if not row['frequency_check']['matches']:raise RuntimeError('Idle scan fixed frequency mismatch')
                 result['rows'].append(row)
@@ -167,6 +179,7 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
                 'Saved identical model inputs; synthetic frozen control service, not task continuation.',
                 '20ms polling is not validated20ms sensor response; short points may be unresolved.',
                 'Three repeated blocks are exploratory, not independent long-run confidence intervals.'])
+        result['power_unavailable_rows']=sum(not r['power_evidence_valid'] for r in result['rows'])
     except BaseException as exc:
         result.update(status='invalid',error=f'{type(exc).__name__}: {exc}');raise
     finally:

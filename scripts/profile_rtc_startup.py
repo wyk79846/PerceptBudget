@@ -168,6 +168,8 @@ def main():
             _write_json_atomically(run/'summary.json',summary)
             result=run_scan(config,run,torch)
         summary.update(status='completed',model_loads=result['model_loads'],restored=result['restored'],
+            power_unavailable_rows=result['power_unavailable_rows'],
+            power_scope='Profiler-assisted diagnostic sampling only; missing coverage is not calibrated energy',
             conditions=result['summary'],unprofiled_request_ms=result['unprofiled_request_ms'],
             startup_rows=[dict(requested_idle_seconds=r['requested_idle_seconds'],block=r['block'],
                 **r['gpu_start_timing']) for r in result['rows']])

@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23模型计时4a2efda9通过加载/建图，首模型CUPTItrace已采到（18MB/42415events/准备+恢复20506kernels），但原power校验抛Recovery power coverage incomplete，rows0。读数有0.678/0.368s gap，与Profiler stop/export阶段相邻；root末RESTORED。原目标CPUmarker内实际10253kernel，首FillFunctor<long>在marker后2840.780us，未保存原caller/monotonic bracket，不作请求启动等待结论。已仅m2_gpu_start_trace模式把缺测power保留None/coverage/False标记，不阻止有效时间收集；正常idle能量校验仍严格，不放宽阈值/不插值/不写正式能量表。新增每恢复stop/export前写时钟sidecar，解析后completed，防后续power汇总报错丢时间；summary列power_unavailable_rows。485pass9skip110subtests3既有警告，包含严格功率与计时分离/sidecar先持久化回归测试。待用户重跑原sudo profile_rtc_startup.py；21点模型请求启动计时仍未完成。备份archive/pre-startup-power-separation-20261023，FlashRT/生产默认不改。
+
 - 2026-10-23模型启动计时a2cd8650通过root→user采集gate和二次sudo/频率预检（RESTORED），后续CuBLAS确定性错误。根因tiny先创建句柄、fixed_view_probe后设置CUBLAS_WORKSPACE_CONFIG太晚。已configure_runtime_environment于initialize_and_drop第一步/importtorch前设:4096:8及EGL；CUDA已初始化而配置不符则拒绝重启，不静默迟设。tiny预热前就开启deterministic保证提前检查，不关闭确定性。普通用户真实GPU验证预热matmul/图捕获重放/后续确定性matmul均通过(uid1001)，无模型/调频。483pass9skip110subtests3既有警告。需用户重跑原sudo venvpython scripts/profile_rtc_startup.py；模型首GPU完整数据仍未测得，旧invalid保留。备份archive/pre-startup-cublas-order-fix-20261023；FlashRT/精度/生产默认未改。
 
 - 2026-10-23用户实跑模型启动计时3b79d566：降权后UID/GID1001三cap0、普通线程连续2次真实kernel采集gate已通过；baseline_preflight.log仅sudo需密码，调频helper未启动/未改频率/未加载模型，restoredFalse指未获恢复记录不是恢复失败。根因是降权会话未继承此前sudo凭据。已在降权后、创建run/加载模型前补sudo -v及sudo -n true核验，必要时第二次提示密码；不改sudo配置或模型身份，permission-only不授权调频。错误显式model_load_started标志，频率preflight通过才置真。482pass9skip110subtests/3既有警告。待用户同一普通终端重跑sudo venvpython scripts/profile_rtc_startup.py验证；原invalid不改、模型首GPU实测仍未获得。备份archive/pre-startup-clock-auth-fix-20261023，FlashRT/生产配置未改。

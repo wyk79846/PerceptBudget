@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import time
+from perceptbudget.experiment import _write_json_atomically
 
 from scripts.probe_gpu_start_timing import first_kernel_offset
 
@@ -50,13 +51,20 @@ class PairCollector:
             with torch.profiler.record_function(marker):
                 inside=time.monotonic_ns()
                 out=self.original(*args,**kwargs)
-            self.prof.stop()
             path=self.directory/(marker+'.json')
+            sidecar=self.directory/(marker+'_timing.json')
+            evidence=dict(status='pending_trace_parse',cpu_marker_clock_bracket_ns=[before,inside],
+                request_issued_monotonic=request['caller_request_monotonic'],
+                actions_ready_monotonic=request['inference_ended_monotonic'],trace_path=str(path))
+            _write_json_atomically(sidecar,evidence)
+            self.prof.stop()
             self.prof.export_chrome_trace(str(path))
             trace=json.loads(path.read_text())
             timing=timing_from_trace(trace,marker,cpu_bracket_ns=[before,inside],
                 issued=request['caller_request_monotonic'],ready=request['inference_ended_monotonic'])
             timing['trace_path']=str(path)
+            evidence.update(status='completed',timing=timing)
+            _write_json_atomically(sidecar,evidence)
             request['gpu_start_timing']=timing
             self.prof=None;self.index+=1
             return out

@@ -33,3 +33,13 @@ def test_scan_cli_never_requires_sudo_for_dry_plan(capsys):
     assert not plan['frequency_switch_during_scan'] and plan['model_loads']==1
     assert plan['recovery_requests']==21 and plan['preparation_requests']==21
     call.assert_not_called()
+
+
+def test_missing_power_remains_fatal_for_calibration_but_not_gpu_timing_only():
+    from perceptbudget.device_idle_scan import validate_recovery_power
+    window={'energy_j':None,'power_coverage':{'coverage_fraction':.4}}
+    with pytest.raises(RuntimeError,match='coverage incomplete'):
+        validate_recovery_power(window)
+    assert validate_recovery_power(window,startup_timing=True) is False
+    assert window['energy_j'] is None and window['power_coverage']['coverage_fraction']==.4
+    assert validate_recovery_power({'energy_j':1.},startup_timing=True)

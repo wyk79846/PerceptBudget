@@ -83,3 +83,37 @@ def test_deterministic_workspace_is_set_before_first_cuda_initialization(monkeyp
     with pytest.raises(RuntimeError,match='restart process'):
         module.configure_runtime_environment()
     assert 'CUBLAS_WORKSPACE_CONFIG' not in module.os.environ
+
+
+def test_gpu_timing_sidecar_is_saved_before_profiler_export_and_completed_after_parse(tmp_path):
+    import json,time
+    from contextlib import nullcontext
+    from perceptbudget.gpu_start_trace import PairCollector
+    events=[]
+    marker='PB_MODEL_RECOVERY_0'
+    class Prof:
+        def start(self):events.append('start')
+        def stop(self):events.append('stop')
+        def export_chrome_trace(self,path):
+            evidence=json.loads((tmp_path/(marker+'_timing.json')).read_text())
+            assert evidence['status']=='pending_trace_parse'
+            events.append('export')
+            from pathlib import Path
+            Path(path).write_text(json.dumps({'traceEvents':[
+                {'name':marker,'cat':'user_annotation','ph':'X','ts':100.,'dur':10000.},
+                {'name':'actual','cat':'kernel','ph':'X','ts':110.,'dur':1.}]}))
+    def predict(*args,**kwargs):
+        events.append('predict');time.sleep(.003)
+        kwargs['request']['inference_ended_monotonic']=time.monotonic()
+        return 'actions'
+    torch=SimpleNamespace(profiler=SimpleNamespace(profile=lambda **kw:Prof(),
+        ProfilerActivity=SimpleNamespace(CPU=0,CUDA=1),record_function=lambda name:nullcontext()))
+    collector=PairCollector(SimpleNamespace(predict=predict),tmp_path,torch)
+    collector.predict(request={})
+    assert events==['start','predict']  # Armed before the pause, never after issue.
+    request={'caller_request_monotonic':time.monotonic()}
+    assert collector.predict(request=request)=='actions'
+    assert events==['start','predict','predict','stop','export']
+    saved=json.loads((tmp_path/(marker+'_timing.json')).read_text())
+    assert saved['status']=='completed' and saved['timing']==request['gpu_start_timing']
+    assert collector.prof is None
