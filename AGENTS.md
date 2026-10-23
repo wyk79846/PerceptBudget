@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23请求→真实GPU首算子计时7fd99e7e用户完成，21/21、1model/专家，普通UID1001/cap0，动作diff0/0fallback/freqmatch/全restore/exit0。七时长0/.05/.1/.2/.5/1/2s的首kernel等待中位2.55/2.69/2.81/2.69/3.40/2.94/2.85ms，总请求→动作返回中位465.18/468.14/466.07/464.33/465.97/466.09/465.38ms。逐样本分段和21sidecar核对通过；不随idle明显上升、不宣称统计相同或纯硬件唤醒。1个CPUmarker区间宽1.493ms（其他多数.121–.238ms），CUPTI时钟误差另有限制。2无Profiler调用470.23/456.57ms只参考，17/21功率缺测不用于节能或正式表。报告任务指导与相关参考/PerceptBudget_M2_请求到首GPU算子计时_20261023.md；M2审阅稿更新初步首GPU证据而非全服务/精确恢复能量结论。本轮只审核记录，无代码/频率新修改。
+
 - 2026-10-23模型计时4a2efda9通过加载/建图，首模型CUPTItrace已采到（18MB/42415events/准备+恢复20506kernels），但原power校验抛Recovery power coverage incomplete，rows0。读数有0.678/0.368s gap，与Profiler stop/export阶段相邻；root末RESTORED。原目标CPUmarker内实际10253kernel，首FillFunctor<long>在marker后2840.780us，未保存原caller/monotonic bracket，不作请求启动等待结论。已仅m2_gpu_start_trace模式把缺测power保留None/coverage/False标记，不阻止有效时间收集；正常idle能量校验仍严格，不放宽阈值/不插值/不写正式能量表。新增每恢复stop/export前写时钟sidecar，解析后completed，防后续power汇总报错丢时间；summary列power_unavailable_rows。485pass9skip110subtests3既有警告，包含严格功率与计时分离/sidecar先持久化回归测试。待用户重跑原sudo profile_rtc_startup.py；21点模型请求启动计时仍未完成。备份archive/pre-startup-power-separation-20261023，FlashRT/生产默认不改。
 
 - 2026-10-23模型启动计时a2cd8650通过root→user采集gate和二次sudo/频率预检（RESTORED），后续CuBLAS确定性错误。根因tiny先创建句柄、fixed_view_probe后设置CUBLAS_WORKSPACE_CONFIG太晚。已configure_runtime_environment于initialize_and_drop第一步/importtorch前设:4096:8及EGL；CUDA已初始化而配置不符则拒绝重启，不静默迟设。tiny预热前就开启deterministic保证提前检查，不关闭确定性。普通用户真实GPU验证预热matmul/图捕获重放/后续确定性matmul均通过(uid1001)，无模型/调频。483pass9skip110subtests3既有警告。需用户重跑原sudo venvpython scripts/profile_rtc_startup.py；模型首GPU完整数据仍未测得，旧invalid保留。备份archive/pre-startup-cublas-order-fix-20261023；FlashRT/精度/生产默认未改。
