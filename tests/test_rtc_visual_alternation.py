@@ -9,6 +9,35 @@ from perceptbudget.rtc_visual_alternation import FreshViewRTCAdapter
 from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
+def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(monkeypatch):
+    calls=[]
+    class Bank:
+        fallback='root'
+        def __init__(self,lengths):
+            self.entries={n:('expert'+str(n),'graph'+str(n)) for n in lengths}
+        def select(self,valid):
+            return self.entries.get(valid,(self.fallback,None))
+    def prepare(self,lengths,*,progress=None):
+        assert len(lengths)<=17
+        calls.append((list(lengths),self._step_bank_stream))
+        self.step_bank=Bank(lengths)
+        return dict(passed=True,prepare_seconds=1.,lengths=list(lengths))
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
+    adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    adapter.config={'source_prefix_coverage_rule':'h50_state8_tokenizer_bounds_v1'}
+    adapter._step_bank_stream=object()
+    full=list(range(650,667)); wrist=list(range(394,411))
+    result=adapter.prepare_step_bank(full+wrist)
+    assert result['passed'] and len(result['lengths'])==34
+    assert [r[0] for r in calls]==[full,wrist]
+    assert calls[0][1] is calls[1][1]
+    assert adapter.step_bank.select(665)==('expert665','graph665')
+    assert adapter.step_bank.select(409)==('expert409','graph409')
+    assert adapter.step_bank.select(500)==('root',None)
+    with pytest.raises(ValueError,match='at most17'):
+        adapter.prepare_step_bank(list(range(650,668))+wrist)
+
+
 def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch):
     calls=[]
     def predict(self, inputs, prompt, previous, delay, executed, request):

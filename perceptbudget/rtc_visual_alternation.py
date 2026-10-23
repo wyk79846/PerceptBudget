@@ -11,6 +11,25 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         self._wrist_model = None
         self._guided_requests = 0
 
+    def prepare_step_bank(self, lengths, *, progress=None):
+        """Two bounded geometry banks, not one enlarged global limit."""
+        lengths = sorted(set(lengths))
+        wrist = [n for n in lengths if type(n) is int and 256 <= n <= 456]
+        full = [n for n in lengths if type(n) is int and 512 <= n <= 712]
+        if len(wrist)+len(full) != len(lengths) or not wrist or not full or max(len(wrist),len(full)) > 17:
+            raise ValueError('Require both exact geometry families, at most17 lengths each')
+        if self.config.get('source_prefix_coverage_rule') != 'h50_state8_tokenizer_bounds_v1':
+            raise ValueError('Dual context bank requires verified H50 state tokenizer bounds')
+        reports, banks = [], []
+        for family in (full, wrist):
+            reports.append(super().prepare_step_bank(family, progress=progress))
+            banks.append(self.step_bank)
+        self.step_bank = DualGeometryBank(*banks)
+        return dict(passed=True, backend='dual_geometry_source_order_step_graph',
+            lengths=lengths, families=reports,
+            prepare_seconds=sum(r['prepare_seconds'] for r in reports),
+            limitation='Two independently bounded banks; no runtime graph capture')
+
     def attach_wrist(self, model):
         if model._pipe.pipeline.num_views != 1:
             raise ValueError('Require actual single-view context')
@@ -62,3 +81,15 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         if guided:
             self._guided_requests += 1
         return actions
+
+
+class DualGeometryBank:
+    """Sequential dispatch; each child retains its own bounded graph storage."""
+    def __init__(self, full, wrist):
+        if set(full.entries) & set(wrist.entries):
+            raise ValueError('Overlapping geometry prefixes')
+        self.full, self.wrist = full, wrist
+        self.fallback = full.fallback
+
+    def select(self, valid):
+        return self.wrist.select(valid) if valid in self.wrist.entries else self.full.select(valid)

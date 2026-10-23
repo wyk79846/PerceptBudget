@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23首个真实腕部闭环8cb0b06c因建图数量校验退出：双视角与单视角各最多17个精确长度合并后超过SourceStepBank单组17上限，0回合，不是质量失败/内存保护。修复仅FreshViewRTCAdapter准备两组有界bank并DualGeometryBank分发，复用同原专家/权重/建图流；不改底层默认8/显式17限制、不padding/动态捕获/慢路径替代。每组独立KV存储，全部按原progress900保护；新增34长度拆组/回切/回退及18单组拒绝测试，相关37pass（沙盒CUDA警告）。尚无修复后GPU闭环结果，用户原命令可新run重试。备份archive/pre-fresh-wrist-bank-limit-fix-20261023。
+
 - 2026-10-23用户授权接真实Full/腕部Fast闭环。新增FreshViewRTCAdapter，复用已通过共享权重双上下文、一个原专家/双family精确prefixbank；bootstrapFull，guided请求Full/wrist交替，每次都用当前图/state新编码，context_refresh元数据与旧kv_recompute分开。延迟历史泛化为full/wrist，原异步执行/原绝对裁剪/RTC不变，独立audit检查视图/新source step/id/state/模式与延迟历史，不错误套旧KV期限。eval_expert_recompute.py --visual-alternation --cross-suite为三集合task0各Full/交叉，6回合、单权重/专家加载；准备/计时分别保存。本轮尚未实际GPU闭环，不能宣称质量成功。全测试437pass9skip110subtests（沙盒CUDA/依赖3warnings）；新增路径相关29pass。备份archive/pre-m2-fresh-wrist-rollout-20261023。未修改FlashRT/根配置/生产基线，用户命令见失败审核报告第10节。
 
 - 2026-10-23共享视觉上下文16bd07ac已完成：1次checkpoint加载、45个checkpoint张量共享、单专家，Full/wrist精确valid665/409，SourceStepBank图与VJP对照差0；6次交替各自切回raw差0、无fallback。中位Full448.454ms/wrist326.664ms，准备第二上下文前后可用4460/4227MiB，原专家图准备后约2851MiB且6次稳定。仅固定输入切换可行性，非独立实现全输入等价/闭环质量或成功率。可继续准备最新腕部视觉Full/Fast闭环，但现有cross-suite入口仍旧KV实现，不能冒用命令声称已跑新视觉交叉；未改FlashRT/基线。
