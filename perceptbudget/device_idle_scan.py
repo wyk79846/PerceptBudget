@@ -74,6 +74,8 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
         requested_points_seconds=list(DELAYS),repeats=3,plan=scan_plan(),
         control_service_period_seconds=.05,hardware_state_classification=None,
         first_gpu_operator_timestamp=None,clock_settings_changed=False)
+    if adapter.config.get('m2_gpu_start_trace'):
+        result['scope']='Profiler-assisted request-to-first-real-GPU-kernel/action-return at fixed high clocks, saved Full inputs and static physical service; not uninstrumented latency, full live service or task energy'
     path=directory/'idle_scan.json'
     gate=json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases'])!=6 or gate['render_cleanup']['errors']:
@@ -104,9 +106,10 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
                     tick();next_tick[0]=max(next_tick[0]+.05,time.monotonic())
                 time.sleep(.001)
             if future is not None:return future.result()
-        def predict():
+        def predict(issued=None,timing_reference=False):
             torch.manual_seed(20261023)
-            request={}
+            request={} if issued is None else {'caller_request_monotonic':issued}
+            if timing_reference:request['timing_reference']=True
             out=adapter.predict(snapshot,prompt,previous,delay=5,executed=5,request=request)
             if not np.isfinite(out).all() or request['rtc_guidance']['variable_length_fallback']:
                 raise RuntimeError('Idle scan nonfinite actions or slow fallback')
@@ -115,6 +118,12 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
         with FixedScanLease(directory) as lease, suspend_cameras(env),ThreadPoolExecutor(max_workers=1) as executor:
             result['clock_settings_changed']=True
             monitor=PowerMonitor(.02,max_gap_seconds=.1);monitor.start()
+            if adapter.config.get('m2_gpu_start_trace'):
+                result['unprofiled_request_ms']=[]
+                for _ in range(2):
+                    request,_=pump(executor.submit(predict,None,True))
+                    result['unprofiled_request_ms'].append(1000*(request['inference_ended_monotonic']-request['inference_started_monotonic']))
+                result['profiling_intervention']=True
             for block,delay in result['plan']:
                 lease.ensure(10)
                 prepared,prep_actions=pump(executor.submit(predict))
@@ -122,7 +131,8 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
                 # All bookkeeping counted in actual idle; no artificial nominal clock.
                 pump(deadline=anchor+delay)
                 status=runtime_status()
-                recovery,out=pump(executor.submit(predict))
+                issued=time.monotonic()
+                recovery,out=pump(executor.submit(predict,issued))
                 begin=recovery['inference_started_monotonic'];end=recovery['inference_ended_monotonic']
                 if reference is None:reference=out.copy()
                 diff=float(np.max(np.abs(out-reference)))
@@ -139,6 +149,10 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata):
                     idle_tail_samples=len(samples),runtime_before_recovery=status,
                     action_max_abs_difference=diff,action_sha256=hashlib.sha256(out.tobytes()).hexdigest(),
                     guidance=recovery['rtc_guidance'])
+                if adapter.config.get('m2_gpu_start_trace'):
+                    row['gpu_start_timing']=recovery['gpu_start_timing']
+                    row['request_issued_monotonic']=issued
+                    row['request_to_actions_ready_ms']=(end-issued)*1000
                 if row['recovery']['energy_j'] is None:raise RuntimeError('Recovery power coverage incomplete')
                 row['frequency_check']=frequency_check(lease.events,'baseline',prepared['inference_started_monotonic'],end)
                 if not row['frequency_check']['matches']:raise RuntimeError('Idle scan fixed frequency mismatch')

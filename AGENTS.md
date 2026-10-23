@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户要求直接开始模型启动计时。准备scripts/profile_rtc_startup.py：sudo只tinyCUPTI初始化，setresgid/setresuid降回SUDO_UID且真实/有效/保存UID相同、CapEff/Prm/Amb0，普通用户线程连续2次kernel采集gate通过才加载模型；失败前置不加载权重，不setcap/驱动权限修改/root模型。实机降权后CUPTI是否仍可用尚待用户sudo命令验证。gate后Full固定高频1model，21准备+21恢复/七时长三随机块、2无Profiler参考，沿用固定仿真/本体服务，120s时钟lease及768后台guard/900准备检查。gpu_start_trace.PairCollector在准备前启Profiler跨idle，不将临时采集启动计为恢复；每对单独trace，CPUmarker区间monotonic映射真实kernel，记录request→firstkernel→actions-return（非live提交服务）。device_idle_scan仅诊断开关启用，普通基线不变；保留observer误差/clock相关误差限制。480pass9skip110subtests3既有警告。命令sudo venvpython scripts/profile_rtc_startup.py见docs末节；模型GPU计时尚未执行，别称已测完。备份archive/pre-model-startup-timing-20261023，FlashRT/根配置未改。
+
 - 2026-10-23用户第二次root探针trace9v3l03bu显示CPU user_annotation与GPU gpu_user_annotation同名，旧parser按name/ph匹配导致found2；根因已定位为category遗漏，不是采集失败。已严格选CPU user_annotation，kernel仍要求真实catkernel。直接读取原roottrace验证：1个目标实际kernel ampere_sgemm_32x32_sliced1x4_nn，CPUmarker后87.871us启动/dur9.472us；仅tinyprobe不是VLA延迟。3解析测试通过，新增同名CPU/GPU回归场景；无需用户重跑、不改原root证据，派生M2gpu-start-probe-trace-audit保存解析结果。rootCUPTI确实可采kernel，但普通用户权限仍未解决；未授权root模型/setcap或驱动权限修改，VLA实际首kernel测量仍未完成。备份archive/pre-gpu-marker-category-fix-20261023。
 
 - 2026-10-23用户sudo tinyGPU首算子探针effectiveuid0返回Missing unique CPU marker。原实现失败自动删除trace是诊断缺陷，旧root trace已不可恢复，不能推断marker0或重复、kernel是否有。新增profiler内部预热、失败也保留可读随机/tmp trace+summary、category/phase/marker/kernel计数；不放宽真实kernel要求。3解析测试通过。普通用户复核2279367：CPUmarker1/kernel0/CUPTI权限35，trace=/tmp/perceptbudget-gpu-start-4a3ll_n0/trace.json，正确拒绝时间结论。需要用户再次sudo运行原probe_gpu_start_timing.py，root问题尚未验证修复；无模型/root模型/频率/持久权限改动。备份archive/pre-gpu-probe-trace-diagnostics-20261023，docs已更新不再称trace自动删除。

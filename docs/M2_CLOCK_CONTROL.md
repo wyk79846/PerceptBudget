@@ -368,3 +368,24 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/probe_gpu_start_timing.py
 
 最新管理员trace `/tmp/perceptbudget-gpu-start-9v3l03bu/trace.json`已定位并修正：同名CPU/GPU标记各一个，原parser遗漏cat条件导致found2；现仅选择cat=user_annotation的CPU范围，实际kernel独立查找。原trace无需重跑，离线解析得到目标kernel在CPU标记后87.871us启动，仅证明root探针采集可用，不能当VLA启动时间。原trace/原summary保持不变，派生解析结果保存M2/gpu-start-probe-trace-audit目录。普通用户模型采集权限仍需独立解决，不因此允许root模型或永久权限更改。
 
+# 模型请求到真实首GPU算子计时（待实机权限降级验证）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+sudo /home/wyk/venvs/lutvla/bin/python -u scripts/profile_rtc_startup.py
+```
+
+该入口不是root模型：sudo阶段只初始化CUPTI和128×128合成CUDA图。随后通过setresgid/setresuid永久切回SUDO_UID对应用户（真实/有效/保存UID全部相同），核对CapEff/CapPrm/CapAmb均0，再在普通用户推理线程里连续两次尝试采集真实kernel。若降权后采集不可用，立即停止，**不加载模型、不修改驱动或永久权限**。实机能否保留采集能力尚待此命令验证，不预先声称成立。可加`--permission-only`仅验证权限阶段，`--dry-run`不启动GPU。
+
+只有权限门通过后才创建M2/rtc-startup-timing产物、普通用户加载一次Full权重及RTC专家。沿用固定高频baseline、GPU锁、900/768MiB保护及120秒有限调频lease/恢复；模型不保留任何管理员能力。sudo验证缓存必须在同一终端有效，时钟预检失败时不加载权重。
+
+测量点0/50/100/200/500ms/1/2秒，每点3个随机块；21准备+21恢复，每次准备前在推理线程启动Profiler，保持其跨越准备/暂停/恢复，**不在恢复请求之后临时启用采集器**。恢复请求发出时间在主线程提交任务前记录，CPU marker与monotonic时间用进入区间前后括住；由同一trace的实际kernel事件映射首算子启动。若CPU/GPU标记同名只匹配CPU类别，若没有真实kernel或不满足请求时间区间则拒绝。
+
+结果分为请求→首kernel、首kernel→动作返回、请求→动作返回，区间相加等于总量；不重复计算升频或等待时间。这里固定已准备输入/场景，不含实时新图像获取及最终队列提交，不称新观测完整服务L。首kernel可能是输入/提示词处理中的GPU算子，不能只挑更晚的视觉主算子。
+
+每对准备/恢复单独导出PB_MODEL_RECOVERY_*.json，及时关闭释放Profiler，避免将模型加载/所有21请求累积进一份巨大trace。保存2次无Profiler参考调用用于诊断开销，但不足以严格校正Profiler扰动；**最终仍是带采集干预的诊断时间，不自动替换正常运行延迟模型**。CPU marker上下界只覆盖该标记入口的不确定性，不包含CUPTI时钟关联误差。
+
+产物summary.json保留降权身份/能力证明、请求三段时间；idle_scan.json保留真实空档、功率、时钟及逐请求gpu_start_timing。运行期保留768MiB后台保护，内存触线先中断主线程，5秒未结束则退出125；独立root频率helper按有限lease自行恢复，异常后仍需检查RESTORED。内核事件采集内存过大时应减少诊断样本而不是降低保护线。
+
+480项测试通过，9跳过、110子测试通过，3项既有环境警告；当前仅完成代码/时间分解/降权约束测试，未执行管理员初始化后降权的实机流程或模型首算子实测。不得据此先宣称启动开销已测得。
+
