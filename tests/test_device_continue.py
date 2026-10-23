@@ -63,6 +63,28 @@ def test_continue_history_plan_has_no_new_inference_and_bounded_indices(capsys):
     launch.assert_not_called()
 
 
+def test_history_resume_rejects_unchecked_or_duplicate_windows(tmp_path):
+    from perceptbudget.device_continue import load_history_resume
+    root=tmp_path/'M2';p=root/'run';p.mkdir(parents=True)
+    cfg={'output_root':str(tmp_path),'H':50,'N':5}
+    (p/'run.json').write_text(json.dumps({'config_snapshot':cfg}))
+    w=dict(profile='baseline',requested_history_seconds=0.,repeat=0,restored=True,
+        frequency_check={'matches':True},refresh_frequency_check={'matches':True},
+        committed_prefix_max_abs_error=0,executed_steps=5,deadline_overruns=0,
+        rows=[{'source_action_index':i,'inference_active':False} for i in range(5)])
+    for field in ('transient_continue','including_fresh_images'):
+        w[field]={'energy_j':1.,'power_coverage':{'coverage_fraction':1.,'missing_count':0}}
+    record={'scope':'No-inference Continue history','windows':[w]}
+    def save(): (p/'continue_control.json').write_text(json.dumps(record))
+    save();assert len(load_history_resume(p,cfg)['windows'])==1
+    record['windows'].append(w);save()
+    with pytest.raises(ValueError,match='duplicate'):load_history_resume(p,cfg)
+    record['windows']=[w];w['restored']=False;save()
+    with pytest.raises(ValueError,match='Unchecked'):load_history_resume(p,cfg)
+    w['restored']=True;record['preflight_only']=True;save()
+    with pytest.raises(ValueError,match='preflight'):load_history_resume(p,cfg)
+
+
 def test_short_or_nonfinite_prefix_rejected_before_environment_step():
     env = SimpleNamespace(step=lambda a: pytest.fail('Should not execute'))
     for actions in (np.zeros((4, 7)), np.full((5, 7), np.nan)):

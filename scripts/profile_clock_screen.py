@@ -74,11 +74,14 @@ def main():
     modes.add_argument('--selected-fast-clocks', action='store_true', help='Selected Fast: external pool2, full wrist, no state; three clocks, five requests each')
     parser.add_argument('--idle-recovery',action='store_true',help='With selected Fast only: three clocks by hot/0.2s/1s histories, five requests each')
     parser.add_argument('--live-service',action='store_true',help='With selected Fast only: live observation through submission, Full-prepared old actions')
+    parser.add_argument('--resume-continue',type=Path,help='With --continue-history only: preserve validated windows and fill missing indices')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.resume_continue and not args.continue_history:
+        parser.error('--resume-continue requires --continue-history')
     if args.idle_recovery and not args.selected_fast_clocks:
         parser.error('--idle-recovery requires --selected-fast-clocks')
     if args.live_service and (not args.selected_fast_clocks or args.idle_recovery):
@@ -91,6 +94,10 @@ def main():
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
     validate(config)
+    if args.resume_continue:
+        from perceptbudget.device_continue import load_history_resume
+        previous=load_history_resume(args.resume_continue,config)
+        config=dict(config,m2_continue_resume_run=str(args.resume_continue.resolve()))
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
         if args.continue_history:
@@ -217,6 +224,8 @@ def main():
                 command.append('--continue-camera-compare')
             if args.continue_history:
                 command.append('--continue-history')
+            if args.resume_continue:
+                command.extend(['--resume-continue',str(args.resume_continue.resolve())])
             if args.full_service:
                 command.append('--full-service')
                 command.extend(['--service-profiles', *service_profiles])

@@ -318,3 +318,15 @@ cd /home/wyk/workspace/PerceptBudget
 
 输出新`continue-history`目录的`continue_control.json`、summary及逐窗口trace/功率/频率记录。五步窗口能量与含恢复新图能量分开；历史控制动作不计入这五步窗口能量。所有有限lease结束后恢复原设备设置。
 
+## 中断后只补缺项
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --continue-history \
+  --resume-continue /home/wyk/workspace/任务产出/perceptbudget/M2/20261023T082538.298240Z-continue-history-c704c323
+```
+
+上述源批次完成34窗口，第35窗口恢复图像hash不匹配被拦住；同窗口动作与最终sim状态和参考逐元素一致，所有root日志均RESTORED。失败图像当时未保存，不能断言像素差异大小或已确定渲染抖动根因。新增续测逻辑不放宽图像一致性检查，再失败会保存actual图像、预期/实际hash、实际物理hash；若本进程参考像素可用，还保存reference与差异幅度。原批次保持invalid、原记录不改。
+
+续测先逐项验证原配置、唯一窗口键、动作源索引、频率/恢复、功率覆盖，复制已验证34条到新产物并保存来源，只运行缺失11窗口。模型累计加载数显式包含旧批次，不称全45窗单次加载。源窗口跨频率终态/图像仍由汇总配对检查。没有完成的失败窗口不计结果、不挑成功覆盖失败证据。
+

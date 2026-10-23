@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23Continue历史c704c323用户报错：34/45有效完成，高15中15低热4；35低热repeat4恢复图像hash不匹配。35的动作与参考完全同、finalsim逐元素0差/hash同；全部root logs RESTORED。失败图像未存，不能断言单像素渲染误差，未放宽阈值。新增--resume-continue先验配置/唯一键/索引/频率/功率/恢复检查，新run引用并保留34条，仅补11；保留原invalid/加载累计记账。再失败保存实际像素/expectedhash/actualhash/finalphysics，当前参考像素有时额外保存差值。不调频续测GPU预检c3c01993完成11缺项、配对/索引通过、原异常未复现，显式mock/preflight_only不填频率成本。471pass9skip110subtests，3既有环境警告。实际sudo续测未执行，命令docs/M2_CLOCK_CONTROL.md末节。报告任务指导与相关参考/PerceptBudget_M2_Continue历史窗中断排查_20261023.md；备份archive/pre-continue-history-resume-20261023，FlashRT/根基线不改。
+
 - 2026-10-23用户续推后准备Continue历史窗：新增原入口--continue-history，45窗=3频率×0/.2/1秒无神经推理历史×5，沿用70ms配对周期，历史实际执行0/3/15旧动作后再执行5步，最多20/H50不重复前缀，最大495环境步；同目标频率下真实控制而非静止睡眠/升频恢复，不作硬件idle或安全B_safe证明。相机暂停但控制继续，结束后强制新图；同历史跨频率物理终态/恢复图像配对。4秒lease沿用既有白名单，默认生产不改。无调频预检436ca88a9窗 completed（1重复，共99步）：源索引连续/终态与恢复图像配对/无内存中断；频率与root为显式mock/preflight_only，不能当成本证据。470pass9skip110subtests，3既有环境警告。真实sudo调频尚未执行，命令docs/M2_CLOCK_CONTROL.md末节；备份archive/pre-continue-history-20261023。先审核本项后再更新27格，不能提前称M2完成；FlashRT未改。
 
 - 2026-10-23新Fast完整服务89d41dc4用户执行完成并审核：15请求/1model/1expert/exit0，Full准备stateTrue/prefix665；FastFalse/340=320+20、0fallback，同轮跨频率图像/rawstate/噪声/动作一致、raw差0、freqmatch、coverage1/missing0、全restore，准备RAM1832MiB。高335.14ms7.4889J/中361.73ms7.5435J/低483.84ms7.3889J，低只省1.3%但慢44%，非显著性或整任务结论。与旧Full服务初始物理/旧动作/计时阶段framehash不同，不能当严格配对算35%收益。报告任务指导与相关参考/PerceptBudget_M2_新Fast完整服务结果_20261023.md。本项完成，接下来Continue历史窗必须在无推理期间持续执行且接续实际未执行索引，不能等完重放旧chunk开头，保持H50/观测年龄保护。

@@ -15,6 +15,41 @@ STEPS = 5
 REPEATS = 5
 
 
+def load_history_resume(directory,config):
+    """Resume only checked windows; never edit or relabel the failed source run."""
+    import json
+    directory=Path(directory).resolve()
+    root=(Path(config['output_root'])/'M2').resolve()
+    if directory.parent!=root:
+        raise ValueError('Continue resume source must be an M2 run')
+    prior=json.loads((directory/'run.json').read_text())['config_snapshot']
+    for key in ('checkpoint_provenance_revision','H','N','state_enabled','state_prompt_capacity',
+                'rtc_beta','rtc_author_order','rtc_exact_flash_attention','rtc_fused_norm','source_packed_conditioning'):
+        if prior.get(key)!=config.get(key):
+            raise ValueError('Continue resume configuration mismatch: '+key)
+    record=json.loads((directory/'continue_control.json').read_text())
+    if 'no-inference continue history' not in record.get('scope','').lower() or record.get('preflight_only'):
+        raise ValueError('Require real Continue history evidence, not preflight or camera comparison')
+    seen=set()
+    for w in record['windows']:
+        key=(w['profile'],w['requested_history_seconds'],w['repeat'])
+        n={0.:0,.2:3,1.:15}.get(key[1])
+        if key in seen or key[0] not in MATRIX_PROFILES or key[2] not in range(REPEATS) or n is None:
+            raise ValueError('Invalid or duplicate Continue resume window')
+        seen.add(key)
+        if (not w.get('restored') or not w['frequency_check']['matches']
+                or not w['refresh_frequency_check']['matches'] or w['committed_prefix_max_abs_error']!=0
+                or w['executed_steps']!=5 or w['deadline_overruns']
+                or [r['source_action_index'] for r in w['rows']]!=list(range(n,n+5))
+                or any(r['inference_active'] for r in w['rows'])):
+            raise ValueError('Unchecked Continue resume window')
+        for field in ('transient_continue','including_fresh_images'):
+            p=w[field]['power_coverage']
+            if p['coverage_fraction']!=1 or p['missing_count'] or w[field]['energy_j'] is None:
+                raise ValueError('Incomplete Continue resume power')
+    return record
+
+
 class ContinueLease(Lease):
     def __init__(self, profile, directory, label, *, duration=2):
         if profile not in MATRIX_PROFILES:
@@ -112,11 +147,27 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             raise ValueError('History windows cannot compare camera modes')
         result.update(planned_windows=45,max_control_steps=495,comparison_period_seconds=.07,
             scope='No-inference Continue history at fixed target clocks: execute0/3/15 original actions, then measure next5 at70ms ticks; no repeated prefix, no hardware sleep or safe-buffer claim')
+        if config.get('m2_continue_resume_run'):
+            source=Path(config['m2_continue_resume_run'])
+            previous_record=load_history_resume(source,config)
+            result['windows']=previous_record['windows']
+            for w in result['windows']:
+                w.setdefault('evidence_run',str(source))
+            result.update(resume_source=str(source),resumed_windows=len(result['windows']),
+                prior_model_loads=previous_record.get('model_loads',1),current_process_model_loads=1,
+                model_loads=previous_record.get('model_loads',1)+1)
     path = directory/'continue_control.json'
     env = None
     reference = None
     refreshed_reference = None
     history_frame_references={}
+    history_frame_hashes={w['requested_history_seconds']:w['refreshed_frame_sha256'] for w in result['windows']}
+    done={(w['profile'],w.get('requested_history_seconds'),w['repeat']) for w in result['windows']}
+    if result['windows']:
+        first_window=result['windows'][0]
+        from perceptbudget.h50_checkpoint import decode_actions
+        reference=(first_window['initial_sim_sha256'],first_window['initial_frame_sha256'],
+                   decode_actions(np.asarray(first_window['prediction']['actions_raw'],dtype=np.float32),stats)[:STEPS])
     def frame(obs):
         return np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1)
     try:
@@ -131,6 +182,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             else:
                 plan=[(r,off,0.) for r,off in plan]
             for repeat, cameras_disabled,history in plan:
+                if (profile,history,repeat) in done:
+                    continue
                 label = profile+'_'+str(repeat)+('_off' if cameras_disabled else '_on') if camera_compare else profile+'_'+str(repeat)
                 if history_windows:
                     label+='_'+str(history)
@@ -199,9 +252,22 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                             if camera_compare and not np.array_equal(refreshed, refreshed_reference):
                                 raise RuntimeError('Restored fresh camera images differ across paired windows')
                             if history_windows:
-                                reference_frame=history_frame_references.setdefault(history,refreshed.copy())
-                                if not np.array_equal(refreshed,reference_frame):
+                                current_hash=hashlib.sha256(refreshed.tobytes()).hexdigest()
+                                expected_hash=history_frame_hashes.setdefault(history,current_hash)
+                                if current_hash!=expected_hash:
+                                    reference_frame=history_frame_references.get(history)
+                                    arrays={'actual':refreshed}
+                                    diagnostic=dict(label=label,expected_sha256=expected_hash,actual_sha256=current_hash,
+                                        actual_final_sim_sha256=hashlib.sha256(np.asarray(window['rows'][-1]['after']['sim_state'],dtype=np.float64).tobytes()).hexdigest(),
+                                        reference_pixels_available=reference_frame is not None)
+                                    if reference_frame is not None:
+                                        arrays['reference']=reference_frame
+                                        delta=np.abs(refreshed.astype(np.int16)-reference_frame.astype(np.int16))
+                                        diagnostic.update(max_abs_pixel_difference=int(delta.max()),changed_elements=int(np.count_nonzero(delta)))
+                                    np.savez_compressed(directory/(label+'_image_mismatch.npz'),**arrays)
+                                    _write_json_atomically(directory/(label+'_image_mismatch.json'),diagnostic)
                                     raise RuntimeError('Restored history camera images differ across paired clocks')
+                                history_frame_references.setdefault(history,refreshed.copy())
                             window['refreshed_frame_sha256'] = hashlib.sha256(refreshed.tobytes()).hexdigest()
                             window['fresh_acquisition'] = acquisition
                             refreshed_stop = time.monotonic()
