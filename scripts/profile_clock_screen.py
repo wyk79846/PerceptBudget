@@ -70,6 +70,7 @@ def main():
     modes.add_argument('--fast-clocks', action='store_true', help='Old-KV expert-only fixed-input RTC, three clock points, five samples each')
     modes.add_argument('--visual-clocks', action='store_true', help='Single wrist camera context plus RTC at three clock points')
     modes.add_argument('--pooled-clocks', action='store_true', help='Dual-view factor2 token pooling context plus RTC at three clock points')
+    modes.add_argument('--selected-fast-clocks', action='store_true', help='Selected Fast: external pool2, full wrist, no state; three clocks, five requests each')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -85,6 +86,12 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.selected_fast_clocks:
+            print(json.dumps(dict(model_loads=1,profiles=MATRIX_PROFILES,samples=15,
+                num_views=2,pool_factor=2,pooled_view='agent',visual_tokens=320,H=50,N=5,
+                state=False,full_preparation_state=True,service_measurement=False,
+                context_recomputed=True,static_resident_hold=True)))
+            return 0
         if args.continue_camera_compare:
             print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, windows=30,
                 max_control_steps=150, repeats_per_camera_mode=5, step_period_seconds=.07,
@@ -150,18 +157,22 @@ def main():
                          clock_matrix=args.matrix, continue_control=args.continue_control or args.continue_camera_compare,
                          full_service=args.full_service, service_profiles=service_profiles,
                          fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
-                         pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare)
+                         pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
+                         selected_fast_clocks=args.selected_fast_clocks)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    purpose = 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    if args.selected_fast_clocks:
+        config=dict(config,m2_selected_fast_clocks=True,m2_fast_no_state=True,
+                    m2_selected_fast_geometry='external64_wrist256')
+    purpose = 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks:
+            if args.matrix or args.continue_control or args.continue_camera_compare or args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -187,6 +198,8 @@ def main():
                 command.append('--visual-clocks')
             if args.pooled_clocks:
                 command.append('--pooled-clocks')
+            if args.selected_fast_clocks:
+                command.append('--selected-fast-clocks')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
@@ -212,7 +225,7 @@ def main():
                 return 0
             filename = 'clock_matrix.json' if args.matrix else 'clock_recovery.json' if args.recovery else 'clock_transitions.json' if args.transitions else 'clock_screen.json'
             record = json.loads((run/filename).read_text())
-            if record['status'] != 'completed' or len(record['conditions']) != (3 if args.fast_clocks or args.visual_clocks or args.pooled_clocks else 9 if args.matrix else 6 if args.recovery else 4):
+            if record['status'] != 'completed' or len(record['conditions']) != (3 if args.fast_clocks or args.visual_clocks or args.pooled_clocks or args.selected_fast_clocks else 9 if args.matrix else 6 if args.recovery else 4):
                 raise RuntimeError('Incomplete clock screen')
             if args.transitions or args.recovery or args.matrix:
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],

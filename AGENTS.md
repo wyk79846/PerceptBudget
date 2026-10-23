@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户要求M2逐条执行并逐步汇报。当前第1项新Fast三频率计算成本：已新增原入口--selected-fast-clocks，高/中/低各5请求、1model，共享Full权重构建external64+wrist256/no-state前端，保留原频率预检/lease恢复/GPU锁/内存保护，非完整服务L。GPU无调频预检a96c4784 completed：320视觉token、有效prefix340、池化布局0差、两次同seed动作0差、无state/慢回退，step图parity0；462pass9skip110subtests，3既有环境警告。正式三频率实测未启动：沙盒外sudo -n仍要求密码，不能代输；用户需普通终端运行python scripts/profile_clock_screen.py --selected-fast-clocks（venv路径见docs/M2_CLOCK_CONTROL.md）。待用户完成后先审查动作/频率/功率覆盖/恢复再汇报第1项，不跳做第2项或称成本已测完。FlashRT/生产默认未改；备份archive/pre-selected-fast-clocks-20261023。
+
 - 最新用户已同意采用Fast候选：外部factor2池化64+腕部完整256、Fast不带state，Full双图512带state；暂不扩factor4。仅选定M2候选，正式基线不改，不将三task0一次成功当总体质量证明。目前4.5补表：新候选三频率/完整服务/起始历史成本缺失，旧双图128token三频率数值不能移用。Full/Continue和调频恢复已有证据保留，空闲扩展仍暂缓。已更新M2计划书最新状态，避免沿用旧“Fast未选定”。
 
 - 2026-10-23补采Fast无state：a40094a3完成Spatial纯Full77步6.051s140.569J vs候选79步6.252s142.211J，均success/audit/0underflow；切Goal触exact无state文本长度断言，父invalid，已完成子记录保留非任务失败。只补缺失Goal1591e7c4 completed：Full123步7.175s171.289J vs候选124步7.183s168.979J，均success/audit/0underflow/初态匹配/coverage1。2次model/专家load，非单进程全完成，无内存保护。Fast中位347.78/346.96ms，连Object342.42ms三task0均成功各1次；相比此前Fast带state约快21–22%，任务时间和能量不一致，不宣称系统节能或总体成功率。当前无state前端跨不同任务文本长度不能直接复用，保留精确长度fail-closed，不擅改。报告任务指导与相关参考/PerceptBudget_Fast无state补充采集_20261023.md；本轮无代码/FlashRT/根基线修改，进程已结束。

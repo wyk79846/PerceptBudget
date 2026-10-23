@@ -262,3 +262,16 @@ cd /home/wyk/workspace/PerceptBudget
 
 频率先预检再加载模型，每档完成后恢复。结果写入新M2 run的full_service.json、分档功率文件和summary.json；失败时保留证据，不把未完成数据算作有效成本表。
 
+# 已选Fast三频率成本初测（2026-10-23）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --selected-fast-clocks
+```
+
+普通终端执行，需要sudo验证，不使用systemd-run。先三频率控制及恢复预检，再一次加载Full权重，使用项目侧共享权重前端构建Fast：外部factor2池化64+腕部完整256=320视觉token，Fast无state且文本容量为实际长度。Full准备仍带state，不改变生产默认或FlashRT。
+
+高/中/低频各2次预热、5次请求，共15个计入样本；噪声列表逐档配对，记录实际频率、动作跨频率误差、功率覆盖和恢复。固定观测、旧动作及RTC的delay/executed=5，用于隔离计算成本；不是Full/Fast闭环调度、实时新观测完整服务L或总体成功率。另有3秒静止常驻保持窗口，不称真实Continue。
+
+输出`selected-fast-clock-screen`父目录内`clock_screen.json`、分档功率/频率/动作文件和`summary.json`。池化布局错误、出现state、几何不符、动作非有限、慢路径、频率不匹配或跨频率动作差异均拒绝；保留内存保护与恢复机制。旧双图128token标定结果不能代替本轮。
+

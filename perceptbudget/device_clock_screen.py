@@ -132,6 +132,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, f
     if visual_clocks:
         result['scope'] = ('Prepared '+('dual-view factor2 token-pooling' if metadata.get('vision_pool_factor') == 2 else 'single-wrist-view')+
                            ' context and complete RTC compute; not live service, quality certification or task energy')
+        if metadata.get('selected_fast'):
+            result['scope']='Selected Fast external64+wrist256, no state, prepared-input complete RTC compute; not live service L, task energy or true Continue'
     if fast_clocks:
         result['scope'] = 'Isolated old-KV expert-only RTC compute; fresh Full before each sample excluded; not fresh perception, service L, success rate or task energy'
     _write_json_atomically(directory/'clock_screen.json', result)
@@ -169,6 +171,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, f
                         monitor.sample()
                         if fast_clocks and request.get('kv_recompute', {}).get('mode') != 'expert_only':
                             raise RuntimeError('Fast sample did not skip context compute')
+                        if metadata.get('selected_fast') and (request['rtc_guidance'].get('state_in_prompt') is not False
+                                or adapter.pipeline.vision_seq_enc!=320 or adapter.pipeline.vision_pool_factor!=2
+                                or adapter.pipeline.num_views!=2):
+                            raise RuntimeError('Selected Fast input or geometry changed')
                         lease.ensure()
                         finite = bool(np.isfinite(actions).all())
                         fallback = request.get('rtc_guidance', {}).get('variable_length_fallback')

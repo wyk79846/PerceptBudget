@@ -115,7 +115,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
                      continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
                      visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False,
-                     shared_view_kind='wrist'):
+                     shared_view_kind='wrist',selected_fast_clocks=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -138,6 +138,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         raise ValueError('Invalid fixed-view probe configuration')
     if visual_clocks and kind != 'single':
         raise ValueError('Visual clock probe requires single-view geometry')
+    if selected_fast_clocks and (kind!='full' or any((fast_clocks,visual_clocks,pooled_clocks,shared_views))):
+        raise ValueError('Selected Fast requires isolated Full weight loading')
     config = dict(config, m2_profile=True, m2_view='wrist' if visual_clocks else 'full' if kind == 'full' else 'agent',
                   rtc_audit_inputs=False, rtc_audit_attention_same_input=False,
                   rtc_audit_fused_norm=False)
@@ -177,6 +179,19 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     views = ('wrist',) if visual_clocks else ('full',) if kind == 'full' else ('agent', 'wrist')
     initial = select_images(snapshot, views[0])
     base._infer_actions(model, initial, task['instruction'], 50, {})
+    full_cleanup=None
+    if selected_fast_clocks:
+        from perceptbudget.shared_visual_context import wrist_frontend
+        from flash_rt.api import VLAModel
+        fast_model=VLAModel(wrist_frontend(model._pipe,torch,fast_kind='pool2_agent',no_state=True),'torch')
+        enable(fast_model)
+        snapshot=dict(snapshot,state=None)
+        initial=select_images(snapshot,'full')
+        base._infer_actions(fast_model,initial,task['instruction'],50,{})
+        full_cleanup=release_unused_native_expert(model,torch)
+        model=fast_model
+        config.update(m2_vision_pool_factor=2,m2_pool_view='agent',m2_fast_no_state=True,
+                      m2_selected_fast_clocks=True)
     if shared_views:
         if kind != 'full' or any((fast_clocks, visual_clocks, pooled_clocks, clock_screen)):
             raise ValueError('Shared view feasibility requires isolated Full geometry')
@@ -219,7 +234,10 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
         pooled_view=config.get('m2_pool_view','both'),pool_layout_audit=pool_layout,
         clock_settings_changed=False, flashrt_modified=False)
-    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks or visual_clocks or pooled_clocks:
+    if selected_fast_clocks:
+        result.update(selected_fast=True,state_in_prompt=False,full_preparation_state=True,
+                      full_native_expert_release=full_cleanup)
+    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks or visual_clocks or pooled_clocks or selected_fast_clocks:
         if kind != 'full' and not visual_clocks:
             raise ValueError('Clock screening requires unmodified Full views')
         if full_service:
@@ -240,7 +258,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         if visual_clocks:
             kwargs['visual_clocks'] = True
             result['selected_view'] = 'wrist'
-        if pooled_clocks:
+        if pooled_clocks or selected_fast_clocks:
             kwargs['visual_clocks'] = True
         if camera_compare:
             kwargs['camera_compare'] = True

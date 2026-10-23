@@ -138,6 +138,19 @@ def test_pooled_clock_plan_keeps_both_images_but_reduces_encoder_tokens(capsys):
     launch.assert_not_called()
 
 
+def test_selected_fast_clock_plan_is_mixed_pool_without_state(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--selected-fast-clocks','--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['visual_tokens']==320 and plan['pooled_view']=='agent'
+    assert plan['state'] is False and plan['full_preparation_state'] is True
+    assert plan['model_loads']==1 and plan['samples']==15 and len(plan['profiles'])==3
+    assert not plan['service_measurement']
+    launch.assert_not_called()
+
+
 def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
     import numpy as np
     from perceptbudget.device_clock_screen import screen, SCREEN_PROFILES
