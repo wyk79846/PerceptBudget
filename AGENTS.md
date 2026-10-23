@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23 Full/pool2交叉完成有效三组6回合：98163542的Spatial Full78success6.151s143.132J/交叉134success10.027s237.643J；0bb5adbd的Object Full142success8.633s210.045J/交叉280timeout16.120s399.134J；b7f00c7a的Goal Full123success7.229s172.077J/交叉118success6.942s162.235J。全部有效子run audit/配对初态/覆盖1/无underflow/fallback通过；最新双图/state，Full512/pool2=128token，布局0差，Fast约341–343ms。Full3/3池化2/3仅样本数，当前q5高比例轮换不合格；Goal单对有小收益，不能全否定或当显著性证明。前两父run分别换Object时767.1/进入Goal时716.2MiB触768保护，invalid但各已完成一组合法数据；第三独立Goal completed。有效6回合分3个进程/模型加载，不称一次常驻成功，跨任务内存峰值仍未解决。另eb069c20因未知279前缀中断，不计策略失败；已补历史池化证据/边界内2长度余量，不改实际输入或RTC。结果详见失败原因审核第11节。不再自动扩测/调参，基线/FlashRT未改。
+
 - 2026-10-23用户指定Full/token池化交叉。新增显式--pooled-alternation，复用已验证双上下文/单权重专家与原RTC：Full最新双图512视觉token，Fast最新双图native factor2池化128，state每次新编码，bootstrapFull后交替，q5N5H50。共享frontend泛化，不增加另套模型/项目；池化CPU layout检查、模式pool2单独延迟历史/audit几何、历史文本形状包络移位、未知前缀停止/900和768保护保留。三任务各纯Full/交叉6回合，--cross-suite，相关37单测通过。备份archive/pre-m2-pooled-alternation-20261023。实际闭环即将运行，尚无质量结果，不改FlashRT/根配置。
 
 - 2026-10-23剩余新腕部交叉ea8a0f95已完成：4回合1model/suffix，初始配对/audit/覆盖1/0underflow/无fallback或内存保护；最低记录RAM1024.8MiB。Object Full成功142步8.547s208.415J、腕部超时280步16.115s401.406J；Goal Full成功123步7.142s171.659J、腕部超时300步17.436s434.033J。结合Spatial单独ba07092e Full78成功vs腕部82成功，共Full3/3腕部1/3（两次加载，非同一进程三任务），任务J不含排空，排空另记报告。当前q5持续新腕部交叉不通过，不当默认Fast，不盲扩任务/调参；仅记录审计通过非所有实现无bug证明，Object/Goal失败动作尚未逐步定因。报告失败原因审核第10节已更新。
