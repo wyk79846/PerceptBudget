@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23剩余新腕部交叉ea8a0f95已完成：4回合1model/suffix，初始配对/audit/覆盖1/0underflow/无fallback或内存保护；最低记录RAM1024.8MiB。Object Full成功142步8.547s208.415J、腕部超时280步16.115s401.406J；Goal Full成功123步7.142s171.659J、腕部超时300步17.436s434.033J。结合Spatial单独ba07092e Full78成功vs腕部82成功，共Full3/3腕部1/3（两次加载，非同一进程三任务），任务J不含排空，排空另记报告。当前q5持续新腕部交叉不通过，不当默认Fast，不盲扩任务/调参；仅记录审计通过非所有实现无bug证明，Object/Goal失败动作尚未逐步定因。报告失败原因审核第10节已更新。
+
 - 2026-10-23第二次腕部闭环e868b51f因RAM754.4触768保护，0回合：两family34图准备后RAM约1033MiB，进入回合重置峰值耗尽余量；非数量异常/任务失败。不降低保护线。修复为只按历史同任务Full/wrist观测前缀形状包络预热，核对权重revision/H/N/state/cap与视图；三任务每family6/6/7图，含当前initialvalid，记录明确非穷尽。未知prefix在上下文后、专家前立即报invalid，不padding/慢路径/运行时捕获，不用历史动作决策。本人GPU单任务ba07092e已验证：1model/专家，Spatial0 Full成功78步6.1949秒，腕部交叉成功82步6.4310秒，audit/初态配对/0underflow通过；回合前RAM1425/1435MiB。仅证明本任务修复后通过，不推断跨任务内存完全稳定。新增--suites子集防重复Spatial；后续命令--visual-alternation --cross-suite --suites libero_object libero_goal，4回合/单模型，尚未运行。33项相关单测通过，备份archive/pre-fresh-wrist-memory-fix-20261023。
 
 - 2026-10-23首个真实腕部闭环8cb0b06c因建图数量校验退出：双视角与单视角各最多17个精确长度合并后超过SourceStepBank单组17上限，0回合，不是质量失败/内存保护。修复仅FreshViewRTCAdapter准备两组有界bank并DualGeometryBank分发，复用同原专家/权重/建图流；不改底层默认8/显式17限制、不padding/动态捕获/慢路径替代。每组独立KV存储，全部按原progress900保护；新增34长度拆组/回切/回退及18单组拒绝测试，相关37pass（沙盒CUDA警告）。尚无修复后GPU闭环结果，用户原命令可新run重试。备份archive/pre-fresh-wrist-bank-limit-fix-20261023。
