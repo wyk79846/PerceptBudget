@@ -301,10 +301,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         delay_queue = DelayQueue(config['rtc_initial_delay_steps'], config['rtc_delay_buffer_size'])
     mode_delay_queues=None
     if config.get('m2_split_delay'):
-        if not config.get('m2_expert_recompute') or delay_queue is None or rtc_adapter is None:
+        if not (config.get('m2_expert_recompute') or config.get('m2_visual_alternation')) or delay_queue is None or rtc_adapter is None:
             raise ValueError('Split delay requires explicit expert-recompute RTC experiment')
         mode_delay_queues={mode:DelayQueue(config['rtc_initial_delays_by_mode'][mode],config['rtc_delay_buffer_size'])
-                           for mode in ('full','expert_only')}
+                           for mode in config.get('m2_delay_modes', ('full','expert_only'))}
     current_request = None
     missed_triggers, underflows = [], []
     prefix_rejection = None
@@ -341,7 +341,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         selected_delay_queue=delay_queue
         if mode_delay_queues is not None:
             mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
-            request['planned_kv_mode']=mode
+            request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']=mode
             selected_delay_queue=mode_delay_queues[mode]
         rtc_previous_raw = None
         if rtc_adapter is not None and step > 0:
@@ -386,7 +386,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if delay_queue is not None:
                 request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
                 if mode_delay_queues is not None:
-                    request['rtc_guidance']['delay_history_mode']=request['planned_kv_mode']
+                    request['rtc_guidance']['delay_history_mode']=mode
                 request['rtc_guidance']['initialization_d_exceeds_s'] = delay > executed
         requests.append(request)
 
@@ -430,8 +430,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if delay_queue is not None and not current_request.get('delay_queue_observed'):
                 observed_queue=delay_queue
                 if mode_delay_queues is not None:
-                    mode=current_request['kv_recompute']['mode']
-                    if mode!=current_request['planned_kv_mode']:
+                    mode=current_request['context_refresh' if config.get('m2_visual_alternation') else 'kv_recompute']['mode']
+                    if mode!=current_request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']:
                         raise RuntimeError('Delay observation mode differs from planned inference')
                     observed_queue=mode_delay_queues[mode]
                 current_request['delay_queue_observed'] = observed_queue.observe(

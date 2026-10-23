@@ -25,19 +25,23 @@ def main():
     parser.add_argument('--split-delay',action='store_true',help='Three paired episodes: Full, shared-history reuse, per-mode-history reuse')
     parser.add_argument('--single-insertion',action='store_true',help='Two episodes: Full vs one expert-only insertion, with per-mode delay history')
     parser.add_argument('--cross-suite',action='store_true',help='Spatial/Object/Goal task0, Full vs repeated Full/Fast alternation, six episodes')
+    parser.add_argument('--visual-alternation',action='store_true',help='Fresh wrist-view context Fast instead of old KV; optionally combine --cross-suite')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT);validate(config)
     if args.cross_suite and (args.single_insertion or args.task_id != 0):
         parser.error('--cross-suite requires task0 and cannot use --single-insertion')
+    if args.visual_alternation and (args.single_insertion or args.split_delay):
+        parser.error('--visual-alternation cannot use old-KV insertion/split comparison flags')
     split_delay = args.split_delay or args.single_insertion or args.cross_suite
-    conditions = ['full','kv_reuse_split'] if args.cross_suite else ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
+    conditions = ['full','wrist_alternate'] if args.visual_alternation else ['full','kv_reuse_split'] if args.cross_suite else ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
     task_plan = [(suite,0) for suite in SUITES] if args.cross_suite else [(args.suite,args.task_id)]
     episode_count = len(conditions)*len(task_plan)
     if args.dry_run:
         print(json.dumps(dict(suite=args.suite,task_id=args.task_id,task_plan=task_plan,episodes=episode_count,
-            conditions=conditions,reuse='Exactly one expert-only request after bootstrap; all other requests Full' if args.single_insertion else 'Full/expert-only alternating; bootstrap always Full',
-            split_delay_comparison=split_delay, single_insertion=args.single_insertion,
-            H=50,N=5,q=5,state=True,state_on_reuse='last Full state remains in cached KV',
+            conditions=conditions,reuse='Full/fresh-wrist context alternating; bootstrap always Full' if args.visual_alternation else 'Exactly one expert-only request after bootstrap; all other requests Full' if args.single_insertion else 'Full/expert-only alternating; bootstrap always Full',
+            split_delay_comparison=split_delay or args.visual_alternation, single_insertion=args.single_insertion,
+            visual_alternation=args.visual_alternation, fast_inputs='fresh wrist image and current state' if args.visual_alternation else 'old KV',
+            H=50,N=5,q=5,state=True,state_on_reuse='fresh state encoded on every call' if args.visual_alternation else 'last Full state remains in cached KV',
             original_kv_expiry_enforced=True,num_views=2,pool=1,seed=7,init=0,model_loads=1)))
         return 0
     if args.worker:
@@ -45,13 +49,17 @@ def main():
             parser.error('Worker requires an M2 run directory')
         from perceptbudget.device_quality import resident_quality
         resident_quality(config,args.run_dir,'full',cleanup_gate=CLEANUP_GATE,
-            task_plan=task_plan,recompute_comparison=True,split_delay_comparison=split_delay,
-            single_insertion=args.single_insertion,paired_split=args.cross_suite)
+            task_plan=task_plan,recompute_comparison=not args.visual_alternation,
+            split_delay_comparison=split_delay and not args.visual_alternation,
+            single_insertion=args.single_insertion,paired_split=args.cross_suite and not args.visual_alternation,
+            visual_comparison=args.visual_alternation)
         return 0
-    cfg=dict(config,m2_profile=True,m2_expert_recompute=True)
-    run=create_run(cfg,'M2','expert-recompute-cross-suite' if args.cross_suite else 'expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
+    cfg=dict(config,m2_profile=True,m2_expert_recompute=not args.visual_alternation,
+             m2_visual_alternation=args.visual_alternation)
+    run=create_run(cfg,'M2','fresh-wrist-alternation' if args.visual_alternation else 'expert-recompute-cross-suite' if args.cross_suite else 'expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
     print('run_dir='+str(run),flush=True)
-    summary=dict(status='running',split_delay_comparison=split_delay,single_insertion=args.single_insertion,
+    summary=dict(status='running',split_delay_comparison=split_delay or args.visual_alternation,
+        visual_alternation=args.visual_alternation,single_insertion=args.single_insertion,
         task_plan=task_plan, scope='paired task episodes, no population success-rate or energy claim')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
@@ -62,6 +70,7 @@ def main():
             if args.split_delay:command+=['--split-delay']
             if args.single_insertion:command+=['--single-insertion']
             if args.cross_suite:command+=['--cross-suite']
+            if args.visual_alternation:command+=['--visual-alternation']
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode
@@ -79,25 +88,27 @@ def main():
                 episodes=[])
             for e in record['episodes']:
                 requests=json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())
+                metadata_key='context_refresh' if args.visual_alternation else 'kv_recompute'
+                fast_mode='wrist' if args.visual_alternation else 'expert_only'
                 if args.single_insertion:
                     expert_ids=[r['prediction_id'] for r in requests if r['kv_recompute']['mode']=='expert_only']
                     expected=[1] if e['view']=='kv_once' else []
                     if expert_ids!=expected:
                         raise RuntimeError('Single insertion mode did not execute exactly request1 as Fast')
-                if args.cross_suite:
-                    modes=[r['kv_recompute']['mode'] for r in requests]
-                    expected=['full' if e['view']=='full' or i%2==0 else 'expert_only' for i in range(len(modes))]
-                    if modes!=expected or (e['view']!='full' and modes.count('expert_only')<2):
+                if args.cross_suite or args.visual_alternation:
+                    modes=[r[metadata_key]['mode'] for r in requests]
+                    expected=['full' if e['view']=='full' or i%2==0 else fast_mode for i in range(len(modes))]
+                    if modes!=expected or (e['view']!='full' and modes.count(fast_mode)<2):
                         raise RuntimeError('Cross-suite condition did not exercise repeated Full/Fast alternation')
                 groups={}
-                for mode in ('full','expert_only'):
-                    rows=[r for r in requests[1:] if r['kv_recompute']['mode']==mode]
+                for mode in ('full',fast_mode):
+                    rows=[r for r in requests[1:] if r[metadata_key]['mode']==mode]
                     groups[mode]=dict(requests=len(rows),
                         inference_median_ms=statistics.median((r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000 for r in rows) if rows else None,
-                        context_median_ms=statistics.median(r['kv_recompute']['context_seconds']*1000 for r in rows) if rows else None,
+                        context_median_ms=statistics.median(r[metadata_key]['context_seconds']*1000 for r in rows) if rows else None,
                         estimated_delay_steps=[r['rtc_guidance']['delay_estimate_steps'] for r in rows],
                         actual_delay_steps=[r['rtc_guidance'].get('actual_delay_steps') for r in rows],
-                        max_age_steps=max((r['kv_recompute']['age_steps_at_request'] for r in rows),default=0))
+                        max_age_steps=max((r[metadata_key].get('age_steps_at_request',0) for r in rows),default=0))
                 summary['episodes'].append(dict(e,request_groups=groups))
             if not summary['paired_initial_hashes_equal']:
                 raise RuntimeError('Initial hashes do not match; not a paired quality comparison')

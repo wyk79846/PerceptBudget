@@ -45,6 +45,30 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    metadata=json.loads((tmp_path/'run.json').read_text())
+    metadata['config_snapshot'].update(rtc_paper_schedule=True,m2_visual_alternation=True,
+        m2_visual_fast_enabled=True,m2_split_delay=True,m2_delay_modes=['full','wrist'],
+        rtc_initial_delays_by_mode={'full':9,'wrist':5})
+    (tmp_path/'run.json').write_text(json.dumps(metadata))
+    for i,r in enumerate(requests):
+        mode='wrist' if i else 'full'
+        r['planned_context_mode']=mode
+        r['context_refresh']=dict(mode=mode,current_images_encoded=True,current_state_encoded=True,
+            source_prediction_id=i,source_observation_step=r['observation_step'],
+            num_views=1 if i else 2,visual_tokens=256 if i else 512,camera_indices=[1] if i else [0,1])
+    requests[1]['rtc_guidance'].update(delay_history_steps=[5],delay_history_mode='wrist',
+                                      delay_estimate_mode='mode_history_max')
+    save()
+    assert audit(tmp_path)['passed']
+    requests[1]['context_refresh']['source_observation_step']=0
+    save()
+    result=audit(tmp_path)
+    assert not result['passed']
+    assert 'fresh_visual_source' in [r['check'] for r in result['failures']]
+
+
 def test_split_history_audit_rejects_full_delay_used_for_expert(tmp_path):
     requests,events,save=fixture(tmp_path)
     metadata=json.loads((tmp_path/'run.json').read_text())

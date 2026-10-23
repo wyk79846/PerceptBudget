@@ -56,7 +56,7 @@ def audit(run):
         check('single_fast_committed',1 in committed)
         check('single_fast_actually_executed',any(r.get('source',{}).get('prediction_id')==1 for r in controls))
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
-    mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in ('full','expert_only')}
+    mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in cfg.get('m2_delay_modes', ('full','expert_only'))}
                     if cfg.get('m2_split_delay') else None)
     previous=None
     slacks=[]
@@ -86,6 +86,18 @@ def audit(run):
         else:
             normalized=(np.asarray(scene['raw_state'],dtype=np.float32)-low)/(high-low+1e-6)*2-1
         check('state_normalization',eq(request['model_state'],normalized),pid)
+        if cfg.get('m2_visual_alternation'):
+            visual=request.get('context_refresh',{})
+            expected_mode='wrist' if cfg.get('m2_visual_fast_enabled') and pid%2 else 'full'
+            check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
+            check('fresh_visual_inputs',visual.get('current_images_encoded') is True
+                  and visual.get('current_state_encoded') is True,pid)
+            check('fresh_visual_source',visual.get('source_observation_step')==origin
+                  and visual.get('source_prediction_id')==pid,pid)
+            check('fresh_visual_geometry',visual.get('num_views')==(1 if expected_mode=='wrist' else 2)
+                  and visual.get('visual_tokens')==(256 if expected_mode=='wrist' else 512)
+                  and visual.get('camera_indices')==([1] if expected_mode=='wrist' else [0,1]),pid)
+            check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})
             mode=k.get('mode')
@@ -121,8 +133,8 @@ def audit(run):
                 estimate=cfg.get('rtc_fixed_delay_estimate')
                 expected_history=history
                 if mode_histories is not None:
-                    mode=request.get('kv_recompute',{}).get('mode')
-                    check('planned_delay_mode_matches_execution',request.get('planned_kv_mode')==mode,pid)
+                    mode=request.get('context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute',{}).get('mode')
+                    check('planned_delay_mode_matches_execution',request.get('planned_context_mode' if cfg.get('m2_visual_alternation') else 'planned_kv_mode')==mode,pid)
                     check('delay_history_mode',g.get('delay_history_mode')==mode
                         and g.get('delay_estimate_mode')=='mode_history_max',pid)
                     expected_history=mode_histories.get(mode,[])
@@ -154,7 +166,7 @@ def audit(run):
             slacks.append(g['delay_estimate_steps']-actual)
             history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
             if mode_histories is not None:
-                mode=request['kv_recompute']['mode']
+                mode=request['context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute']['mode']
                 mode_histories[mode]=(mode_histories[mode]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         previous=c
     underflows=[]
