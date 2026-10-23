@@ -10,6 +10,12 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
+def quality_run_purpose(label):
+    # Keep the semantic episode/view label intact; only shorten the directory tag.
+    short = {'pool2_agent_alternate': 'pool2_agent_alt'}.get(label, label)
+    return 'fast-quality-' + short
+
+
 def install_render_buffer_cleanup(*, shared_egl=False):
     """Release MuJoCo render buffers, retain the upstream EGL-destroy workaround.
 
@@ -430,7 +436,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m2_split_delay']=view!='full'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
-                    active = create_run(child_cfg, 'M2', 'fast-quality-'+label)
+                    active = create_run(child_cfg, 'M2', quality_run_purpose(label))
                     trace_dir = active/'rtc'
                     trace_dir.mkdir()
                     _write_json_atomically(active/'control_period_calibration.json', calibration)

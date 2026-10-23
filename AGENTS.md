@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23温和压缩368593f4失败原因已定位：Full Object0成功142步8.538秒/audit通过，进入候选前create_run用途fast-quality-pool2_agent_alternate长34超32字符，非内存保护/候选质量失败。仅将目录用途缩短pool2_agent_alt，语义view/condition不变，原始invalid证据不改。增加所有视觉候选用途长度/唯一性契约测试；less-fast原标签合法。需用户原命令重跑，不声称候选已有闭环结果。备份archive/pre-mixed-label-fix-20261023。
+
 - 2026-10-23用户要三项指令：温和压缩（Full/wrist256+agent64=320交叉）、降低Fast比例（FullFullFast，双池化128）、先查交接跳变（离线，不擅加融合）。已实现--mixed-pooled-alternation、--full-per-fast2、受约束标签gentle-compression/less-fast；固定Object0每项Full/候选各1，共4闭环回合，由用户执行。q5/N5/H50/state/RTC/autotune均不改；新调度bootstrap0Full，ratio2时pid2/5/8为Fast，校准显式定位Fast且bootstrap重置。共用专家/权重，已有MixedViewPipeline接入共享前端；GPU固定输入95cae12a验证实际64/256 tokens、prefix665/473、布局和6回切0差、无fallback，非闭环结果。离线analyze_visual_handoffs按标签最新父run读取，禁止回退旧成功，按实际交接及同目标步比较，不改动作。已用旧Goal日志c40d243c验证可运行。52项相关单测通过；全回归454通过、9跳过、110子测试通过，3项既有环境警告。任务指导与相关参考/PerceptBudget_Fast改进三项对照_20261023.md含三命令/预算/限制。备份archive/pre-m2-three-candidate-tests-20261023，正式基线和FlashRT未改。
 
 - 2026-10-23用户要求严查池化路径。静态逐项核查FlashRT pool位置/128token/语言与RoPE偏移、共享权重/独立KV及串行输入；FlashRT仓库clean未改。新增audit_pooled_path.py取Object失败request1/19/35顺反序，独立正常构造pool2 vs实际共享Full扰动后pool2，双方各6回放/各1load、无环境。生产autotune审计f16f1ccf：pool/位置0差，KV和动作有差，最终action最大0.019773；shared raw与原记录0差、源帧预处理hash一致。控制实验f341f9f4仅双侧heuristic-first全部token/KV/位置/raw/7维action0差，更支持算法选择/BF16数值路径差异，不是池化接入错误；无实际algoID/闭环验证，不声称唯一因果或数值差无害。未替换生产autotune。修正混合回合summary沿用Full512/pool1及错误scope为逐模式几何；加激活几何/pool factor/真实prefix=vision+prompt断言、独立audit检查，纯日志断言无数值改变。449pass9skip110subtests、3既有环境警告。新报告任务指导与相关参考/PerceptBudget_池化接入核查_20261023.md。备份archive/pre-pooling-path-audit-20261023及archive/pre-pool-audit-guards-20261023。跨任务RAM问题未解决，不新开闭环/调参/训练。

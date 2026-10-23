@@ -2,6 +2,16 @@
 from perceptbudget.device_quality import calibration_plan, select_candidate, SUITES
 
 
+def test_visual_quality_purposes_fit_run_directory_contract():
+    from perceptbudget.device_quality import quality_run_purpose
+    from perceptbudget.experiment import _PURPOSE_PATTERN
+    labels = ('full', 'wrist_alternate', 'pool2_alternate', 'pool2_agent_alternate')
+    purposes = [quality_run_purpose(label) for label in labels]
+    assert all(_PURPOSE_PATTERN.fullmatch(purpose) for purpose in purposes)
+    assert len(set(purposes)) == len(labels)
+    assert quality_run_purpose('pool2_alternate') == 'fast-quality-pool2_alternate'
+
+
 def rows(view, tid=0, outcome='success'):
     return [dict(suite=s, task_id=tid, view=view, outcome=outcome,
                  audit_passed=True, underflow_steps=0) for s in SUITES]
