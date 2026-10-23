@@ -113,7 +113,7 @@ def select_images(snapshot, view):
 
 def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_screen=False,
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
-                     continue_control=False):
+                     continue_control=False, full_service=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -200,10 +200,12 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
         pooled_view=config.get('m2_pool_view','both'),pool_layout_audit=pool_layout,
         clock_settings_changed=False, flashrt_modified=False)
-    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control:
+    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service:
         if kind != 'full':
             raise ValueError('Clock screening requires unmodified Full views')
-        if continue_control:
+        if full_service:
+            from perceptbudget.device_service import screen
+        elif continue_control:
             from perceptbudget.device_continue import screen
         elif clock_recovery or clock_matrix:
             from perceptbudget.device_clock_recovery import screen
