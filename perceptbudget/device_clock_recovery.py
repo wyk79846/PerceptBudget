@@ -87,6 +87,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, m
         total_requests=45 if matrix else 30, first_gpu_operator_timestamp=None,
         matrix=matrix, reference_label='baseline_hot' if matrix else 'hot_pre',
         candidate_clock_profiles={p: PROFILES[p] for p in MATRIX_PROFILES} if matrix else None)
+    if metadata.get('selected_fast'):
+        result['scope']='Selected Fast external64+wrist256 without state: prepared-input recovery plus RTC, excluding live acquisition; not full service L or true Continue'
     reference = None
     last_end = None
     path = directory/('clock_matrix.json' if matrix else 'clock_recovery.json')
@@ -120,6 +122,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, m
                         lease.receive('REQUEST_ACK', index)
                         if not np.isfinite(actions).all() or request.get('rtc_guidance', {}).get('variable_length_fallback'):
                             raise RuntimeError('Nonfinite actions or unexpected fallback')
+                        if metadata.get('selected_fast') and (request['rtc_guidance'].get('state_in_prompt') is not False
+                                or adapter.pipeline.vision_seq_enc!=320 or adapter.pipeline.num_views!=2
+                                or adapter.pipeline.vision_pool_factor!=2):
+                            raise RuntimeError('Selected Fast recovery input or geometry changed')
                         monitor.sample()
                         recovery = energy_window(monitor, event['up']['command_monotonic'], end)
                         cycle = energy_window(monitor, event['down']['command_monotonic'], end)
@@ -135,7 +141,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, m
                             measured_idle_state_dwell_seconds=(event['up']['command_monotonic']-
                                                                event['down']['observed_match_monotonic']),
                             recovery=recovery, cycle=cycle,
-                            action_sha256=hashlib.sha256(actions.tobytes()).hexdigest()))
+                            action_sha256=hashlib.sha256(actions.tobytes()).hexdigest(),
+                            guidance=request.get('rtc_guidance')))
                         last_end = end
                         outputs.append(actions.copy())
                         _write_json_atomically(directory/(label+'_requests.json'), row)
@@ -165,6 +172,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, m
                        max_abs_action_difference_vs_hot_pre=float(np.max(np.abs(outputs-reference))),
                        max_abs_action_difference_vs_reference=float(np.max(np.abs(outputs-reference))),
                        thermal_after=inventory()['thermal'])
+            if metadata.get('selected_fast') and row['max_abs_action_difference_vs_reference']!=0:
+                raise RuntimeError('Selected Fast recovery actions differ from paired hot reference')
             result['conditions'].append(row)
             _write_json_atomically(path, result)
             print('CLOCK_RECOVERY_DONE='+label, flush=True)
@@ -180,7 +189,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, m
                       'recovery_compute_median_ms', 'recovery_compute_max_ms', 'predict_median_ms',
                       'mean_recovery_energy_j', 'mean_cycle_energy_j',
                       'max_abs_action_difference_vs_reference', 'restored')
-            with (directory/'full_cost_table.csv').open('w', newline='') as out:
+            with (directory/('selected_fast_cost_table.csv' if metadata.get('selected_fast') else 'full_cost_table.csv')).open('w', newline='') as out:
                 writer = csv.DictWriter(out, fieldnames=fields, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(result['summary'])

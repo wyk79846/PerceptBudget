@@ -85,12 +85,14 @@ def test_recovery_dry_plan_loads_once_and_runs_thirty_requests(capsys):
 
 
 @pytest.mark.parametrize('matrix', [False, True])
-def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_path, matrix):
+@pytest.mark.parametrize('selected_fast',[False,True])
+def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_path, matrix,selected_fast):
     import numpy as np
     from perceptbudget.power import PowerReport
     calls, seeds = [], []
     def predict(*args, **kwargs):
         calls.append(kwargs)
+        kwargs['request']['rtc_guidance']={'state_in_prompt':False,'variable_length_fallback':False}
         return np.zeros((50, 32), dtype=np.float32)
     class FakeLease:
         events = []
@@ -124,8 +126,8 @@ def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_p
          patch('perceptbudget.device_clock_recovery.PowerMonitor', Monitor), \
          patch('perceptbudget.device_clock_recovery.frequency_check', return_value={'matches': True}), \
          patch('perceptbudget.device_clock_recovery.inventory', return_value={'thermal': []}):
-        result = screen(SimpleNamespace(predict=predict), {}, 'test', np.zeros((45, 32)),
-                        SimpleNamespace(manual_seed=seeds.append), tmp_path, {'model_loads': 1}, matrix=matrix)
+        result = screen(SimpleNamespace(predict=predict,pipeline=SimpleNamespace(vision_seq_enc=320,num_views=2,vision_pool_factor=2)), {}, 'test', np.zeros((45, 32)),
+                        SimpleNamespace(manual_seed=seeds.append), tmp_path, {'model_loads': 1,'selected_fast':selected_fast}, matrix=matrix)
     groups = 9 if matrix else len(PLAN)
     count = groups*5
     assert result['status'] == 'completed' and len(result['conditions']) == groups
@@ -135,7 +137,23 @@ def test_resident_screen_preserves_seed_pairing_and_records_whole_recovery(tmp_p
     assert all(r['recovery_compute_ms'] >= r['predict_ms'] for c in result['conditions'] for r in c['requests'])
     assert len(list(tmp_path.glob('*_actions.npz'))) == groups
     if matrix:
-        assert len((tmp_path/'full_cost_table.csv').read_text().splitlines()) == 10
+        name='selected_fast_cost_table.csv' if selected_fast else 'full_cost_table.csv'
+        assert len((tmp_path/name).read_text().splitlines()) == 10
+
+
+def test_selected_fast_recovery_cli_uses_existing_idle_histories(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--selected-fast-clocks','--idle-recovery','--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['samples']==45 and plan['model_loads']==1 and plan['state'] is False
+    assert plan['idle_histories_seconds']==[0,.2,1.]
+    assert plan['recovery_matrix'] and not plan['service_measurement']
+    launch.assert_not_called()
+    with patch('sys.argv',['probe','--idle-recovery','--dry-run']):
+        with pytest.raises(SystemExit):
+            main()
 
 
 def test_full_matrix_covers_three_service_profiles_and_three_idle_states(capsys):

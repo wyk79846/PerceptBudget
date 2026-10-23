@@ -275,3 +275,14 @@ cd /home/wyk/workspace/PerceptBudget
 
 输出`selected-fast-clock-screen`父目录内`clock_screen.json`、分档功率/频率/动作文件和`summary.json`。池化布局错误、出现state、几何不符、动作非有限、慢路径、频率不匹配或跨频率动作差异均拒绝；保留内存保护与恢复机制。旧双图128token标定结果不能代替本轮。
 
+# 已选Fast空闲恢复成本（第2项，2026-10-23）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --selected-fast-clocks --idle-recovery
+```
+
+普通终端运行，输入sudo密码。只加载一次模型；三档服务频率×热运行/0.2秒/1秒既有等待条件，每格5次，共45次。热运行同轮重测仅用于同噪声输出及恢复成本对照，不替换已完成第1项数据。短/长等待时均采用既有低频组合，再恢复至各服务档；不新增空闲时长扫描、不声称确认三种硬件睡眠状态。复用原恢复白名单、RUN/DONE握手、恢复与频率检查，不新增root控制行为。
+
+仍是320视觉token且不带state，固定观测/旧动作/d5s5；测量恢复发起到动作返回及含等待的循环能量，非实时新观测完整服务L或真实Continue。保存逐请求RTC/state/形状、恢复trace、实际频率/功率覆盖与动作；跨频率/历史动作非零差异拒绝。输出`clock_matrix.json`、`selected_fast_cost_table.csv`和`summary.json`，不使用误称Full的CSV文件名。GPU首算子时间未增加，不能把频率读回当首算子。
+

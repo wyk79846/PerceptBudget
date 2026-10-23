@@ -258,7 +258,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         if visual_clocks:
             kwargs['visual_clocks'] = True
             result['selected_view'] = 'wrist'
-        if pooled_clocks or selected_fast_clocks:
+        if pooled_clocks or (selected_fast_clocks and not clock_matrix):
             kwargs['visual_clocks'] = True
         if camera_compare:
             kwargs['camera_compare'] = True
