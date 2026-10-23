@@ -349,3 +349,18 @@ cd /home/wyk/workspace/PerceptBudget
 
 无调频GPU预检809fcbba已完成7点/1块，14次推理动作一致、物理冻结检查通过；实际0点约2ms、50ms点约51ms，显式preflight_only，不认证频率或状态。正式21点三块仍须执行上方命令，原0.2/1秒数据仅作探索证据。
 
+# 实际GPU首算子计时：先验证采集权限
+
+用户要求补请求发出→首GPU算子启动，不能使用CPU调用、频率读回或CUDA事件哨兵替代真实算子执行。当前机器普通用户的torch/CUPTI探针返回`CUPTI_ERROR_INSUFFICIENT_PRIVILEGES(35)`，导出的trace只有CPU marker、没有kernel事件；`/proc/driver/nvidia/params`显示`RmProfilingAdminOnly: 1`。未修改驱动参数、系统权限或sudo配置，也没有安装软件。
+
+先在普通终端运行这一条**仅探针**命令：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+sudo /home/wyk/venvs/lutvla/bin/python -u scripts/probe_gpu_start_timing.py
+```
+
+这条允许sudo的原因仅是采集权限检查：只运行128×128矩阵乘及一个CUDA图，**不加载VLA模型、不调频、不永久授予任何权限**。临时trace在独立临时目录内解析后清除；控制台输出`GPU_START_PROBE`的status、实际首kernel名称和时间偏移。有CPU marker而无kernel必须返回unavailable/退出2，不能假称已测GPU启动。
+
+探针的时间不代表模型启动成本，Profiler本身会引入额外开销。先确认管理员采集可用，再选择不改变生产默认、模型不作为root运行的采集方案；未确定具体方案前，不运行root模型、不setcap全局Python、不重载驱动或放开所有用户性能计数权限。完整模型的首算子/提交计时尚未完成，也不以此步骤声称补齐M2。
+
