@@ -24,12 +24,17 @@ def main():
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--split-delay',action='store_true',help='Three paired episodes: Full, shared-history reuse, per-mode-history reuse')
     parser.add_argument('--single-insertion',action='store_true',help='Two episodes: Full vs one expert-only insertion, with per-mode delay history')
+    parser.add_argument('--cross-suite',action='store_true',help='Spatial/Object/Goal task0, Full vs repeated Full/Fast alternation, six episodes')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT);validate(config)
-    split_delay = args.split_delay or args.single_insertion
-    conditions = ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
+    if args.cross_suite and (args.single_insertion or args.task_id != 0):
+        parser.error('--cross-suite requires task0 and cannot use --single-insertion')
+    split_delay = args.split_delay or args.single_insertion or args.cross_suite
+    conditions = ['full','kv_reuse_split'] if args.cross_suite else ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
+    task_plan = [(suite,0) for suite in SUITES] if args.cross_suite else [(args.suite,args.task_id)]
+    episode_count = len(conditions)*len(task_plan)
     if args.dry_run:
-        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,episodes=len(conditions),
+        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,task_plan=task_plan,episodes=episode_count,
             conditions=conditions,reuse='Exactly one expert-only request after bootstrap; all other requests Full' if args.single_insertion else 'Full/expert-only alternating; bootstrap always Full',
             split_delay_comparison=split_delay, single_insertion=args.single_insertion,
             H=50,N=5,q=5,state=True,state_on_reuse='last Full state remains in cached KV',
@@ -40,14 +45,14 @@ def main():
             parser.error('Worker requires an M2 run directory')
         from perceptbudget.device_quality import resident_quality
         resident_quality(config,args.run_dir,'full',cleanup_gate=CLEANUP_GATE,
-            task_plan=[(args.suite,args.task_id)],recompute_comparison=True,split_delay_comparison=split_delay,
-            single_insertion=args.single_insertion)
+            task_plan=task_plan,recompute_comparison=True,split_delay_comparison=split_delay,
+            single_insertion=args.single_insertion,paired_split=args.cross_suite)
         return 0
     cfg=dict(config,m2_profile=True,m2_expert_recompute=True)
-    run=create_run(cfg,'M2','expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
+    run=create_run(cfg,'M2','expert-recompute-cross-suite' if args.cross_suite else 'expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
     print('run_dir='+str(run),flush=True)
     summary=dict(status='running',split_delay_comparison=split_delay,single_insertion=args.single_insertion,
-        scope='paired single-task episodes, no population success-rate or energy claim')
+        task_plan=task_plan, scope='paired task episodes, no population success-rate or energy claim')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -56,18 +61,21 @@ def main():
                 '--run-dir',str(run),'--suite',args.suite,'--task-id',str(args.task_id)]
             if args.split_delay:command+=['--split-delay']
             if args.single_insertion:command+=['--single-insertion']
+            if args.cross_suite:command+=['--cross-suite']
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode
             if completed.returncode:
                 raise RuntimeError('Worker failed or memory guard stopped it; do not count as task failure')
             record=json.loads((run/'full_quality.json').read_text())
-            if record['status']!='completed' or len(record['episodes'])!=len(conditions):
+            if record['status']!='completed' or len(record['episodes'])!=episode_count:
                 raise RuntimeError('Incomplete paired output')
-            first=record['episodes'][0]
+            references={(e['suite'],e['task_id']):e['initial']['initial_hashes']
+                        for e in record['episodes'] if e['view']=='full'}
             summary.update(model_loads=record['model_loads'],suffix_loads=record['suffix_loads'],
-                paired_initial_hashes_equal=all(first['initial']['initial_hashes']==e['initial']['initial_hashes'] for e in record['episodes']),
+                paired_initial_hashes_equal=all(references[(e['suite'],e['task_id'])]==e['initial']['initial_hashes'] for e in record['episodes']),
                 mode_delay_calibration=record.get('mode_delay_calibration'),
+                mode_delay_calibrations=record.get('mode_delay_calibrations'),
                 episodes=[])
             for e in record['episodes']:
                 requests=json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())
@@ -76,6 +84,11 @@ def main():
                     expected=[1] if e['view']=='kv_once' else []
                     if expert_ids!=expected:
                         raise RuntimeError('Single insertion mode did not execute exactly request1 as Fast')
+                if args.cross_suite:
+                    modes=[r['kv_recompute']['mode'] for r in requests]
+                    expected=['full' if e['view']=='full' or i%2==0 else 'expert_only' for i in range(len(modes))]
+                    if modes!=expected or (e['view']!='full' and modes.count('expert_only')<2):
+                        raise RuntimeError('Cross-suite condition did not exercise repeated Full/Fast alternation')
                 groups={}
                 for mode in ('full','expert_only'):
                     rows=[r for r in requests[1:] if r['kv_recompute']['mode']==mode]

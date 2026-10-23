@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户要求持续交叉而非单次Fast。新增eval_expert_recompute.py --cross-suite，Spatial/Object/Goal各task0，Full对逐请求Full/Fast轮换，共6回合、目标单model/suffix，H50N5q5state及初始seed7/init0不改。每任务单独校准Full/Fast延迟并保留全部calibrations，初始hash只在同任务内配对；验证模式交替且至少2次Fast，记录audit沿用。不改FlashRT/生产基线，不训练/调频。24项相关测试通过，尚未运行。备份archive/pre-m2-cross-suite-recompute-20261023，命令见Fast失败原因审核报告第8节。
+
 - 2026-10-23用户继续后准备最小单次Fast插入：原eval_expert_recompute.py新增--single-insertion，Spatial0默认两回合Full/kv_once、单模型，request1仅一次expert_only，此后Full；RecomputeRTCAdapter单次标志仅bootstrap重置，context_mode规划纯读，默认交替行为不变。沿用分模式延迟校准、原RTC/环境/内存保护/记录audit，新增独立检查request1恰为唯一Fast且提交/实际执行。35项相关测试通过，未运行。备份archive/pre-m2-single-fast-insertion-20261023，预算/指令见Fast失败原因审核报告第7节。不训练/不调频/不改FlashRT或生产配置，不扩M3/M4触发优化。
 
 - 2026-10-23审核已有Fast失败：读取六单视角、全部池化已完成回合audit与代表逐步状态/抽样画面，失败多是满220/280/300步任务未成，非断供。外部单图Spatial0目标最大抬升1mm/开合符号切换16，双图pool2抬升3.4cm/切换9；Full对照抬升8.9cm/切换1。Object0外部单图目标抬升1cm对Full25.7cm；腕部Goal0操作偏离且盘子位移15.9cm。旧KV分模式延迟版成功176vsFull77，目标过5cm高度152vs60步，抓取推进明显变慢。5cm仅进展指标/指令切换非抓取次数，未唯一因果定位。旧混合池化RAM761.4保护为执行invalid非任务失败，数值回放已排除所测输入内存优化差异。报告任务指导与相关参考/PerceptBudget_M2_Fast失败原因审核_20261023.md；抽样图外部M2/20261023-fast-failure-review/failures.png。本轮无新GPU/模型/改算法。若补单次Fast插入机制检查先给预算审阅，不启动M3/M4调度优化。

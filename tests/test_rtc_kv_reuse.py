@@ -109,3 +109,18 @@ def test_single_insertion_plan_is_two_episodes_with_separate_delay_histories():
     assert plan['episodes']==2 and plan['model_loads']==1
     assert plan['conditions']==['full','kv_once'] and plan['split_delay_comparison']
     assert plan['single_insertion'] and plan['N']==5 and plan['q']==5
+
+
+def test_cross_suite_plan_is_six_repeated_alternation_episodes_one_model():
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    r=subprocess.run([sys.executable,str(script),'--cross-suite','--dry-run'],
+        capture_output=True,text=True,check=True)
+    plan=json.loads(r.stdout)
+    assert plan['episodes']==6 and plan['model_loads']==1
+    assert plan['task_plan']==[['libero_spatial',0],['libero_object',0],['libero_goal',0]]
+    assert plan['conditions']==['full','kv_reuse_split']
+    assert plan['split_delay_comparison'] and not plan['single_insertion']
+    assert plan['q']==5 and plan['N']==5 and plan['H']==50
+    invalid=subprocess.run([sys.executable,str(script),'--cross-suite','--single-insertion','--dry-run'],
+        capture_output=True,text=True)
+    assert invalid.returncode!=0

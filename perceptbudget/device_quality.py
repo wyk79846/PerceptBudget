@@ -160,7 +160,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False, paired_split=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -180,6 +180,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         raise ValueError('Split-delay comparison requires expert recompute comparison')
     if single_insertion and not (recompute_comparison and split_delay_comparison):
         raise ValueError('Single insertion requires explicit per-mode-delay recompute comparison')
+    if paired_split and (single_insertion or not (recompute_comparison and split_delay_comparison)):
+        raise ValueError('Paired split requires alternating per-mode-delay comparison')
     if recompute_comparison and (kind!='full' or task_plan is None or resume or
         config.get('m2_vision_pool_factor',1)!=1):
         raise ValueError('Expert recompute comparison requires Full geometry and explicit new tasks')
@@ -283,7 +285,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 views = (('full',) if kind == 'full' else
                          ('agent', 'wrist') if tid == 0 else (record['selection'],))
                 if recompute_comparison:
-                    views=('full','kv_once') if single_insertion else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
+                    views=('full','kv_once') if single_insertion else ('full','kv_reuse_split') if paired_split else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -350,6 +352,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     record['mode_delay_calibration']=dict(full=timing,expert_only=expert_timing,
                         initial_delays=cfg['rtc_initial_delays_by_mode'],
                         control_period_seconds=calibration['median_seconds'])
+                    record.setdefault('mode_delay_calibrations', []).append(dict(suite=suite, task_id=tid,
+                        **record['mode_delay_calibration']))
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
