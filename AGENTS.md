@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23继续M2：新增原入口--fast-clocks，复用RecomputeRTCAdapter、原模型准备/有限lease，三候选频率各5次、单模型，Full bootstrap重新建立上下文后才允许一次expert_only；该准备不计单次Fast时间，保存来源旧state/KV及age5、动作/频率检查、单请求能量和整批原功率。整批含Full准备不能作Fast总能量，单请求仍可能受INA响应尾迹污染，标为prepared-input计算短测而非Full同口径服务L/质量认证/整任务节能。未测单视角/token候选，不声称Fast全通过或27表完整。尚未实际GPU/调频；36项相关测试通过。备份archive/pre-m2-fast-clock-screen-20261023。用户命令见docs/M2_CLOCK_CONTROL.md末节。
+
 - 2026-10-23 Continue相机节能独立小测e619a28b完成，probe_continue_camera.py新增--energy：1环境/0模型，不调频，交替顺序10对，每回合旧记录首5动作，双方共同70ms/步以隔离速度，强制刷新新双图后再观察200ms尾迹。20窗口物理/奖励/恢复图像完全一致，能量完整覆盖。on/off执行J3.168887/3.127343（−1.311%），双方均force刷新后J3.221360/3.181039（−1.252%），再计200ms尾迹J5.023179/4.932117（−1.813%）；step均55.47/50.77ms。小量差且窗口短/INA响应有限，不宣称确定整任务节能或常驻模型M2成本；70ms实验节奏不是生产20Hz修改，未改正式Continue路径。备份archive/pre-continue-camera-energy-20261023。
 
 - 2026-10-23用户要求尝试Continue不获取图像。新增独立实验continue_camera.py/probe_continue_camera.py，不改生产基线/FlashRT/安装包。通过robosuite image Observable.set_enabled跳过传感器计算，不是mask/缓存假图；finally恢复，下一次推理前必须force_update新观测。实际GPU小测M2/20261023T024854.600352Z-continue-camera-check-c0a826a5：Spatial0同初态旧记录首5动作，on/off各3次30步，所有逐步physics/reward/done/success及恢复新图完全一致，渲染10→0，envstep约54→49ms，恢复双图约5.7–5.9ms。无模型加载/调频，无任务成功率或能量结论，尚未接入异步闭环或正式Continue成本表。更早6aab593b沙盒GPU访问失败后软件渲染，耗时不用于设备结论。7项单测通过，备份archive/pre-continue-no-camera-20261023。

@@ -91,6 +91,26 @@ def test_dry_plan_has_one_model_twenty_requests_without_sudo(capsys):
     launch.assert_not_called()
 
 
+def test_fast_plan_and_fresh_context_preparation(capsys):
+    from scripts.profile_clock_screen import main
+    from perceptbudget.device_clock_screen import prepared_prediction
+    with patch('sys.argv', ['probe', '--fast-clocks', '--dry-run']), \
+         patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main() == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record['model_loads'] == 1 and record['samples'] == 15
+    assert record['context_and_state_stale'] and not record['service_measurement']
+    launch.assert_not_called()
+    events = []
+    adapter = SimpleNamespace(config={'m2_reuse_enabled': True})
+    adapter.bootstrap = lambda *args: events.append(('full', adapter.config['m2_reuse_enabled'], args[-1]))
+    request = prepared_prediction(adapter, {}, 'prompt', None, fast_clocks=True,
+        seed=42, torch=SimpleNamespace(manual_seed=lambda seed: events.append(('seed', seed))))
+    assert events[0][0:2] == ('full', False)
+    assert events[1] == ('seed', 42)
+    assert adapter.config['m2_reuse_enabled'] and request['observation_step'] == 5
+
+
 def test_complete_screen_is_four_groups_of_five_with_same_seed_list(tmp_path):
     import numpy as np
     from perceptbudget.device_clock_screen import screen, SCREEN_PROFILES

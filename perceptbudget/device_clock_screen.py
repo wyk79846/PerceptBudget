@@ -9,7 +9,7 @@ import subprocess
 import threading
 import time
 
-from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES
+from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES, MATRIX_PROFILES
 from perceptbudget.device_control import inventory
 from perceptbudget.experiment import _write_json_atomically
 from perceptbudget.power import PowerMonitor
@@ -109,7 +109,18 @@ def frequency_check(events, profile, start, stop):
                 mismatches=mismatches, note='0.2s polling; not a hard real-time guarantee')
 
 
-def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
+def prepared_prediction(adapter, snapshot, prompt, previous, *, fast_clocks, seed, torch):
+    """Fresh Full before each isolated Fast, excluded from Fast compute timing."""
+    if fast_clocks:
+        adapter.config['m2_reuse_enabled'] = False
+        adapter.bootstrap(snapshot, prompt, dict(observation_step=0, prediction_id='prepared_full'))
+        adapter.config['m2_reuse_enabled'] = True
+    torch.manual_seed(seed)
+    request = dict(observation_step=5, prediction_id=1) if fast_clocks else {}
+    return request
+
+
+def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, fast_clocks=False):
     import numpy as np
     directory = Path(directory)
     result = dict(metadata, status='running', conditions=[], clock_settings_changed=False,
@@ -117,11 +128,13 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                         'task success, true Continue control load, or the 27-cell table',
                   repeats=5, fixed_delay_steps=5, fixed_executed_steps=5,
                   hold_seconds=3, lease_seconds=LEASE_SECONDS,
-                  profile_order=list(SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
+                  profile_order=list(MATRIX_PROFILES if fast_clocks else SCREEN_PROFILES), power_boundary='INA3221 VDD_IN module input')
+    if fast_clocks:
+        result['scope'] = 'Isolated old-KV expert-only RTC compute; fresh Full before each sample excluded; not fresh perception, service L, success rate or task energy'
     _write_json_atomically(directory/'clock_screen.json', result)
     reference_actions = None
     try:
-        for profile in SCREEN_PROFILES:
+        for profile in result['profile_order']:
             print('CLOCK_PROFILE_START='+profile, flush=True)
             row = dict(profile=profile, target=PROFILES[profile], requests=[])
             outputs = []
@@ -133,7 +146,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                 time.sleep(.5)
                 for _ in range(2):
                     lease.ensure(10)
-                    adapter.predict(snapshot, prompt, previous, delay=5, executed=5, request={})
+                    warm_request = (prepared_prediction(adapter, snapshot, prompt, previous,
+                        fast_clocks=True, seed=20261021, torch=torch) if fast_clocks else {})
+                    adapter.predict(snapshot, prompt, previous, delay=5, executed=5, request=warm_request)
                 monitor = PowerMonitor(.02, max_gap_seconds=.1)
                 monitor.start()
                 try:
@@ -141,12 +156,16 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                     start = time.monotonic()
                     for i in range(5):
                         lease.ensure(4)
-                        torch.manual_seed(20261021+i)
-                        request = {}
+                        request = prepared_prediction(adapter, snapshot, prompt, previous,
+                            fast_clocks=fast_clocks, seed=20261021+i, torch=torch)
+                        monitor.sample()
                         begin = time.monotonic()
                         actions = adapter.predict(snapshot, prompt, previous, delay=5,
                                                   executed=5, request=request)
                         end = time.monotonic()
+                        monitor.sample()
+                        if fast_clocks and request.get('kv_recompute', {}).get('mode') != 'expert_only':
+                            raise RuntimeError('Fast sample did not skip context compute')
                         lease.ensure()
                         finite = bool(np.isfinite(actions).all())
                         fallback = request.get('rtc_guidance', {}).get('variable_length_fallback')
@@ -155,7 +174,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                         row['requests'].append(dict(start_monotonic=begin, stop_monotonic=end,
                             milliseconds=(end-begin)*1000, finite_actions=finite,
                             action_sha256=hashlib.sha256(actions.tobytes()).hexdigest(),
-                            guidance=request.get('rtc_guidance')))
+                            guidance=request.get('rtc_guidance'), kv_recompute=request.get('kv_recompute'),
+                            energy=energy_window(monitor, begin, end)))
                         outputs.append(actions.copy())
                     stop = time.monotonic()
                     monitor.sample()
@@ -175,6 +195,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                 row['median_ms'] = statistics.median(r['milliseconds'] for r in row['requests'])
                 row['mean_compute_energy_per_request_j'] = (
                     None if row['compute']['energy_j'] is None else row['compute']['energy_j']/5)
+                if fast_clocks:
+                    energies = [r['energy']['energy_j'] for r in row['requests']]
+                    if any(e is None for e in energies):
+                        raise RuntimeError('Incomplete isolated Fast energy coverage')
+                    row['mean_compute_energy_per_request_j'] = statistics.mean(energies)
+                    row['compute']['scope'] = 'Batch includes excluded Full preparations; NOT Fast-only energy'
                 # Save before waiting out lease, so interrupted runs retain samples.
                 _write_json_atomically(directory/(profile+'_measurement.json'), row)
             row['restored'] = True
@@ -182,11 +208,15 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
             row['clock_trace'] = lease.events
             row['compute_frequency_check'] = frequency_check(lease.events, profile, start, stop)
             row['hold_frequency_check'] = frequency_check(lease.events, profile, hold_start, hold_stop)
+            if fast_clocks and (not row['compute_frequency_check']['matches'] or not row['hold_frequency_check']['matches']):
+                raise RuntimeError('Fast frequency check failed')
             outputs = np.asarray(outputs)
             np.savez_compressed(directory/(profile+'_actions.npz'), actions=outputs)
             if reference_actions is None:
                 reference_actions = outputs
             row['max_abs_action_difference_vs_baseline'] = float(np.max(np.abs(outputs-reference_actions)))
+            if fast_clocks and row['max_abs_action_difference_vs_baseline'] != 0:
+                raise RuntimeError('Fast actions changed across clock profiles')
             result['conditions'].append(row)
             _write_json_atomically(directory/'clock_screen.json', result)
             print('CLOCK_PROFILE_DONE='+profile+' median_ms='+str(row['median_ms']), flush=True)

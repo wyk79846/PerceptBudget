@@ -113,7 +113,7 @@ def select_images(snapshot, view):
 
 def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_screen=False,
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
-                     continue_control=False, full_service=False, service_profiles=('baseline',)):
+                     continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -128,6 +128,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     from perceptbudget.libero_input import load_libero_norm_stats
     from perceptbudget.rtc_memory import release_unused_native_expert
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    if fast_clocks:
+        from perceptbudget.rtc_kv_reuse import RecomputeRTCAdapter as OriginalOpenPiRTCAdapter
     from perceptbudget.power import _integrate_report
 
     if kind not in ('full', 'single') or not 1 <= repeats <= 20:
@@ -135,6 +137,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     config = dict(config, m2_profile=True, m2_view='full' if kind == 'full' else 'agent',
                   rtc_audit_inputs=False, rtc_audit_attention_same_input=False,
                   rtc_audit_fused_norm=False)
+    if fast_clocks:
+        config.update(m2_expert_recompute=True, m2_reuse_enabled=False)
     directory, source_run = Path(directory), Path(source_run)
     os.environ.update(MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='0',
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
@@ -200,7 +204,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         graph_audit=audit, native_expert_release=cleanup, measurements=[],
         pooled_view=config.get('m2_pool_view','both'),pool_layout_audit=pool_layout,
         clock_settings_changed=False, flashrt_modified=False)
-    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service:
+    if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks:
         if kind != 'full':
             raise ValueError('Clock screening requires unmodified Full views')
         if full_service:
@@ -216,6 +220,8 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         kwargs = dict(matrix=True) if clock_matrix else {}
         if full_service:
             kwargs['profiles'] = service_profiles
+        if fast_clocks:
+            kwargs['fast_clocks'] = True
         return screen(adapter, snapshot, task['instruction'], previous, torch,
                       directory, result, **kwargs)
     for view in views:

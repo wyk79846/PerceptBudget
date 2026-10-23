@@ -211,6 +211,19 @@ cd /home/wyk/workspace/PerceptBudget
 这是**静止仿真状态上的新观测Full服务成本**，包含额外的独立双路重新渲染，和此前“已准备输入”的计算时延分表；不冒充生产中从控制步直接取现成最新观测的耗时，也不是控制/推理竞争下的异步闭环、物理相机传输或真机服务分布。先检查本次边界和数据完整性，通过后再决定对哪些有效条件追加测量，不扩展空闲扫描或Fast插入比例。
 
 继续保留900/768MiB保护、已验证硬重置渲染释放gate和root自动/独立恢复。原结果不改写。输出到新`full-service`目录的full_service.json、worker.log、逐请求动作提交包、频率和原始功率。五个请求只报中位/最大和平均能量，不报可信P95/P99。本轮尚未执行，需要用户终端运行后分析。
+# Fast旧KV专家重算三档短测（2026-10-23）
+
+普通终端执行，需要sudo授权，模型普通用户运行且只加载一次：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_clock_screen.py --fast-clocks
+```
+
+三档各5次。每个样本先在固定输入上重建Full上下文（不计Fast耗时），然后仅复用一次KV、重算完整RTC专家。旧KV包括旧state，非新感知刷新；记录名义age5，不声称实际场景变化质量。预检/频率读回/恢复/内存保护沿用原机制。不修改FlashRT或生产配置。
+
+新run保存clock_screen.json及分档原功率/动作/恢复记录。每请求energy才是Fast窗口积分；整批compute含Full准备，不能除以5当Fast能耗。INA响应可能混入Full尾迹，窗口能量是诊断值，不能当独立专家能量或直接与实时观测Full服务计算节能率。其他Fast候选另行测量。
+
 # Full实时观测服务三档同轮补测（2026-10-23）
 
 高频单档已完成：476.703ms、11.499J。下一轮各档5次，共15次；一个常驻模型和环境，配对噪声、图像、state和输出动作。测量范围仍是冻结物理step5时的设备准备→实时观测→RTC→提交包就绪，不是异步任务成功率。没有新增空闲时长扫描，不修改FlashRT或生产基线。

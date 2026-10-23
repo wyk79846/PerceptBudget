@@ -66,6 +66,7 @@ def main():
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
     modes.add_argument('--continue-control', action='store_true', help='Fifteen bounded live LIBERO Continue windows, five fresh actions each')
     modes.add_argument('--full-service', action='store_true', help='Five high-frequency Full services including live sensor acquisition and queue preparation')
+    modes.add_argument('--fast-clocks', action='store_true', help='Old-KV expert-only fixed-input RTC, three clock points, five samples each')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -81,6 +82,11 @@ def main():
     validate(config)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.fast_clocks:
+            print(json.dumps(dict(model_loads=1, profiles=MATRIX_PROFILES, samples=15,
+                fresh_full_before_each=True, mode='expert_only', H=50, N=5,
+                service_measurement=False, context_and_state_stale=True)))
+            return 0
         if args.full_service:
             print(json.dumps(dict(model_loads=1, services=5*len(service_profiles), profiles=service_profiles, H=50, N=5,
                                   state=True, live_observation=True, observation_step=5,
@@ -123,18 +129,19 @@ def main():
         fixed_view_probe(config, args.run_dir, source, 'full', clock_screen=True,
                          clock_transitions=args.transitions, clock_recovery=args.recovery,
                          clock_matrix=args.matrix, continue_control=args.continue_control,
-                         full_service=args.full_service, service_profiles=service_profiles)
+                         full_service=args.full_service, service_profiles=service_profiles,
+                         fast_clocks=args.fast_clocks)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
-    purpose = 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.matrix or args.continue_control:
+            if args.matrix or args.continue_control or args.fast_clocks:
                 from perceptbudget.device_clocks import MATRIX_PROFILES
                 clock_preflight(run, MATRIX_PROFILES, summary)
             elif args.full_service:
@@ -152,6 +159,8 @@ def main():
             if args.full_service:
                 command.append('--full-service')
                 command.extend(['--service-profiles', *service_profiles])
+            if args.fast_clocks:
+                command.append('--fast-clocks')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
@@ -177,13 +186,13 @@ def main():
                 return 0
             filename = 'clock_matrix.json' if args.matrix else 'clock_recovery.json' if args.recovery else 'clock_transitions.json' if args.transitions else 'clock_screen.json'
             record = json.loads((run/filename).read_text())
-            if record['status'] != 'completed' or len(record['conditions']) != (9 if args.matrix else 6 if args.recovery else 4):
+            if record['status'] != 'completed' or len(record['conditions']) != (3 if args.fast_clocks else 9 if args.matrix else 6 if args.recovery else 4):
                 raise RuntimeError('Incomplete clock screen')
             if args.transitions or args.recovery or args.matrix:
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                conditions=record['summary'])
                 return 0
-            summary.update(status='completed', model_loads=record['model_loads'], conditions=[
+            summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'], conditions=[
                 dict(profile=r['profile'], median_ms=r['median_ms'],
                      mean_compute_energy_per_request_j=r['mean_compute_energy_per_request_j'],
                      compute_frequency_check=r['compute_frequency_check'],
