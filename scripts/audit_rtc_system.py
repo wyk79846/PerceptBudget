@@ -50,6 +50,11 @@ def audit(run):
     check('unique_request_ids',len(by_id)==len(requests))
     check('unique_commit_ids',len(committed)==len(commits))
     check('single_bootstrap',requests[0]['observation_step']==0 and commits[0]['commit_step']==0)
+    if cfg.get('m2_single_reuse'):
+        expert_ids=[r['prediction_id'] for r in requests if r.get('kv_recompute',{}).get('mode')=='expert_only']
+        check('single_fast_request',expert_ids==[1])
+        check('single_fast_committed',1 in committed)
+        check('single_fast_actually_executed',any(r.get('source',{}).get('prediction_id')==1 for r in controls))
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
     mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in ('full','expert_only')}
                     if cfg.get('m2_split_delay') else None)

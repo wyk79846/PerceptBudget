@@ -160,7 +160,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -178,6 +178,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         raise ValueError('Unknown quality geometry')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
+    if single_insertion and not (recompute_comparison and split_delay_comparison):
+        raise ValueError('Single insertion requires explicit per-mode-delay recompute comparison')
     if recompute_comparison and (kind!='full' or task_plan is None or resume or
         config.get('m2_vision_pool_factor',1)!=1):
         raise ValueError('Expert recompute comparison requires Full geometry and explicit new tasks')
@@ -281,7 +283,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 views = (('full',) if kind == 'full' else
                          ('agent', 'wrist') if tid == 0 else (record['selection'],))
                 if recompute_comparison:
-                    views=('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
+                    views=('full','kv_once') if single_insertion else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -356,7 +358,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg['m2_view'] = current_view
                     if recompute_comparison:
                         child_cfg['m2_reuse_enabled']=view!='full'
-                        child_cfg['m2_split_delay']=view=='kv_reuse_split'
+                        child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
+                        child_cfg['m2_single_reuse']=view=='kv_once'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M2', 'fast-quality-'+label)

@@ -23,12 +23,15 @@ def main():
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--split-delay',action='store_true',help='Three paired episodes: Full, shared-history reuse, per-mode-history reuse')
+    parser.add_argument('--single-insertion',action='store_true',help='Two episodes: Full vs one expert-only insertion, with per-mode delay history')
     args=parser.parse_args()
     config=load_config(repo_root=ROOT);validate(config)
+    split_delay = args.split_delay or args.single_insertion
+    conditions = ['full','kv_once'] if args.single_insertion else ['full','kv_reuse','kv_reuse_split'] if split_delay else ['full','kv_reuse']
     if args.dry_run:
-        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,episodes=3 if args.split_delay else 2,
-            conditions=['full','kv_reuse','kv_reuse_split'] if args.split_delay else ['full','kv_reuse'],reuse='Full/expert-only alternating; bootstrap always Full',
-            split_delay_comparison=args.split_delay,
+        print(json.dumps(dict(suite=args.suite,task_id=args.task_id,episodes=len(conditions),
+            conditions=conditions,reuse='Exactly one expert-only request after bootstrap; all other requests Full' if args.single_insertion else 'Full/expert-only alternating; bootstrap always Full',
+            split_delay_comparison=split_delay, single_insertion=args.single_insertion,
             H=50,N=5,q=5,state=True,state_on_reuse='last Full state remains in cached KV',
             original_kv_expiry_enforced=True,num_views=2,pool=1,seed=7,init=0,model_loads=1)))
         return 0
@@ -37,12 +40,13 @@ def main():
             parser.error('Worker requires an M2 run directory')
         from perceptbudget.device_quality import resident_quality
         resident_quality(config,args.run_dir,'full',cleanup_gate=CLEANUP_GATE,
-            task_plan=[(args.suite,args.task_id)],recompute_comparison=True,split_delay_comparison=args.split_delay)
+            task_plan=[(args.suite,args.task_id)],recompute_comparison=True,split_delay_comparison=split_delay,
+            single_insertion=args.single_insertion)
         return 0
     cfg=dict(config,m2_profile=True,m2_expert_recompute=True)
-    run=create_run(cfg,'M2','expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
+    run=create_run(cfg,'M2','expert-recompute-once' if args.single_insertion else 'expert-recompute-split' if args.split_delay else 'expert-recompute',repo_root=ROOT)
     print('run_dir='+str(run),flush=True)
-    summary=dict(status='running',split_delay_comparison=args.split_delay,
+    summary=dict(status='running',split_delay_comparison=split_delay,single_insertion=args.single_insertion,
         scope='paired single-task episodes, no population success-rate or energy claim')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
@@ -51,13 +55,14 @@ def main():
                 config['python_executable'],'-u',str(Path(__file__).resolve()),'--worker',
                 '--run-dir',str(run),'--suite',args.suite,'--task-id',str(args.task_id)]
             if args.split_delay:command+=['--split-delay']
+            if args.single_insertion:command+=['--single-insertion']
             with (run/'worker.log').open('w') as log:
                 completed=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
             summary['worker_exit_code']=completed.returncode
             if completed.returncode:
                 raise RuntimeError('Worker failed or memory guard stopped it; do not count as task failure')
             record=json.loads((run/'full_quality.json').read_text())
-            if record['status']!='completed' or len(record['episodes'])!=(3 if args.split_delay else 2):
+            if record['status']!='completed' or len(record['episodes'])!=len(conditions):
                 raise RuntimeError('Incomplete paired output')
             first=record['episodes'][0]
             summary.update(model_loads=record['model_loads'],suffix_loads=record['suffix_loads'],
@@ -66,6 +71,11 @@ def main():
                 episodes=[])
             for e in record['episodes']:
                 requests=json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())
+                if args.single_insertion:
+                    expert_ids=[r['prediction_id'] for r in requests if r['kv_recompute']['mode']=='expert_only']
+                    expected=[1] if e['view']=='kv_once' else []
+                    if expert_ids!=expected:
+                        raise RuntimeError('Single insertion mode did not execute exactly request1 as Fast')
                 groups={}
                 for mode in ('full','expert_only'):
                     rows=[r for r in requests[1:] if r['kv_recompute']['mode']==mode]

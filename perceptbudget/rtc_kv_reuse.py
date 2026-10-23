@@ -7,6 +7,7 @@ class RecomputeRTCAdapter(OriginalOpenPiRTCAdapter):
     def context_mode(self,prompt,step,*,guided):
         old=getattr(self,'_recompute_context',None)
         reuse=bool(guided and self.config.get('m2_reuse_enabled',False) and old is not None
+            and (not self.config.get('m2_single_reuse') or not getattr(self,'_single_reuse_consumed',False))
             and not old['reused'] and prompt==old['prompt']
             and 0<=step-old['step']<self.horizon//2)
         return 'expert_only' if reuse else 'full'
@@ -15,6 +16,8 @@ class RecomputeRTCAdapter(OriginalOpenPiRTCAdapter):
         if not self.config.get('m2_expert_recompute'):
             raise ValueError('Expert recompute requires explicit M2 experiment')
         start=time.monotonic()
+        if not guided:
+            self._single_reuse_consumed=False
         step=request.get('observation_step',0)
         old=getattr(self,'_recompute_context',None)
         mode=self.context_mode(prompt,step,guided=guided)
@@ -24,6 +27,7 @@ class RecomputeRTCAdapter(OriginalOpenPiRTCAdapter):
         if reuse:
             valid=old['valid']
             old['reused']=True
+            self._single_reuse_consumed=True
         else:
             valid=super()._prepare_context(snapshot,prompt,request,guided=guided)
             old=dict(valid=valid,step=step,prompt=prompt,reused=False,

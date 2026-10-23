@@ -83,3 +83,29 @@ def test_split_delay_comparison_is_three_episodes_without_changing_denoising():
     plan=json.loads(r.stdout)
     assert plan['episodes']==3 and plan['model_loads']==1
     assert plan['N']==5 and plan['conditions']==['full','kv_reuse','kv_reuse_split']
+
+
+def test_single_insertion_is_consumed_once_and_resets_only_at_bootstrap(monkeypatch):
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'_prepare_context',lambda *a,**k:657)
+    adapter=RecomputeRTCAdapter.__new__(RecomputeRTCAdapter)
+    adapter.config=dict(m2_expert_recompute=True,m2_reuse_enabled=True,m2_single_reuse=True)
+    adapter.horizon=50
+    for episode in range(2):
+        modes=[]
+        for i,step in enumerate((0,5,10,15,20,25)):
+            request=dict(observation_step=step,prediction_id=i)
+            planned=adapter.context_mode('task',step,guided=bool(i))
+            adapter._prepare_context(dict(raw_state=[step]*8),'task',request,guided=bool(i))
+            assert request['kv_recompute']['mode']==planned
+            modes.append(planned)
+        assert modes==['full','expert_only','full','full','full','full']
+
+
+def test_single_insertion_plan_is_two_episodes_with_separate_delay_histories():
+    script=Path(__file__).resolve().parents[1]/'scripts/eval_expert_recompute.py'
+    r=subprocess.run([sys.executable,str(script),'--single-insertion','--dry-run'],
+        capture_output=True,text=True,check=True)
+    plan=json.loads(r.stdout)
+    assert plan['episodes']==2 and plan['model_loads']==1
+    assert plan['conditions']==['full','kv_once'] and plan['split_delay_comparison']
+    assert plan['single_insertion'] and plan['N']==5 and plan['q']==5
