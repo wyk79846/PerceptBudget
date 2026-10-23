@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23用户授权多测温和压缩：840507b5完成Spatial/Goal各Full+pool2_agent交替4回合，1model/1expert，初态配对、4audit、0underflow、功率coverage1。Spatial Full78步6.208s144.046J vs候选80步6.323s146.374J；Goal123步7.161s172.553J vs121步7.084s168.478J，均成功。Fast中位445.00/437.42ms；任务能量不含排空。加此前Object e64d4bf1温和成功138步8.294s（Full142/8.566），三不同task0均成功仅各1次，不宣称总体成功率或普遍节能。补离线交接cc6298ae，无动作修改。详见任务指导与相关参考/PerceptBudget_温和压缩补测_20261023.md。本轮无代码/FlashRT/参数修改，所有进程正常结束；保留候选不换基线。
+
 - 2026-10-23温和压缩368593f4失败原因已定位：Full Object0成功142步8.538秒/audit通过，进入候选前create_run用途fast-quality-pool2_agent_alternate长34超32字符，非内存保护/候选质量失败。仅将目录用途缩短pool2_agent_alt，语义view/condition不变，原始invalid证据不改。增加所有视觉候选用途长度/唯一性契约测试；less-fast原标签合法。需用户原命令重跑，不声称候选已有闭环结果。备份archive/pre-mixed-label-fix-20261023。
 
 - 2026-10-23用户要三项指令：温和压缩（Full/wrist256+agent64=320交叉）、降低Fast比例（FullFullFast，双池化128）、先查交接跳变（离线，不擅加融合）。已实现--mixed-pooled-alternation、--full-per-fast2、受约束标签gentle-compression/less-fast；固定Object0每项Full/候选各1，共4闭环回合，由用户执行。q5/N5/H50/state/RTC/autotune均不改；新调度bootstrap0Full，ratio2时pid2/5/8为Fast，校准显式定位Fast且bootstrap重置。共用专家/权重，已有MixedViewPipeline接入共享前端；GPU固定输入95cae12a验证实际64/256 tokens、prefix665/473、布局和6回切0差、无fallback，非闭环结果。离线analyze_visual_handoffs按标签最新父run读取，禁止回退旧成功，按实际交接及同目标步比较，不改动作。已用旧Goal日志c40d243c验证可运行。52项相关单测通过；全回归454通过、9跳过、110子测试通过，3项既有环境警告。任务指导与相关参考/PerceptBudget_Fast改进三项对照_20261023.md含三命令/预算/限制。备份archive/pre-m2-three-candidate-tests-20261023，正式基线和FlashRT未改。
