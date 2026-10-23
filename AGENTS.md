@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-23跨集合交叉2d451616完成：1model/suffix、6回合同任务初态配对，audit全pass/0underflow。Full Spatial/Object/Goal成功77/141/123步，交叉成功176/超时280/成功144；任务秒6.034/8.510/7.138→12.650/15.465/8.166，任务J139.322/206.495/171.435→271.389/351.431/180.468。含drain另存报告，不混窗口。实际Full观测gap7.60/9.13/9.58→12.50/14.47/14.44步；Fast来源动作129/176、201/280、99/144（约69–73%），非一半请求就一半执行。此q5交叉不通过默认Fast可用性，不盲扩任务；下一步若优化先提出保持Full刷新时机、Fast仅填空的最小方案审阅，不直接实现M3调度。详细证据/能量口径已补Fast失败原因审核报告第8节。
+
 - 2026-10-23用户要求持续交叉而非单次Fast。新增eval_expert_recompute.py --cross-suite，Spatial/Object/Goal各task0，Full对逐请求Full/Fast轮换，共6回合、目标单model/suffix，H50N5q5state及初始seed7/init0不改。每任务单独校准Full/Fast延迟并保留全部calibrations，初始hash只在同任务内配对；验证模式交替且至少2次Fast，记录audit沿用。不改FlashRT/生产基线，不训练/调频。24项相关测试通过，尚未运行。备份archive/pre-m2-cross-suite-recompute-20261023，命令见Fast失败原因审核报告第8节。
 
 - 2026-10-23用户继续后准备最小单次Fast插入：原eval_expert_recompute.py新增--single-insertion，Spatial0默认两回合Full/kv_once、单模型，request1仅一次expert_only，此后Full；RecomputeRTCAdapter单次标志仅bootstrap重置，context_mode规划纯读，默认交替行为不变。沿用分模式延迟校准、原RTC/环境/内存保护/记录audit，新增独立检查request1恰为唯一Fast且提交/实际执行。35项相关测试通过，未运行。备份archive/pre-m2-single-fast-insertion-20261023，预算/指令见Fast失败原因审核报告第7节。不训练/不调频/不改FlashRT或生产配置，不扩M3/M4触发优化。
