@@ -419,3 +419,18 @@ cd /home/wyk/workspace/PerceptBudget
 
 输出位于 M2/*-idle-payback-*，含 worker.log、idle_payback.json、各条件原始功率和时钟日志、summary.json。中断时先检查时钟日志末尾 RESTORED；如无恢复确认，在原终端执行 `sudo /usr/bin/python3 scripts/control_device_clocks.py restore`，不要同时运行另一个调频测试。
 
+## 实际动作执行与一次衔接验证
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_idle_payback.py --continue-control
+```
+
+在原配对入口追加 `--continue-control`，20个窗口：Spatial0、seed7/init0、名义0.2秒/1秒，各高频/降频5次，1次模型加载。分别在原chunk执行4/20步时强制获取真实双图/state；调频恢复和感知就绪后用原RTC推理。期间主线程持续执行旧动作，结果就绪按实际消费者步数调用原commit裁剪/覆盖，再实际执行5步新动作。不会固定仿真推理步数，不暂停等结果，不重复旧前缀；旧动作耗尽直接报断供，不补零动作。只有一次刷新，延迟条件来自同输入预热耗时加50ms观测预算向上取整，所有配对使用相同估计；不冒充整任务动态延迟历史评测。
+
+图像仅在感知时刷新，执行旧动作期间相机暂停、本体感知及物理继续；名义20Hz同时报告实际Hz与超期，不能称已稳定20Hz。观测按动作索引配对，并记录真实观测时间/年龄、实际提交步、剩余旧动作数；这是有限窗口的交接可用性检查，不是成功率或整段H50安全性验证。两策略提交时刻可能不同，所以不要求交接后的轨迹相同，也不将轨迹耗能差全部归因调频。
+
+同档窗口沿用等待+3秒积分并对照+2秒，包含后续推理、交接与5步新动作；两积分终点前都须完成控制。记录实际GPU/EMC/CPU采样、VDD_IN功率覆盖、动作原始输出及观测配对、恢复确认；源动作索引与被裁剪新偏移逐条保存。准备阶段只发现观测0/4/20的三个实际token长度、一次重建精确图库；图库同输入VJP校验和RAM门槛不变。保留768MiB外层保护及900MiB准备/重置门槛，准备前置回收临时CPU/GPU缓存，正式计时内不回收。
+
+`--continue-control --preflight`只跑每条件一次共4窗、不sudo/不改频率；用于检验环境/线程/动作索引/配对流程，所有产物标记preflight_only，不输出节能结论或伪造频率已通过。真实调频结果输出M2/*-continue-payback-*/continue_payback.json，不能用预检替代。
+

@@ -37,11 +37,11 @@ class PairedIdleLease(RecoveryLease):
                 'paired-idle', '--profile', self.profile, '--idle-seconds', str(self.idle)]
 
 
-def summarize(rows):
+def summarize(rows, *, delays=DELAYS, repeats=REPEATS):
     result = []
-    for delay in DELAYS:
+    for delay in delays:
         paired = []
-        for index in range(REPEATS):
+        for index in range(repeats):
             high = next(r for r in rows if r['idle_seconds'] == delay and r['profile'] == 'baseline' and r['index'] == index)
             low = next(r for r in rows if r['idle_seconds'] == delay and r['profile'] == 'gpu_emc' and r['index'] == index)
             paired.append(dict(index=index,
