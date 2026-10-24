@@ -57,15 +57,16 @@ def cycle_trace(control, profile, emit, *, cycles=5, phase_seconds=3):
         emit(dict(status='CYCLE_END', cycle=cycle, monotonic=time.monotonic()))
 
 
-def recovery_trace(control, profile, idle_seconds, emit, fd, *, serve_profile='baseline'):
+def recovery_trace(control, profile, idle_seconds, emit, fd, *, serve_profile='baseline', paired_idle=False):
     """Five finite RUN/DONE exchanges; no arbitrary commands or model code."""
     import os
     import select
     import time
-    if profile not in MATRIX_PROFILES or serve_profile not in MATRIX_PROFILES or idle_seconds not in (0., .2, 1.):
+    allowed_idle = (.05, .2, 1., 2.) if paired_idle else (0., .2, 1.)
+    if profile not in MATRIX_PROFILES or serve_profile not in MATRIX_PROFILES or idle_seconds not in allowed_idle:
         raise ValueError('Recovery scenario outside whitelist')
     def receive(expected, index):
-        deadline = time.monotonic()+3
+        deadline = time.monotonic()+(6 if paired_idle else 3)
         data = b''
         while time.monotonic() < deadline:
             emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual(),
@@ -82,18 +83,20 @@ def recovery_trace(control, profile, idle_seconds, emit, fd, *, serve_profile='b
                     if data != expected+b'\n':
                         raise ValueError('Unexpected recovery protocol token')
                     return
-        raise TimeoutError('Recovery worker handshake exceeded3s')
+        raise TimeoutError('Recovery worker handshake exceeded'+('6s' if paired_idle else '3s'))
     for index in range(5):
         receive(b'RUN', index)
         down = observed_switch(control, profile, serve_profile)
-        idle_end = down['observed_match_monotonic']+idle_seconds
+        # Paired trials share the command origin, including down-switch cost.
+        idle_end = down['command_monotonic' if paired_idle else 'observed_match_monotonic']+idle_seconds
         while time.monotonic() < idle_end:
             emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual(),
                       request_index=index))
             time.sleep(min(.02, max(0, idle_end-time.monotonic())))
         up = observed_switch(control, serve_profile, profile)
         emit(dict(status='SERVE', request_index=index, down=down, up=up,
-                  requested_idle_seconds=idle_seconds, profile=profile, serve_profile=serve_profile))
+                  requested_idle_seconds=idle_seconds, profile=profile, serve_profile=serve_profile,
+                  paired_idle=paired_idle, requested_serve_monotonic=idle_end))
         receive(b'DONE', index)
         emit(dict(status='REQUEST_ACK', request_index=index, monotonic=time.monotonic()))
 

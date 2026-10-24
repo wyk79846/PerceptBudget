@@ -31,6 +31,9 @@ def main():
     recovery.add_argument('--profile', required=True, choices=MATRIX_PROFILES)
     recovery.add_argument('--serve-profile', default='baseline', choices=MATRIX_PROFILES)
     recovery.add_argument('--idle-seconds', type=float, required=True, choices=(0., .2, 1.))
+    paired = sub.add_parser('paired-idle', help='Five command-origin matched idle/recovery exchanges')
+    paired.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc'))
+    paired.add_argument('--idle-seconds', type=float, required=True, choices=(.05, .2, 1., 2.))
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -59,9 +62,11 @@ def main():
         if len(mode) < 2 or mode[-1].strip() != '4' or '40W' not in mode[0]:
             raise RuntimeError('Expected fixed 40W mode4; refusing clock changes')
         control.validate(args.profile)
-        if args.command in ('cycles', 'recovery'):
+        if args.command in ('cycles', 'recovery', 'paired-idle'):
             control.validate('baseline')
-        if args.command == 'recovery':
+        if args.command == 'paired-idle':
+            args.serve_profile = 'baseline'
+        if args.command in ('recovery', 'paired-idle'):
             control.validate(args.serve_profile)
         saved = control.snapshot()
         with snapshot.open('x') as out:
@@ -73,8 +78,8 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, interrupted)
         try:
-            if args.command in ('cycles', 'recovery'):
-                control.apply(args.serve_profile if args.command == 'recovery' else 'baseline')
+            if args.command in ('cycles', 'recovery', 'paired-idle'):
+                control.apply(args.serve_profile if args.command in ('recovery', 'paired-idle') else 'baseline')
                 print(json.dumps(dict(status='READY', monotonic=time.monotonic(),
                                       profile=args.profile, settings=control.snapshot(),
                                       actual=control.actual(), lease_seconds=40)), flush=True)
@@ -83,7 +88,7 @@ def main():
                     cycle_trace(control, args.profile, emit)
                 else:
                     recovery_trace(control, args.profile, args.idle_seconds, emit, sys.stdin.fileno(),
-                                   serve_profile=args.serve_profile)
+                                   serve_profile=args.serve_profile, paired_idle=args.command == 'paired-idle')
                 return
             control.apply(args.profile)
             print(json.dumps(dict(status='READY', profile=args.profile,

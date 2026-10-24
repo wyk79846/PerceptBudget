@@ -115,7 +115,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
                      continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
                      visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False,
-                     shared_view_kind='wrist',selected_fast_clocks=False,continue_history=False,idle_state_scan=False):
+                     shared_view_kind='wrist',selected_fast_clocks=False,continue_history=False,idle_state_scan=False,idle_payback=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -246,7 +246,9 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks or visual_clocks or pooled_clocks or selected_fast_clocks:
         if kind != 'full' and not visual_clocks:
             raise ValueError('Clock screening requires unmodified Full views')
-        if idle_state_scan:
+        if idle_payback:
+            from perceptbudget.device_idle_payback import screen
+        elif idle_state_scan:
             from perceptbudget.device_idle_scan import screen
         elif full_service:
             from perceptbudget.device_service import screen

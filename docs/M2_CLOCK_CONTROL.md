@@ -403,3 +403,19 @@ sudo /home/wyk/venvs/lutvla/bin/python -u scripts/profile_rtc_startup.py
 
 每次恢复结束后、Profiler stop/export之前先保存独立PB_MODEL_RECOVERY_N_timing.json，含请求发出、动作返回和CPU marker时钟区间；解析后更新completed及GPU分段时间。即使后续附带采样或汇总报错，也能从sidecar和trace复核时间，不再丢掉有效记录。summary显式列power_unavailable_rows，不将“计时完成”等同“能量有效”。重跑原sudo模型计时命令即可；原invalid和trace不改写。
 
+# 高频保持／降频等待配对测试（2026-10-24）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_idle_payback.py
+```
+
+普通用户启动，提示时输入 sudo 密码；仅有限时长的调频 helper 使用 root，模型不使用 root。
+四档等待 50/200/1000/2000 ms，每档高频保持与 GPU816/EMC2133 降频保持各5次；随后均恢复基线高频推理。模型只加载一次，共40次计量推理，另有40次相同前置推理统一负载历史。输入、噪声、旧动作及 d5/s5 配对，不运行新任务、不修改 FlashRT 或正式基线。
+
+两种方案均从切换命令时刻起算等待，降频耗时计入预算。升频、进程通信和推理都计入动作返回时间；另记录相对计划恢复时刻的迟到。统一积分到“起点＋等待时长＋3秒”，并对照提前1秒结束的积分，检查测量尾段敏感性；3秒是测量窗口，不是控制截止时间或已验证传感器稳定时间。不把20ms采样等同于20ms传感器响应。
+
+这是模型常驻、固定输入、无动作执行的设备初筛，不是实时 Continue 闭环。即使能量下降，也须再与实际缓冲截止时间对照才能准入调度；不自动输出回本阈值，不强分三种硬件状态。原始功率覆盖不足、动作变化、慢速回退、实测频率不符均拒绝完成。短保持段没有采样点时明确标记未分辨，不当作保持频率已验证。保留900MiB准备门槛、768MiB外层保护、GPU互斥锁和各条件恢复日志。
+
+输出位于 M2/*-idle-payback-*，含 worker.log、idle_payback.json、各条件原始功率和时钟日志、summary.json。中断时先检查时钟日志末尾 RESTORED；如无恢复确认，在原终端执行 `sudo /usr/bin/python3 scripts/control_device_clocks.py restore`，不要同时运行另一个调频测试。
+
