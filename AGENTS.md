@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-25第二批435746aa完整completed/2model：Full baff7dc5 60+同模型Continue60，Fast b7ea9aa1 60，0overrun/源索引连续/108helper均恢复，132原始积分复算一致。跨模式phys/oldtarget及60frame/state精确配对。Full热/短/长中位481.04/496.51/497.41ms，Fast334.80/352.30/352.48ms；整段减保持增量Full9.016/9.390/9.642J，Fast6.063/6.345/6.578J。相对批1 Full约慢2.6～3.4%、Fast快.9～1.2%，不强归因。Continue各20窗均能量3.871/3.260/2.443J仍瞬态，14.28Hz非20Hz认证。报告任务指导与相关参考/PerceptBudget_M2_独立批次汇总_20261025.md、集中/执行报告更新。接下来仅用户终端run_m2_validation.py --batch3，勿--all或resume旧批重测；2/3独立批非全部M2验收。本轮只审核记录无新GPU/代码改动。
+
 - 2026-10-25首批最新会话34a06f97已completed：复用Full1949c2eb60/Continue7a14ad1c60，本次Fast d4789fb2 60/exit0/24root恢复、相机额外读取1、stateFalse/0fallback，跨模式60组frame/state及phys/oldtarget严格同。Full热/短/长中位468.87/480.24/482.13ms，Fast338.82/355.45/355.97ms；长段减保持均增量Full8.893/9.235/9.531J，Fast6.084/6.380/6.619J，6个Fast长积分重算一致。Continue60此前120积分复算通过、14.28Hz/0overrun/索引连续；短窗读数仍瞬态非稳态。报告任务指导与相关参考/PerceptBudget_M2_第一批验收补测结果_20261025.md；集中报告/补测说明更新。接下来用户终端run_m2_validation.py --batch2，审核后batch3；不要--all重复第一批，不再resume第一批。新批每批Full+Continue共享1model、Fast另1；首批因中断有效数据来自3进程不可说总2次加载，本次确仅Fast1次。第一批非全部M2验收/整任务节能或总体Fast质量认证。本轮只审核记录，无新GPU/代码变更。
 
 - 2026-10-25会话c62930bb：复用Full1949c2eb60，Continue7a14ad1c已60/60completed/exit0/0overrun/源索引连续/phys同/60root恢复；120原始积分复算一致。Fast在create_run前因selected-fast-service-validation-batch1标签>32报错（无Fast模型加载/调频），非相机/OOM。已validation_purpose统一紧凑Full/Fast标签b1～3，六组合实际create_run目录测试通过，不放宽用途白名单；失败外层现提取子worker/log真实异常。续跑pending模型数按缺项计算。真实源dry-run核验Full60+Continue60均复用，pending_modes=['fast'],model_loads=1。用户应run_m2_validation.py --batch1 --resume-session最新c62930bb目录（真实命令见异常报告末节），不要再用3a0661a5否则重复Continue；Fast仍待实跑、首批未全部完成。备份archive/pre-fast-validation-tag-fix-20261025；FlashRT/模型/内存保护不改。
