@@ -67,12 +67,14 @@ def prepare_submission(actions, raw_actions, old_queue, observation_step, consum
 def stable_reference_observation(env, directory):
     """Use two consecutive identical fresh renders for the static reference."""
     import numpy as np
+    started = time.monotonic()
     frames = []
     for attempt in range(4):
         obs, acquisition = fresh_observation(env)
         frame = np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1).copy()
         if frames and np.array_equal(frame, frames[-1]):
-            acquisition['reference_camera_reads'] = attempt+1
+            acquisition.update(reference_camera_reads=attempt+1,
+                               start_monotonic=started,stop_monotonic=time.monotonic())
             return obs, acquisition
         frames.append(frame)
     np.savez_compressed(Path(directory)/'unstable_reference_frames.npz',frames=np.asarray(frames))

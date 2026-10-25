@@ -79,10 +79,13 @@ def main():
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--service-validation', action='store_true', help='Twenty live services per hot/short/long condition; selected configurations only')
+    parser.add_argument('--continue-validation', action='store_true', help='Standalone selected Continue long test, preserving prior Full service results')
     parser.add_argument('--validation-batch', type=int, choices=(1,2,3), default=1)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.continue_validation and (not args.continue_history or args.resume_continue or args.service_validation):
+        parser.error('--continue-validation requires isolated --continue-history without old-window merging')
     if args.service_validation and not (args.full_service or args.live_service):
         parser.error('--service-validation requires Full or selected Fast live service')
     if args.resume_continue and not args.continue_history:
@@ -102,12 +105,20 @@ def main():
     validate(config)
     if args.service_validation:
         config = dict(config, m2_service_validation=True, m2_validation_batch=args.validation_batch)
+    if args.continue_validation:
+        config = dict(config, m2_continue_validation=True, m2_continue_validation_separate=True,
+                      m2_validation_batch=args.validation_batch)
     if args.resume_continue:
         from perceptbudget.device_continue import load_history_resume
         previous=load_history_resume(args.resume_continue,config)
         config=dict(config,m2_continue_resume_run=str(args.resume_continue.resolve()))
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
     if args.dry_run:
+        if args.continue_validation:
+            print(json.dumps(dict(model_loads=1, mode='continue_only', windows=60,
+                profile='gpu_emc', histories_seconds=[0,.2,1.], windows_per_condition=20,
+                batch=args.validation_batch, full_service_rerun=False, merges_old_partial_windows=False)))
+            return 0
         if args.service_validation:
             print(json.dumps(dict(model_loads=1, mode='selected_fast' if args.live_service else 'full',
                 profiles=service_profiles, histories_seconds=[0,.2,1.], requests_per_condition=20,
@@ -222,13 +233,17 @@ def main():
     purpose = 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     if args.service_validation:
         purpose += '-validation-batch'+str(args.validation_batch)
+    if args.continue_validation:
+        purpose = 'continue-validation-batch'+str(args.validation_batch)
     run = create_run(config, 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.idle_state_scan:
+            if args.continue_validation:
+                clock_preflight(run, ('baseline','gpu_emc'), summary)
+            elif args.idle_state_scan:
                 clock_preflight(run,('baseline',),summary)
             elif args.live_service:
                 clock_preflight(run,tuple(dict.fromkeys((*service_profiles, 'gpu_emc'))) if args.service_validation else service_profiles,summary)
@@ -241,6 +256,8 @@ def main():
                        '--worker', '--run-dir', str(run)]
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
+            if args.continue_validation:
+                command.extend(['--continue-validation', '--validation-batch', str(args.validation_batch)])
             if args.transitions:
                 command.append('--transitions')
             if args.recovery:
@@ -302,7 +319,7 @@ def main():
                 return 0
             if args.continue_control or args.continue_camera_compare or args.continue_history:
                 record = json.loads((run/'continue_control.json').read_text())
-                if record['status'] != 'completed' or len(record['windows']) != (45 if args.continue_history else 30 if args.continue_camera_compare else 15):
+                if record['status'] != 'completed' or len(record['windows']) != (60 if args.continue_validation else 45 if args.continue_history else 30 if args.continue_camera_compare else 15):
                     raise RuntimeError('Incomplete Continue control screen')
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                conditions=record['summary'], all_final_states_equal=record['all_final_states_equal'])

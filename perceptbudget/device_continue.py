@@ -15,6 +15,16 @@ STEPS = 5
 REPEATS = 5
 
 
+def continue_observation(env, history, references, directory, label, *, validated=False):
+    """M2 static phase images use the same exact fresh-read guard as Full/Fast."""
+    from perceptbudget.device_service import fresh_observation, checked_fresh_observation, stable_reference_observation
+    if not validated:
+        return fresh_observation(env)
+    if history in references:
+        return checked_fresh_observation(env, references[history], directory, label)
+    return stable_reference_observation(env, directory)
+
+
 def load_history_resume(directory,config):
     """Resume only checked windows; never edit or relabel the failed source run."""
     import json
@@ -152,7 +162,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             scope='No-inference Continue history at fixed target clocks: execute0/3/15 original actions, then measure next5 at70ms ticks; no repeated prefix, no hardware sleep or safe-buffer claim')
         if validation:
             result.update(planned_windows=60, max_control_steps=660,
-                validation_batch=config.get('m2_validation_batch'), shared_model_with_full_service=True,
+                validation_batch=config.get('m2_validation_batch'),
+                shared_model_with_full_service=not config.get('m2_continue_validation_separate',False),
                 requests_per_condition=20, profiles=list(profiles))
         if config.get('m2_continue_resume_run'):
             source=Path(config['m2_continue_resume_run'])
@@ -168,6 +179,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
     reference = None
     refreshed_reference = None
     history_frame_references={}
+    initial_frame_references={}
     history_frame_hashes={w['requested_history_seconds']:w['refreshed_frame_sha256'] for w in result['windows']}
     done={(w['profile'],w.get('requested_history_seconds'),w['repeat']) for w in result['windows']}
     if result['windows']:
@@ -197,7 +209,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 print('CONTINUE_START='+label, flush=True)
                 base._seed_process(7, np, torch)
                 observation, hz = base._prepare_env_episode(env, task, np)
-                observation_time = time.monotonic()
+                initial_acquisition = None
+                if validation:
+                    observation, initial_acquisition = continue_observation(env, 'initial', initial_frame_references,
+                        directory, label+'_initial', validated=True)
+                    initial_frame_references.setdefault('initial',frame(observation).copy())
+                observation_time = time.monotonic() if initial_acquisition is None else initial_acquisition['start_monotonic']
                 if hz != 20:
                     raise RuntimeError('Unexpected nominal control frequency')
                 prepared = base._make_snapshot(observation, stats, True)
@@ -251,8 +268,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                         if camera_compare or history_windows:
                             if window['deadline_overruns']:
                                 raise RuntimeError('Shared 70ms cadence missed; camera energy comparison invalid')
-                            from perceptbudget.device_service import fresh_observation
-                            fresh, acquisition = fresh_observation(env)
+                            fresh, acquisition = continue_observation(env, history, history_frame_references,
+                                directory, label, validated=validation)
                             refreshed = frame(fresh)
                             if refreshed_reference is None:
                                 refreshed_reference = refreshed.copy()
@@ -314,6 +331,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                                                                   window['start_monotonic']+.25],
                     full_end_to_control_start_seconds=window['start_monotonic']-request['inference_ended_monotonic'],
                     final_sim_sha256=hashlib.sha256(np.asarray(window['rows'][-1]['after']['sim_state'], dtype=np.float64).tobytes()).hexdigest())
+                if validation:
+                    window['initial_camera_acquisition'] = initial_acquisition
                 if camera_compare or history_windows:
                     window['nominal_expected_execution_interval_monotonic'][1] = window['start_monotonic']+STEPS*.07
                 result['windows'].append(window)

@@ -166,3 +166,91 @@ def test_matched_hold_uses_common_duration_and_refuses_missing_energy(tmp_path,c
         else:
             with pytest.raises(RuntimeError,match='power incomplete'):
                 matched_hold_baseline(tmp_path,'test','baseline','gpu_emc',.2,rows,prepare=lambda:None)
+
+
+def resume_fixture(tmp_path):
+    cfg={'output_root':str(tmp_path),'H':50,'python_executable':'python-test'}
+    root=tmp_path/'M2';root.mkdir()
+    full=root/'full';full.mkdir()
+    (full/'run.json').write_text(json.dumps({'config_snapshot':cfg}))
+    rows=[]
+    for state,idle in [('hot',0.),('short',.2),('long',1.)]:
+        for index in range(20):
+            rows.append(dict(state_history=state,index=index,profile='baseline',requested_idle_seconds=idle,
+                frame_matches_reference=True,state_matches_reference=True,raw_action_max_abs_difference_vs_reference=0,
+                frequency_check={'matches':True},idle_frequency_check={'matches':True},
+                measured={'frame_sha256':'pixels','raw_state':[0]*8}))
+    record=dict(status='completed',restored=True,requests=rows,initial_physics_sha256='physics',old_target_sha256='old',
+        conditions=[dict(services=20,restored=True,batch_energy={'energy_j':10.},
+                        matched_hold={'energy':{'energy_j':5.}}) for _ in range(3)])
+    (full/'full_service.json').write_text(json.dumps(record))
+    (full/'continue_control.json').write_text(json.dumps({'status':'invalid','windows':[{}]*5}))
+    session=root/'old_session';session.mkdir()
+    (session/'validation_index.json').write_text(json.dumps(dict(batches=[1],jobs=[
+        dict(batch=1,mode='full_continue',run=str(full),exit_code=1)])))
+    return cfg,full,session,record
+
+
+def test_resume_preserves_complete_full_and_retries_only_continue_then_fast(tmp_path,capsys):
+    from scripts.run_m2_validation import main
+    cfg,full,session,record=resume_fixture(tmp_path)
+    original=(full/'full_service.json').read_bytes()
+    target=tmp_path/'M2'/'new_session';target.mkdir()
+    (target/'run.json').write_text(json.dumps({'config_snapshot':cfg}))
+    commands=[]
+    def run(command,**kwargs):
+        if command[0]=='sudo':return SimpleNamespace(returncode=0)
+        commands.append(command)
+        child=tmp_path/'M2'/('continue_new' if '--continue-validation' in command else 'fast_new')
+        child.mkdir()
+        (child/'summary.json').write_text(json.dumps({'status':'completed'}))
+        if '--continue-validation' not in command:
+            (child/'selected_fast_service.json').write_text(json.dumps(record))
+        kwargs['stdout'].write('run_dir='+str(child)+'\n')
+        return SimpleNamespace(returncode=0)
+    with patch('sys.argv',['probe','--batch','1','--resume-session',str(session)]), \
+         patch('perceptbudget.experiment.load_config',return_value=cfg), \
+         patch('perceptbudget.experiment.create_run',return_value=target), \
+         patch('scripts.run_m2_validation.subprocess.run',side_effect=run):
+        assert main()==0
+    assert len(commands)==2 and '--continue-validation' in commands[0]
+    assert '--full-service' not in commands[0] and '--service-validation' not in commands[0]
+    assert '--selected-fast-clocks' in commands[1]
+    d=json.loads((target/'validation_index.json').read_text())
+    assert d['status']=='completed' and d['jobs'][0]['full_service_run']==str(full)
+    assert d['jobs'][1]['cross_mode_observation_pairing_passed']
+    assert (full/'full_service.json').read_bytes()==original
+
+
+def test_service_reuse_rejects_duplicate_requests_or_changed_baseline(tmp_path):
+    from scripts.run_m2_validation import verified_service
+    cfg,full,session,record=resume_fixture(tmp_path)
+    assert verified_service(full,'full_service.json',cfg)
+    with pytest.raises(ValueError,match='configuration'):
+        verified_service(full,'full_service.json',dict(cfg,H=20))
+    record['requests'][1]['index']=0
+    (full/'full_service.json').write_text(json.dumps(record))
+    with pytest.raises(ValueError,match='duplicates'):
+        verified_service(full,'full_service.json',cfg)
+
+
+@pytest.mark.parametrize('history',[0.,'initial'])
+def test_continue_phase_uses_shared_real_camera_guard(tmp_path,history):
+    from perceptbudget.device_continue import continue_observation
+    phase=np.zeros((2,4,3),dtype=np.uint8)
+    good={'agentview_image':phase[:,:2].copy(),'robot0_eye_in_hand_image':phase[:,2:].copy()}
+    bad={'agentview_image':phase[:,:2].copy()+1,'robot0_eye_in_hand_image':phase[:,2:].copy()}
+    with patch('perceptbudget.device_service.fresh_observation',side_effect=[(bad,{}),(good,{})]):
+        obs,record=continue_observation(None,history,{history:phase},tmp_path,'window5',validated=True)
+    assert obs is good and record['real_camera_reads']==2
+    assert (tmp_path/'window5_frame_attempt0.npz').exists()
+
+
+def test_continue_only_validation_does_not_repeat_full_or_merge_partial_windows(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--continue-history','--continue-validation','--dry-run']), \
+         patch('subprocess.run') as run:
+        assert main()==0
+    d=json.loads(capsys.readouterr().out)
+    assert d['windows']==60 and not d['full_service_rerun'] and not d['merges_old_partial_windows']
+    run.assert_not_called()
