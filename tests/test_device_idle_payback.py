@@ -9,7 +9,8 @@ from perceptbudget.device_clocks import recovery_trace, PROFILES
 from perceptbudget.device_idle_payback import DELAYS, PairedIdleLease, plan, summarize
 
 
-def test_paired_protocol_uses_command_origin_and_restores_service_profile():
+@pytest.mark.parametrize('delay', [.05, .1, .15])
+def test_paired_protocol_uses_command_origin_and_restores_service_profile(delay):
     read, write = os.pipe()
     events = []
     current = ['baseline']
@@ -26,7 +27,7 @@ def test_paired_protocol_uses_command_origin_and_restores_service_profile():
             os.write(write, b'RUN\n')
     try:
         os.write(write, b'RUN\n')
-        recovery_trace(SimpleNamespace(apply=apply, actual=actual), 'gpu_emc', .05,
+        recovery_trace(SimpleNamespace(apply=apply, actual=actual), 'gpu_emc', delay,
                        emit, read, paired_idle=True)
     finally:
         os.close(read)
@@ -34,7 +35,7 @@ def test_paired_protocol_uses_command_origin_and_restores_service_profile():
     rows = [e for e in events if e['status'] == 'SERVE']
     assert len(rows) == 5 and current[0] == 'baseline'
     for row in rows:
-        assert row['requested_serve_monotonic'] == row['down']['command_monotonic']+.05
+        assert row['requested_serve_monotonic'] == row['down']['command_monotonic']+delay
         assert row['up']['command_monotonic'] >= row['requested_serve_monotonic']
 
 
@@ -70,3 +71,17 @@ def test_dry_run_no_model_or_sudo(capsys):
     assert data['measured_requests'] == 40 and data['model_loads'] == 1
     assert {p[0] for p in data['plan']} == set(DELAYS)
     command.assert_not_called()
+
+
+def test_boundary_is_twenty_static_requests_and_no_control_or_model(capsys):
+    from scripts.profile_idle_payback import main
+    with patch('sys.argv', ['probe', '--boundary', '--dry-run']), patch('subprocess.run') as command:
+        assert main() == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data['measured_requests'] == data['preparation_requests'] == 20
+    assert {p[0] for p in data['plan']} == {.1, .15}
+    assert not data['continue_control'] and data['model_loads'] == 1
+    command.assert_not_called()
+    with patch('sys.argv', ['probe', '--boundary', '--continue-control', '--dry-run']):
+        with pytest.raises(SystemExit):
+            main()

@@ -33,7 +33,7 @@ def main():
     recovery.add_argument('--idle-seconds', type=float, required=True, choices=(0., .2, 1.))
     paired = sub.add_parser('paired-idle', help='Five command-origin matched idle/recovery exchanges')
     paired.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc'))
-    paired.add_argument('--idle-seconds', type=float, required=True, choices=(.05, .2, 1., 2.))
+    paired.add_argument('--idle-seconds', type=float, required=True, choices=(.05, .1, .15, .2, 1., 2.))
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:

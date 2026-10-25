@@ -12,21 +12,24 @@ from perceptbudget.power import PowerMonitor
 from perceptbudget.rtc_memory import memory_record
 
 DELAYS = (.05, .2, 1., 2.)
+BOUNDARY_DELAYS = (.1, .15)
 REPEATS = 5
 # A common 1s recovery allowance plus 2s sampling tail. This is a measurement
 # window, NOT a production deadline or a claim about sensor settling time.
 AFTER_IDLE_SECONDS = 3.
 
 
-def plan():
-    return [(delay, profile) for index, delay in enumerate(DELAYS)
+def plan(delays=DELAYS):
+    if tuple(delays) not in (DELAYS, BOUNDARY_DELAYS):
+        raise ValueError('Idle plan outside measured or boundary whitelist')
+    return [(delay, profile) for index, delay in enumerate(delays)
             for profile in (('baseline', 'gpu_emc') if index % 2 == 0
                             else ('gpu_emc', 'baseline'))]
 
 
 class PairedIdleLease(RecoveryLease):
     def __init__(self, profile, delay, directory, label):
-        if profile not in ('baseline', 'gpu_emc') or delay not in DELAYS:
+        if profile not in ('baseline', 'gpu_emc') or delay not in DELAYS+BOUNDARY_DELAYS:
             raise ValueError('Paired idle scenario outside whitelist')
         # Reuse the bounded protocol/EOF restoration, not its older dwell origin.
         super().__init__(profile, .2, directory, label)
@@ -63,10 +66,11 @@ def summarize(rows, *, delays=DELAYS, repeats=REPEATS):
 def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
     import numpy as np
     directory = Path(directory)
+    delays = BOUNDARY_DELAYS if adapter.config.get('m2_idle_boundary') else DELAYS
     path = directory/'idle_payback.json'
     result = dict(metadata, status='running', rows=[], model_loads=1,
         scope='Saved Full inputs, resident-model static idle down/up versus high hold; not live Continue or task energy',
-        plan=plan(), repeats=REPEATS, after_idle_seconds=AFTER_IDLE_SECONDS,
+        plan=plan(delays), repeats=REPEATS, after_idle_seconds=AFTER_IDLE_SECONDS,
         power_boundary='INA3221 VDD_IN module input', production_deadline_seconds=None,
         sensor_settling_validated=False, first_gpu_timestamp=None,
         limitations=['Five grouped matched repeats; order alternates between durations, not independent long runs.',
@@ -78,7 +82,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
     try:
         if memory_record(torch, 'idle_payback_ready')['available_mib'] < 900:
             raise RuntimeError('Paired idle RAM below900MiB')
-        for delay, profile in plan():
+        for delay, profile in plan(delays):
             label = str(delay).replace('.', 'p')+'_'+profile
             monitor = PowerMonitor(.02, max_gap_seconds=.1)
             monitor.start()
@@ -146,7 +150,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
             finally:
                 monitor.stop()
                 _write_json_atomically(directory/(label+'_power.json'), [asdict(r) for r in monitor.readings])
-        result.update(status='completed', restored=True, summary=summarize(result['rows']))
+        result.update(status='completed', restored=True, summary=summarize(result['rows'], delays=delays))
     except BaseException as exc:
         result.update(status='invalid', error=f'{type(exc).__name__}: {exc}')
         raise

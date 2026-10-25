@@ -434,3 +434,15 @@ cd /home/wyk/workspace/PerceptBudget
 
 `--continue-control --preflight`只跑每条件一次共4窗、不sudo/不改频率；用于检验环境/线程/动作索引/配对流程，所有产物标记preflight_only，不输出节能结论或伪造频率已通过。真实调频结果输出M2/*-continue-payback-*/continue_payback.json，不能用预检替代。
 
+
+
+## 100/150ms静态边界补测（2026-10-25）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_idle_payback.py --boundary
+```
+
+沿用静态高频保持/降频恢复配对，不执行动作、不使用continue-control。100/150ms各两策略各5次，共20计量请求+20同输入前置推理，1model加载；其余输入、seed、d5/s5、40W、频率组合和等待+3s/提前1s积分边界保持不变。输出M2/*-idle-boundary-*，记录idle_payback.json、summary及原始功率/时钟。默认原40请求扫描与真实控制入口不变，--boundary禁止和--continue-control/--preflight混用。sudo只由有界频率helper使用，不sudo模型。
+
+合并已有50/200/1000/2000ms静态结果选代表点：看重复中节能是否一致、收益波动和恢复额外耗时，不能只凭均值正就准入。若接近零或反复变号，标为边界不确定。短/长是成本表的代表性空闲历史，不是证明GPU有三种硬件状态，也不是要求运行时只能等待这两个时长；不能混用真实控制数据强行推边界。尚未实跑补测，不提前确定短空闲/长空闲的最终数值。

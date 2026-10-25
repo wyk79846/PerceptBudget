@@ -16,18 +16,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--continue-control', action='store_true', help='Bounded Spatial0 live action execution and one RTC handoff')
+    parser.add_argument('--boundary', action='store_true', help='Static100/150ms paired idle supplement only')
     parser.add_argument('--preflight', action='store_true', help='Continue-only one repeat per case, no clock writes or frequency/energy claims')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.boundary and (args.continue_control or args.preflight):
+        parser.error('--boundary is static only; cannot combine with control/preflight')
     if args.preflight and not args.continue_control:
         parser.error('--preflight requires --continue-control')
-    from perceptbudget.device_idle_payback import plan, REPEATS
+    from perceptbudget.device_idle_payback import plan, REPEATS, DELAYS, BOUNDARY_DELAYS
+    delays = BOUNDARY_DELAYS if args.boundary else DELAYS
+    static_requests = len(delays)*2*REPEATS
     if args.dry_run:
-        print(json.dumps(dict(plan=[p for p in plan() if not args.continue_control or p[0] in (.2, 1.)],
+        print(json.dumps(dict(plan=[p for p in plan(delays) if not args.continue_control or p[0] in (.2, 1.)],
             repeats=1 if args.preflight else REPEATS, model_loads=1,
-            measured_requests=(4 if args.preflight else 20) if args.continue_control else 40,
-            preparation_requests=None if args.continue_control else 40, root_model=False,
+            measured_requests=(4 if args.preflight else 20) if args.continue_control else static_requests,
+            preparation_requests=None if args.continue_control else static_requests, root_model=False,
             continue_control=args.continue_control, no_clock_writes=args.preflight,
             refresh_observation_steps=[4,20] if args.continue_control else None,
             fixed_power_mode=True, automatic_threshold=False)))
@@ -39,6 +44,8 @@ def main():
     from scripts.profile_clock_screen import clock_preflight, monitored_worker
     config = load_config(repo_root=ROOT)
     validate(config)
+    if args.boundary:
+        config = dict(config, m2_idle_boundary=True)
     if args.preflight:
         config = dict(config, m2_continue_payback_preflight=True)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
@@ -54,7 +61,7 @@ def main():
     if not args.preflight:
         subprocess.run(['sudo', '-v'], check=True)
     run = create_run(config, 'M2', ('continue-payback-preflight' if args.preflight else 'continue-payback')
-                     if args.continue_control else 'idle-payback', repo_root=ROOT)
+                     if args.continue_control else 'idle-boundary' if args.boundary else 'idle-payback', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', model_loads=0, source_run=str(source))
     try:
@@ -69,13 +76,15 @@ def main():
                 command.append('--continue-control')
             if args.preflight:
                 command.append('--preflight')
+            if args.boundary:
+                command.append('--boundary')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
             if code:
                 raise RuntimeError('Worker failed; inspect worker.log and clock restoration logs')
             filename = 'continue_payback.json' if args.continue_control else 'idle_payback.json'
-            expected = (4 if args.preflight else 20) if args.continue_control else 40
+            expected = (4 if args.preflight else 20) if args.continue_control else static_requests
             record = json.loads((run/filename).read_text())
             if record['status'] != 'completed' or len(record['rows']) != expected or (not args.preflight and not record['restored']):
                 raise RuntimeError('Incomplete matched idle experiment')

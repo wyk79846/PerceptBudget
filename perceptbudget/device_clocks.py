@@ -62,7 +62,7 @@ def recovery_trace(control, profile, idle_seconds, emit, fd, *, serve_profile='b
     import os
     import select
     import time
-    allowed_idle = (.05, .2, 1., 2.) if paired_idle else (0., .2, 1.)
+    allowed_idle = (.05, .1, .15, .2, 1., 2.) if paired_idle else (0., .2, 1.)
     if profile not in MATRIX_PROFILES or serve_profile not in MATRIX_PROFILES or idle_seconds not in allowed_idle:
         raise ValueError('Recovery scenario outside whitelist')
     def receive(expected, index):

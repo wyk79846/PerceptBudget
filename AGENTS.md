@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-25用户明确回到短/长空闲代表点选取，暂不追加2秒动作执行。准备原profile_idle_payback.py --boundary，静态100/150ms×高频/降频×5=20计量+20前置请求、1model；用同样输入、d5s5和公共积分边界与旧50/200/1000/2000ms比较。只补root paired-idle两值白名单，不改变旧recovery/default40或Continue20，boundary禁止与control/preflight混用。短/长为代表历史，不当硬件状态/精确阈值；看重复稳定收益和恢复开销，不只看均值正。备份archive/pre-idle-boundary-20261025，FlashRT/生产基线不改。sudo-n沙盒外仍需密码，实际补测尚未运行，用户普通终端执行venvpython -u scripts/profile_idle_payback.py --boundary；docs末节有说明。
+
 - 2026-10-24真实Continue降频30059408用户完成：20/20/1model/exit0/4组RESTORED，0underflow/0fallback，配对frame/state/raw逐元素一致，60原始功率积分重算全同。0.2/1秒平均省0.4243/2.1965J（各5/5正），短尾窗口0.4059/2.2134J；实际返回晚12.50/50.09ms，提交晚1.85/51.69ms。1秒组取图开始高1027.8/低1077.4ms，推理486.10/486.28ms：主要是到第20控制步的墙钟差，不能全归升频，根因未唯一分离。Hz18.62～19.19，提交13/14或30，旧剩36/37或20仅计数非B_safe，过期偏移9/10后执行连续5新动作；无重放/固定仿真等待。记录点minAvailable1436.65MiB。报告任务指导与相关参考/PerceptBudget_M2_动作执行降频配对结果_20261024.md，M2集中报告已补最新结论。仅一次衔接窗口，非全任务节能/成功率，不称阈值或M2全验收；本轮只读审核与记录，无新硬件测试或生产代码改动。
 
 - 2026-10-24用户授权实际动作执行降频配对，新增device_continue_payback.py及原profile_idle_payback入口--continue-control（20窗=Spatial0，0.2/1s×高/低×5，1model）。先--preflight四窗不sudo/不写频率：5632b5ff准备期外guard触发invalid无计量；补准备阶段GC/CUDA cache/malloc_trim及control_memory分段，16395e9e四窗completed/exit0。后者1model，累计两次预检2model；记录点available>=约1.3GiB、未降900/768门槛。真实旧动作连续执行、4/20步强制新双图/state，后台RTC，高频恢复后才预测、原commit裁过期偏移、执行5新动作；0underflow/0fallback，输入state/frame/raw精确配对。提交13/29步，旧剩37/21仅计数非B_safe；新偏移9～13逐条审核，Hz18.70～19.23不宣称稳定20Hz。三liveprefix664/665/667一次图库重建、parity0。正式20窗需用户普通终端运行venvpython -u scripts/profile_idle_payback.py --continue-control，当前会话sudo仍需密码，尚无真实调频闭环节能结果。报告任务指导与相关参考/PerceptBudget_M2_动作执行降频配对预检_20261024.md；备份archive/pre-continue-payback-20261024。仅有限一次交接诊断，不称任务成功率、整任务节能或M3已完成；FlashRT/生产默认不改。
