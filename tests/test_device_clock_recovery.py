@@ -73,6 +73,20 @@ def test_recovery_lease_checks_response_index(tmp_path):
         RecoveryLease('cpu1190', 1, tmp_path, 'test')
 
 
+@pytest.mark.parametrize('restored',[True,False])
+def test_cleanup_preserves_measurement_error_only_when_restoration_confirmed(tmp_path,restored):
+    lease=RecoveryLease('gpu_emc',.2,tmp_path,'cleanup')
+    lease.proc=SimpleNamespace(stdin=SimpleNamespace(closed=True))
+    lease.events=[{'message':'RESTORED'}] if restored else []
+    with patch('perceptbudget.device_clock_screen.Lease.__exit__',side_effect=RuntimeError('helper exit1')):
+        if restored:
+            lease.__exit__(ValueError,ValueError('original image mismatch'),None)
+            assert lease.cleanup_error=='helper exit1'
+        else:
+            with pytest.raises(RuntimeError,match='helper exit1'):
+                lease.__exit__(ValueError,ValueError('original image mismatch'),None)
+
+
 def test_recovery_dry_plan_loads_once_and_runs_thirty_requests(capsys):
     from scripts.profile_clock_screen import main
     with patch('sys.argv', ['probe', '--recovery', '--dry-run']), \

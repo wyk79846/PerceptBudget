@@ -62,7 +62,16 @@ class RecoveryLease(Lease):
         # EOF makes root restore promptly if the worker fails between tokens.
         if self.proc.stdin and not self.proc.stdin.closed:
             self.proc.stdin.close()
-        super().__exit__(*exc)
+        try:
+            super().__exit__(*exc)
+        except RuntimeError as cleanup_error:
+            restored = any(e.get('message') == 'RESTORED' for e in self.events)
+            if exc[0] is None or not restored:
+                raise
+            # An expected pipe EOF may make the bounded helper exit1 after it
+            # restored. Keep the original measurement error visible.
+            self.cleanup_error = str(cleanup_error)
+            print('CLOCK_CLEANUP_AFTER_RESTORE='+self.cleanup_error, flush=True)
 
 
 def summarize(rows):

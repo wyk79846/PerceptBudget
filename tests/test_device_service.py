@@ -7,6 +7,62 @@ import pytest
 from perceptbudget.device_service import fresh_observation, prepare_submission, measure_one
 
 
+def test_static_reference_requires_two_actual_identical_reads(tmp_path):
+    from perceptbudget.device_service import stable_reference_observation
+    def obs(value):
+        return {'agentview_image':np.full((2,2,3),value,dtype=np.uint8),
+                'robot0_eye_in_hand_image':np.zeros((2,2,3),dtype=np.uint8)}
+    actual=obs(0)
+    with patch('perceptbudget.device_service.fresh_observation',side_effect=[(obs(1),{}),(obs(0),{}),(actual,{})]) as get:
+        returned,record=stable_reference_observation(None,tmp_path)
+    assert returned is actual and get.call_count==3 and record['reference_camera_reads']==3
+
+
+def test_static_camera_reacquires_real_pixels_without_substituting_reference(tmp_path):
+    from perceptbudget.device_service import checked_fresh_observation
+    reference=np.zeros((2,4,3),dtype=np.uint8)
+    bad=reference.copy();bad[0,0,0]=10
+    def observation(frame):
+        return {'agentview_image':frame[:,:2].copy(),'robot0_eye_in_hand_image':frame[:,2:].copy()}
+    good_obs=observation(reference)
+    with patch('perceptbudget.device_service.fresh_observation',side_effect=[
+            (observation(bad),{'start_monotonic':1.,'stop_monotonic':2.}),
+            (good_obs,{'start_monotonic':3.,'stop_monotonic':4.})]) as get:
+        actual,record=checked_fresh_observation(None,reference,tmp_path,'transient')
+    assert actual is good_obs and get.call_count==2
+    assert record['real_camera_reads']==2
+    saved=np.load(tmp_path/'transient_frame_attempt0.npz')
+    np.testing.assert_array_equal(saved['actual'],bad)
+    diagnostic=json.loads((tmp_path/'transient_frame_attempt0.json').read_text())
+    assert diagnostic['changed_elements']==1 and diagnostic['max_abs_pixel_difference']==10
+
+
+def test_persistent_camera_change_fails_before_any_model_call(tmp_path):
+    from perceptbudget.device_service import checked_fresh_observation
+    reference=np.zeros((2,4,3),dtype=np.uint8)
+    frame=np.ones_like(reference)
+    obs={'agentview_image':frame[:,:2],'robot0_eye_in_hand_image':frame[:,2:]}
+    with patch('perceptbudget.device_service.fresh_observation',return_value=(obs,{})) as get:
+        with pytest.raises(RuntimeError,match='rejected before inference'):
+            checked_fresh_observation(None,reference,tmp_path,'persistent')
+    assert get.call_count==3 and len(list(tmp_path.glob('*.npz')))==3
+
+
+def test_observation_mutation_during_model_call_is_rejected_with_pixels(tmp_path):
+    frame=np.zeros((2,4,3),dtype=np.uint8)
+    obs={'agentview_image':frame[:,:2].copy(),'robot0_eye_in_hand_image':frame[:,2:].copy()}
+    def predict(*args,**kwargs):
+        kwargs['request'].update(actions_raw=np.zeros((50,32)).tolist(),rtc_guidance={})
+        obs['agentview_image'][0,0,0]=1
+        return np.zeros((50,7),dtype=np.float32)
+    with patch('perceptbudget.device_service.fresh_observation',return_value=(obs,{})), \
+         patch('scripts.eval_q._make_snapshot',return_value={'raw_state':np.zeros(8)}):
+        with pytest.raises(RuntimeError,match='mutated during'):
+            measure_one(SimpleNamespace(predict=predict),None,'test',{},np.zeros((45,32)),{},
+                torch=None,np=np,expected_frame=frame,diagnostic_directory=tmp_path,diagnostic_label='mutated')
+    assert (tmp_path/'mutated_mutated_during_predict.npz').exists()
+
+
 def test_fresh_observation_forces_real_sensors_without_stepping():
     state = np.zeros(3)
     seen = []

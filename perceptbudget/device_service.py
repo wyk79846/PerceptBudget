@@ -64,10 +64,61 @@ def prepare_submission(actions, raw_actions, old_queue, observation_step, consum
                 limitation='Nominal H50 extent is not a validated safe buffer')
 
 
-def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, np,state_enabled=True):
+def stable_reference_observation(env, directory):
+    """Use two consecutive identical fresh renders for the static reference."""
+    import numpy as np
+    frames = []
+    for attempt in range(4):
+        obs, acquisition = fresh_observation(env)
+        frame = np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1).copy()
+        if frames and np.array_equal(frame, frames[-1]):
+            acquisition['reference_camera_reads'] = attempt+1
+            return obs, acquisition
+        frames.append(frame)
+    np.savez_compressed(Path(directory)/'unstable_reference_frames.npz',frames=np.asarray(frames))
+    raise RuntimeError('Cannot establish two identical fresh static reference frames')
+
+
+def checked_fresh_observation(env, expected_frame, directory, label, *, max_reads=3):
+    """Static calibration only: reread real sensors, never substitute saved pixels."""
+    import numpy as np
+    if max_reads not in (1, 2, 3):
+        raise ValueError('Static camera validation supports at most3 reads')
+    started = time.monotonic()
+    rejected = []
+    for attempt in range(max_reads):
+        obs, acquisition = fresh_observation(env)
+        current = np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1).copy()
+        if np.array_equal(current, expected_frame):
+            acquisition.update(start_monotonic=started, stop_monotonic=time.monotonic(),
+                real_camera_reads=attempt+1, rejected_frame_diagnostics=rejected,
+                calibration_only=True)
+            return obs, acquisition
+        prefix = Path(directory)/(label+'_frame_attempt'+str(attempt))
+        np.savez_compressed(prefix.with_suffix('.npz'), actual=current, reference=expected_frame)
+        same_shape = current.shape == expected_frame.shape
+        delta = np.abs(current.astype(np.int16)-expected_frame.astype(np.int16)) if same_shape else None
+        diagnostic = dict(attempt=attempt, actual_sha256=hashlib.sha256(current.tobytes()).hexdigest(),
+            reference_sha256=hashlib.sha256(expected_frame.tobytes()).hexdigest(),
+            max_abs_pixel_difference=None if delta is None else int(delta.max()),
+            changed_elements=None if delta is None else int(np.count_nonzero(delta)),
+            acquisition=acquisition, rejected_read=True)
+        _write_json_atomically(prefix.with_suffix('.json'), diagnostic)
+        rejected.append(str(prefix.with_suffix('.json')))
+    raise RuntimeError('Fresh static calibration images still differ after3 real camera reads; '
+                       'input rejected before inference; inspect '+str(prefix))
+
+
+def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, np,state_enabled=True,
+                expected_frame=None, diagnostic_directory=None, diagnostic_label='request'):
     """Start device timing is supplied by root SERVE; this covers new input to packet."""
     from scripts import eval_q as base
-    obs, acquisition = fresh_observation(env)
+    if expected_frame is None:
+        obs, acquisition = fresh_observation(env)
+        frame_before = None
+    else:
+        obs, acquisition = checked_fresh_observation(env, expected_frame, diagnostic_directory, diagnostic_label)
+        frame_before = np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1).copy()
     preprocess_start = time.monotonic()
     snapshot = base._make_snapshot(obs, stats, state_enabled)
     preprocess_end = time.monotonic()
@@ -85,6 +136,10 @@ def measure_one(adapter, env, prompt, stats, previous_raw, old_queue, *, torch, 
     packet = prepare_submission(actions, request['actions_raw'], old_queue, 5, 5)
     ready = time.monotonic()
     frame_hash = hashlib.sha256(np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1).tobytes()).hexdigest()
+    if frame_before is not None and hashlib.sha256(frame_before.tobytes()).hexdigest()!=frame_hash:
+        np.savez_compressed(Path(diagnostic_directory)/(diagnostic_label+'_mutated_during_predict.npz'),
+            before=frame_before, after=np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1))
+        raise RuntimeError('Live observation pixels mutated during preprocessing/inference')
     return dict(acquisition=acquisition, preprocess_start_monotonic=preprocess_start,
                 preprocess_stop_monotonic=preprocess_end,
                 inference_start_monotonic=infer_start, inference_stop_monotonic=infer_end,
@@ -237,6 +292,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
             full_preparation_state=True)
     if validation:
         result.update(single_request_energy_status='Diagnostic only: subsecond INA response is unresolved',
+            static_input_policy='At most3 real reads, exact pixels only; rejected reads saved, all acquisition/retry cost counted',
             calibrated_energy_field='conditions[].mean_batch_increment_per_request_j',
             energy_scope='Mean long batch minus same-duration hold; includes logging and replay differences, not event-tail energy')
     path = directory/('selected_fast_service.json' if selected_fast else 'full_service.json')
@@ -270,7 +326,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 raise RuntimeError('Preparation ended task before live service')
         previous_raw = np.asarray(first['actions_raw'], dtype=np.float32)[5:].copy()
         result['old_target_sha256'] = hashlib.sha256(previous_raw.tobytes()).hexdigest()
-        obs, initial_acquisition = fresh_observation(env)
+        obs, initial_acquisition = stable_reference_observation(env, directory) if validation else fresh_observation(env)
+        validation_frame = np.concatenate((obs['agentview_image'],obs['robot0_eye_in_hand_image']),axis=1).copy()
+        validation_options = dict(expected_frame=validation_frame, diagnostic_directory=directory) if validation else {}
         # Reuse the resident suffix and graph stream, release the warmup-only
         # exact-length bank before preparing this real state's prefix.
         root_expert = adapter.step_bank.fallback if adapter.step_bank is not None else adapter.expert
@@ -310,7 +368,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 if validation:
                     torch.manual_seed(20261023)
                     measure_one(adapter, env, task['instruction'], stats,
-                                previous_raw, queue, torch=torch, np=np, state_enabled=not selected_fast)
+                                previous_raw, queue, torch=torch, np=np, state_enabled=not selected_fast,
+                                **dict(validation_options, diagnostic_label='warm_'+label))
                 for chunk in range(requests_per_condition//5):
                     lease_label = 'full_service_'+label+'_'+str(chunk) if validation else 'full_service_'+profile
                     with RecoveryLease(idle_profile, idle, directory, lease_label,
@@ -324,7 +383,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                             if event['serve_profile'] != profile:
                                 raise RuntimeError('Wrong Full service frequency profile')
                             measured = measure_one(adapter, env, task['instruction'], stats,
-                                                   previous_raw, queue, torch=torch, np=np,state_enabled=not selected_fast)
+                                                   previous_raw, queue, torch=torch, np=np,state_enabled=not selected_fast,
+                                                   **dict(validation_options, diagnostic_label=label+'_'+str(index)))
                             lease.send('DONE')
                             lease.receive('REQUEST_ACK', local_index)
                             monitor.sample()
@@ -351,11 +411,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                                 state_matches_reference=measured['raw_state']==ref_state,
                                 raw_action_max_abs_difference_vs_reference=difference,
                                 observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
+                            if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
+                                _write_json_atomically(directory/('rejected_'+label+'_'+str(index)+'.json'),row)
+                                raise RuntimeError('Paired observation/state/actions changed across service profiles/histories')
                             rows.append(row)
                             result['requests'].append(row)
                             _write_json_atomically(path, result)
-                            if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
-                                raise RuntimeError('Paired observation/state/actions changed across service profiles/histories')
                             print('FULL_SERVICE_REQUEST='+label+'/'+str(index)+' ms='+str(row['service_ms']), flush=True)
                     events.extend(lease.events)
                 if validation:
@@ -394,13 +455,16 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 def prepare():
                     torch.manual_seed(20261023)
                     measure_one(adapter, env, task['instruction'], stats, previous_raw, queue,
-                                torch=torch, np=np, state_enabled=not selected_fast)
+                                torch=torch, np=np, state_enabled=not selected_fast,
+                                **dict(validation_options, diagnostic_label='hold_warm_'+label))
                 hold = matched_hold_baseline(directory, label, profile, idle_profile, idle, rows, prepare=prepare)
                 result['conditions'][-1].update(batch_energy=batch_energy, matched_hold=hold,
                     mean_batch_increment_per_request_j=(batch_energy['energy_j']-hold['energy']['energy_j'])/len(rows),
                     energy_interpretation='Batch-integrated minus matched hold, mean only; includes logs and preparation differences; short request energy fields are diagnostic, not resolved single-event measurements')
             _write_json_atomically(path, result)
         result.update(status='completed', restored=True)
+        if validation:
+            result['camera_extra_reads'] = sum(r['measured']['acquisition'].get('real_camera_reads',1)-1 for r in result['requests'])
         if len(profiles)==1:
             result.update(summarize_services(result['requests']))
     except BaseException as exc:

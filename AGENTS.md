@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-25首批validation-session078205e1/Full b587fb9b失败：hot20+short20完成，long idx8总49请求frame mismatch、state/phys精确同，raw diff.012/decoded.0038，非OOM/断供；全部root日志含RESTORED，pipeEOF exit1是次生并覆盖了原异常。已修RecoveryLease清理仅在有原异常且确认恢复时保留原异常，恢复未确认仍报错。新M2静态输入校验：连续2相同新帧建立参考(最多4读)，每请求最多3真实取图匹配后推理，异常像素npz/json、读取次数/重取开销全记录；持久不匹配/推理期间像素被改仍fail，无旧图替换/阈值放宽；无效request独立rejected不加入valid列表。无VLA/无调频真实复现65361e02：200检查全过、5次重取，均单像素RGB±1，read100实际/参考SHA与原失败完全同，像素[123,470]腕部RGB99→100；物理不变。底层渲染舍入原因未进一步分解，非称长测已修到全部通过。旧40条完整条件数据保留，旧长前8条仅诊断；新增校验计时口径需原命令run_m2_validation.py --batch1重跑新首批，不无条件拼旧40新20。报告任务指导与相关参考/PerceptBudget_M2_验收补测异常与修复_20261025.md，备份archive/pre-validation-frame-recovery-20261025。FlashRT/生产默认/内存保护不改。
+
 - 2026-10-25用户授权补M2长测/完整服务口径/测量开销。只对选中高频Full、高频Fast、低频Continue长测，不全27格扩张。新增run_m2_validation.py --batch1/2/3：每批2model（Full服务60后复用Continue60；Fast另60服务），每条件20；三独立批共6加载/360service/180control，--all会包含重跑batch1勿误用。profile_clock_screen --service-validation透传worker config/批号，新Full/Fast实际0/.2/1低频历史强制新观测→原RTC→包就绪；4×5有界lease，原5次默认不变。统一使用源Full chunk前5步固定物理，wrapper跨mode核对phys/oldtarget/frame/state。长段3s尾积分减同长保持回放，记录schedule误差/实际频率；短请求INA能量仅诊断，不冒充精确单次能量。Full结束释放env/GC/cuda缓存后复用adapter做Continue，900/768保护及原配对判据保留。已完成单元/模拟集成，真实长测尚未执行：sudo-n仍需密码，需用户普通终端run_m2_validation.py --batch1，先审查第一批再2/3。计划任务指导与相关参考/PerceptBudget_M2_验收补测执行说明_20261025.md。
 
 - 2026-10-25无sudo测量39f347cf已真实completed：3对3s小矩阵阶跃、3对10s附加20ms采样器on/off（共同200ms参考）。零传感器丢样；读数90%上升889～913ms/下降1027～1039ms，是负载/电源/传感器合成响应非硬件更新周期或GPU恢复。附加CPU约一个核3.71%，空闲增功率3对.021/.089/.009W均.0395W，仅探索不当VLA负载常数；原探针未记起止频率温度，不能补填，工具已加未来inventory。报告任务指导与相关参考/PerceptBudget_M2_测量开销与传感器跟随检查_20261025.md。传感器绝对校准/监控对推理尾延迟仍未证明；不把小样本/粗分辨率说成M2所有验收完成。备份archive/pre-m2-final-validation-20261025；FlashRT/生产基线不改。
