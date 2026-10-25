@@ -100,6 +100,18 @@ def validate_profiles(profiles):
     return profiles
 
 
+def validation_old_chunk(metadata, stats):
+    """Common recorded Full chunk keeps Full/Fast calibration physics paired."""
+    import numpy as np
+    from perceptbudget.h50_checkpoint import decode_actions
+    source = Path(metadata['source_run'])/'rtc/q5_requests.json'
+    record = json.loads(source.read_text())[0]
+    raw = np.asarray(record['actions_raw'], dtype=np.float32)
+    if record['observation_step'] != 0 or raw.shape != (50,32) or not np.isfinite(raw).all():
+        raise RuntimeError('Invalid common Full calibration chunk')
+    return raw, decode_actions(raw, stats)
+
+
 def summarize_services(rows):
     return dict(services=len(rows),
         service_median_ms=statistics.median(r['service_ms'] for r in rows),
@@ -113,6 +125,68 @@ def summarize_services(rows):
             r['measured']['inference_start_monotonic'])*1000 for r in rows),
         submit_median_ms=statistics.median((r['measured']['ready_monotonic']-
             r['measured']['submit_start_monotonic'])*1000 for r in rows))
+
+
+def matched_hold_baseline(directory, label, profile, idle_profile, idle, rows, *, prepare):
+    """Replay batch clock/hold timeline without acquisition/inference, plus3s tail.
+
+    Mean batch increment only; includes replay/logging differences, no event tail claim.
+    """
+    origin = rows[0]['timing']['down']['command_monotonic']
+    duration = rows[-1]['measured']['ready_monotonic']-origin+3.
+    monitor = PowerMonitor(.02, max_gap_seconds=.1)
+    monitor.start()
+    baseline_origin = None
+    records = []
+    events = []
+    try:
+        prepare()
+        for chunk in range(len(rows)//5):
+            with RecoveryLease(idle_profile, idle, directory, 'hold_'+label+'_'+str(chunk),
+                               serve_profile=profile) as lease:
+                for local_index in range(5):
+                    source = rows[chunk*5+local_index]
+                    offset = source['timing']['down']['command_monotonic']-origin
+                    if baseline_origin is not None:
+                        time.sleep(max(0., baseline_origin+offset-time.monotonic()))
+                    lease.send('RUN')
+                    event = lease.receive('SERVE', local_index)
+                    if baseline_origin is None:
+                        baseline_origin = event['down']['command_monotonic']
+                    stop = baseline_origin+source['measured']['ready_monotonic']-origin
+                    time.sleep(max(0., stop-time.monotonic()))
+                    records.append(dict(index=chunk*5+local_index, timing=event,
+                        requested_stop_monotonic=stop, actual_stop_monotonic=time.monotonic(),
+                        down_schedule_error_ms=(event['down']['command_monotonic']-baseline_origin-offset)*1000))
+                    lease.send('DONE')
+                    lease.receive('REQUEST_ACK', local_index)
+            events.extend(lease.events)
+        for row in records:
+            row['frequency_check'] = frequency_check(events, profile,
+                row['timing']['up']['command_monotonic'], row['actual_stop_monotonic'])
+            if not row['frequency_check']['matches']:
+                raise RuntimeError('Matched hold service frequency mismatch')
+            if idle:
+                row['idle_frequency_check'] = frequency_check(events, idle_profile,
+                    row['timing']['down']['observed_match_monotonic'],
+                    row['timing']['up']['command_monotonic'])
+                if not row['idle_frequency_check']['matches']:
+                    raise RuntimeError('Matched hold idle frequency mismatch')
+        stop = baseline_origin+duration
+        if time.monotonic() >= stop:
+            raise RuntimeError('Matched hold exceeded common sampling window')
+        time.sleep(max(0., stop-time.monotonic()))
+        monitor.sample()
+        time.sleep(.025)
+        monitor.sample()
+        energy = energy_window(monitor, baseline_origin, stop)
+        if energy['energy_j'] is None:
+            raise RuntimeError('Matched hold baseline power incomplete')
+        return dict(energy=energy, schedule=records,
+            max_abs_down_schedule_error_ms=max(abs(r['down_schedule_error_ms']) for r in records))
+    finally:
+        monitor.stop()
+        _write_json_atomically(directory/('hold_'+label+'_power.json'), [asdict(r) for r in monitor.readings])
 
 
 def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, profiles=('baseline',)):
@@ -129,6 +203,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
     directory = Path(directory)
     profiles = validate_profiles(profiles)
     cfg = adapter.config
+    validation = bool(cfg.get('m2_service_validation'))
+    requests_per_condition = 20 if validation else 5
+    histories = (('hot', 0.), ('short', .2), ('long', 1.)) if validation else (('hot', 0.),)
     gate = json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases']) != 6 or gate['render_cleanup']['errors']:
         raise RuntimeError('Require passed hard-reset render cleanup gate')
@@ -143,7 +220,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
               'not asynchronous rollout, physical camera transport, or success-rate test',
         suite='libero_spatial', task_id=0, profile=profiles[0] if len(profiles)==1 else None,
         profiles=list(profiles), reference_profile=profiles[0], requested_extra_idle_seconds=0.,
-        planned_requests=5*len(profiles), conditioning_delay_steps=5, conditioning_executed_steps=5,
+        planned_requests=requests_per_condition*len(profiles)*len(histories),
+        validation_batch=cfg.get('m2_validation_batch'), histories=list(histories),
+        requests_per_condition=requests_per_condition,
+        conditioning_delay_steps=5, conditioning_executed_steps=5,
         actual_control_steps_during_each_service=0, first_gpu_operator_timestamp=None,
         power_boundary='INA3221 VDD_IN module input', clock_settings_changed=False,
         warmup_input_frame_sha256=metadata.get('input_frame_sha256'), input_frame_sha256=None,
@@ -155,6 +235,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
             'old queue prepared by Full with state; not asynchronous rollout or physical camera transport',
             input_mode='fresh forced live dual camera at fixed physics step5; raw state audited but not encoded',
             full_preparation_state=True)
+    if validation:
+        result.update(single_request_energy_status='Diagnostic only: subsecond INA response is unresolved',
+            calibrated_energy_field='conditions[].mean_batch_increment_per_request_j',
+            energy_scope='Mean long batch minus same-duration hold; includes logging and replay differences, not event-tail energy')
     path = directory/('selected_fast_service.json' if selected_fast else 'full_service.json')
     env = None
     monitor = None
@@ -174,6 +258,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 raise RuntimeError('Old action preparation did not use Full with state')
             result['full_preparation_guidance']=first['rtc_guidance']
             prep_adapter.expert.keys=prep_adapter.expert.values=prep_adapter.expert.prefix_mask=None
+        if validation:
+            common_raw, first_actions = validation_old_chunk(metadata, stats)
+            first = dict(first, actions_raw=common_raw.tolist())
+            result['old_queue_source'] = 'common recorded Full chunk from verified source_run, not per-mode regenerated chunk'
         queue = {}
         commit(queue, first_actions, 0, 0, 0, first['actions_raw'])
         for step in range(5):
@@ -209,69 +297,108 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
         device = inventory()
         result['device_before_service'] = dict(power_mode=device['power_mode'], thermal=device['thermal'])
         references = {}
-        for profile in profiles:
+        scenarios = [(profile, state, idle) for state, idle in histories for profile in profiles]
+        for profile, state, idle in scenarios:
             rows = []
+            label = profile+'_'+state if validation else profile
+            idle_profile = 'gpu_emc' if idle else profile
             thermal_before = inventory()['thermal']
             monitor = PowerMonitor(.02, max_gap_seconds=.1)
             monitor.start()
+            events = []
             try:
-                with RecoveryLease(profile, 0., directory, 'full_service_'+profile,
-                                   serve_profile=profile) as lease:
-                    result['clock_settings_changed'] = True
-                    for index in range(5):
-                        torch.manual_seed(20261023+index)
-                        lease.send('RUN')
-                        event = lease.receive('SERVE', index)
-                        if event['serve_profile'] != profile:
-                            raise RuntimeError('Wrong Full service frequency profile')
-                        measured = measure_one(adapter, env, task['instruction'], stats,
-                                               previous_raw, queue, torch=torch, np=np,state_enabled=not selected_fast)
-                        lease.send('DONE')
-                        lease.receive('REQUEST_ACK', index)
-                        monitor.sample()
-                        begin = event['up']['command_monotonic']
-                        ready = measured['ready_monotonic']
-                        energy = energy_window(monitor, begin, ready)
-                        if energy['energy_j'] is None:
-                            raise RuntimeError('Full service power coverage incomplete')
-                        if measured['acquisition']['physics_sha256'] != result['initial_physics_sha256']:
-                            raise RuntimeError('Physics changed during isolated service measurement')
-                        packet = measured['packet']
-                        payload = packet.pop('action_payload')
-                        raw = np.asarray(measured['request']['actions_raw'], dtype=np.float32)
-                        np.savez_compressed(directory/f'packet_{profile}_{index}.npz', actions=payload, raw_actions=raw)
-                        if index not in references:
-                            references[index] = (measured['frame_sha256'], measured['raw_state'], raw.copy())
-                        ref_frame, ref_state, ref_actions = references[index]
-                        difference = float(np.max(np.abs(raw-ref_actions)))
-                        row = dict(profile=profile, index=index, seed=20261023+index,
-                            timing=event, measured=measured, energy=energy,
-                            service_ms=(ready-begin)*1000,
-                            frame_matches_reference=measured['frame_sha256']==ref_frame,
-                            state_matches_reference=measured['raw_state']==ref_state,
-                            raw_action_max_abs_difference_vs_reference=difference,
-                            observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
-                        rows.append(row)
-                        result['requests'].append(row)
-                        _write_json_atomically(path, result)
-                        if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
-                            raise RuntimeError('Paired observation/state/actions changed across service profiles')
-                        print('FULL_SERVICE_REQUEST='+profile+'/'+str(index)+' ms='+str(row['service_ms']), flush=True)
+                if validation:
+                    torch.manual_seed(20261023)
+                    measure_one(adapter, env, task['instruction'], stats,
+                                previous_raw, queue, torch=torch, np=np, state_enabled=not selected_fast)
+                for chunk in range(requests_per_condition//5):
+                    lease_label = 'full_service_'+label+'_'+str(chunk) if validation else 'full_service_'+profile
+                    with RecoveryLease(idle_profile, idle, directory, lease_label,
+                                       serve_profile=profile) as lease:
+                        result['clock_settings_changed'] = True
+                        for local_index in range(5):
+                            index = chunk*5+local_index
+                            torch.manual_seed(20261023+index)
+                            lease.send('RUN')
+                            event = lease.receive('SERVE', local_index)
+                            if event['serve_profile'] != profile:
+                                raise RuntimeError('Wrong Full service frequency profile')
+                            measured = measure_one(adapter, env, task['instruction'], stats,
+                                                   previous_raw, queue, torch=torch, np=np,state_enabled=not selected_fast)
+                            lease.send('DONE')
+                            lease.receive('REQUEST_ACK', local_index)
+                            monitor.sample()
+                            begin = event['up']['command_monotonic']
+                            ready = measured['ready_monotonic']
+                            energy = energy_window(monitor, begin, ready)
+                            if energy['energy_j'] is None:
+                                raise RuntimeError('Full service power coverage incomplete')
+                            if measured['acquisition']['physics_sha256'] != result['initial_physics_sha256']:
+                                raise RuntimeError('Physics changed during isolated service measurement')
+                            packet = measured['packet']
+                            payload = packet.pop('action_payload')
+                            raw = np.asarray(measured['request']['actions_raw'], dtype=np.float32)
+                            np.savez_compressed(directory/f'packet_{label}_{index}.npz', actions=payload, raw_actions=raw)
+                            if index not in references:
+                                references[index] = (measured['frame_sha256'], measured['raw_state'], raw.copy())
+                            ref_frame, ref_state, ref_actions = references[index]
+                            difference = float(np.max(np.abs(raw-ref_actions)))
+                            row = dict(profile=profile, state_history=state, requested_idle_seconds=idle,
+                                idle_profile=idle_profile, index=index, seed=20261023+index,
+                                timing=event, measured=measured, energy=energy,
+                                service_ms=(ready-begin)*1000,
+                                frame_matches_reference=measured['frame_sha256']==ref_frame,
+                                state_matches_reference=measured['raw_state']==ref_state,
+                                raw_action_max_abs_difference_vs_reference=difference,
+                                observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
+                            rows.append(row)
+                            result['requests'].append(row)
+                            _write_json_atomically(path, result)
+                            if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
+                                raise RuntimeError('Paired observation/state/actions changed across service profiles/histories')
+                            print('FULL_SERVICE_REQUEST='+label+'/'+str(index)+' ms='+str(row['service_ms']), flush=True)
+                    events.extend(lease.events)
+                if validation:
+                    batch_start = rows[0]['timing']['down']['command_monotonic']
+                    batch_stop = rows[-1]['measured']['ready_monotonic']+3.
+                    time.sleep(max(0., batch_stop-time.monotonic()))
+                    monitor.sample()
+                    time.sleep(.025)
+                    monitor.sample()
+                    batch_energy = energy_window(monitor, batch_start, batch_stop)
+                    if batch_energy['energy_j'] is None:
+                        raise RuntimeError('Long service batch energy incomplete')
             finally:
                 monitor.stop()
-                _write_json_atomically(directory/f'full_service_{profile}_power.json',
+                _write_json_atomically(directory/f'full_service_{label}_power.json',
                                        [asdict(r) for r in monitor.readings])
             for row in rows:
-                check = frequency_check(lease.events, profile, row['timing']['up']['command_monotonic'],
+                check = frequency_check(events, profile, row['timing']['up']['command_monotonic'],
                                         row['measured']['ready_monotonic'])
                 check['note'] = '20ms software polling, not GPU launch timestamp'
                 if not check['matches']:
                     raise RuntimeError('Full service actual frequency mismatch')
                 row['frequency_check'] = check
-            result['conditions'].append(dict(profile=profile, restored=True,
+                if idle:
+                    hold = frequency_check(events, idle_profile,
+                        row['timing']['down']['observed_match_monotonic'], row['timing']['up']['command_monotonic'])
+                    if not hold['matches']:
+                        raise RuntimeError('Live recovery idle frequency mismatch')
+                    row['idle_frequency_check'] = hold
+            result['conditions'].append(dict(profile=profile, state_history=state,
+                requested_idle_seconds=idle, restored=True,
                 thermal_before=thermal_before, thermal_after=inventory()['thermal'],
                 max_raw_action_difference_vs_reference=max(r['raw_action_max_abs_difference_vs_reference'] for r in rows),
                 **summarize_services(rows)))
+            if validation:
+                def prepare():
+                    torch.manual_seed(20261023)
+                    measure_one(adapter, env, task['instruction'], stats, previous_raw, queue,
+                                torch=torch, np=np, state_enabled=not selected_fast)
+                hold = matched_hold_baseline(directory, label, profile, idle_profile, idle, rows, prepare=prepare)
+                result['conditions'][-1].update(batch_energy=batch_energy, matched_hold=hold,
+                    mean_batch_increment_per_request_j=(batch_energy['energy_j']-hold['energy']['energy_j'])/len(rows),
+                    energy_interpretation='Batch-integrated minus matched hold, mean only; includes logs and preparation differences; short request energy fields are diagnostic, not resolved single-event measurements')
             _write_json_atomically(path, result)
         result.update(status='completed', restored=True)
         if len(profiles)==1:
@@ -284,5 +411,20 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
             monitor.stop()
         if env is not None:
             env.close()
+            if validation:
+                env = None
+                gc.collect()
+                ctypes.CDLL(None).malloc_trim(0)
+                torch.cuda.empty_cache()
         _write_json_atomically(path, result)
+    if validation and not selected_fast:
+        from perceptbudget.device_continue import screen as continue_screen
+        adapter.config['m2_continue_validation'] = True
+        try:
+            continuation = continue_screen(adapter, snapshot, prompt, previous, torch,
+                directory, dict(metadata, shared_model_with_full_service=True), history_windows=True)
+            if continuation['status'] != 'completed' or len(continuation['windows']) != 60:
+                raise RuntimeError('Incomplete selected Continue validation')
+        finally:
+            adapter.config.pop('m2_continue_validation', None)
     return result

@@ -8,6 +8,10 @@
 
 ## 已完成与待推进
 
+- 2026-10-25用户授权补M2长测/完整服务口径/测量开销。只对选中高频Full、高频Fast、低频Continue长测，不全27格扩张。新增run_m2_validation.py --batch1/2/3：每批2model（Full服务60后复用Continue60；Fast另60服务），每条件20；三独立批共6加载/360service/180control，--all会包含重跑batch1勿误用。profile_clock_screen --service-validation透传worker config/批号，新Full/Fast实际0/.2/1低频历史强制新观测→原RTC→包就绪；4×5有界lease，原5次默认不变。统一使用源Full chunk前5步固定物理，wrapper跨mode核对phys/oldtarget/frame/state。长段3s尾积分减同长保持回放，记录schedule误差/实际频率；短请求INA能量仅诊断，不冒充精确单次能量。Full结束释放env/GC/cuda缓存后复用adapter做Continue，900/768保护及原配对判据保留。已完成单元/模拟集成，真实长测尚未执行：sudo-n仍需密码，需用户普通终端run_m2_validation.py --batch1，先审查第一批再2/3。计划任务指导与相关参考/PerceptBudget_M2_验收补测执行说明_20261025.md。
+
+- 2026-10-25无sudo测量39f347cf已真实completed：3对3s小矩阵阶跃、3对10s附加20ms采样器on/off（共同200ms参考）。零传感器丢样；读数90%上升889～913ms/下降1027～1039ms，是负载/电源/传感器合成响应非硬件更新周期或GPU恢复。附加CPU约一个核3.71%，空闲增功率3对.021/.089/.009W均.0395W，仅探索不当VLA负载常数；原探针未记起止频率温度，不能补填，工具已加未来inventory。报告任务指导与相关参考/PerceptBudget_M2_测量开销与传感器跟随检查_20261025.md。传感器绝对校准/监控对推理尾延迟仍未证明；不把小样本/粗分辨率说成M2所有验收完成。备份archive/pre-m2-final-validation-20261025；FlashRT/生产基线不改。
+
 - 2026-10-25恢复复核dc70a2ca用户完成30/30、1model、exit0、6恢复、动作diff0/频率匹配；30分段求和及90原始能量积分复算全同。0.2/1/2s低频up→return482.78/480.73/479.93ms，高频466.36/462.71/461.94ms，额外16.42/18.02/17.99ms；低频读回17.5～17.8ms、dispatch约0.25ms、推理462～465ms。平均省0.497/2.102/4.056J、各5/5正；0.2s首对0.954拉高均值需保留限制。未复现静态1→2秒恢复明显变慢，原控制约50ms是混合执行/取图时序非纯设备恢复。报告任务指导与相关参考/PerceptBudget_M2_长空闲恢复时间复核_20261025.md；代表点报告解除待复核/M2集中报告更新，可沿用200ms短/1s长成本表代表，不称硬件状态/精确阈值/全M2验收。仅审核记录，本轮无代码或新GPU实验。
 
 - 2026-10-25用户要求长空闲恢复复测，暂缓最终确认代表点时间结论。核对原数据：静态1/2秒低频up命令→动作返回488.87/489.57ms；真实控制1秒575.09ms仍含恢复后到取图位置/采集等待，不能归为纯设备恢复或与静态混比。新原入口--recovery-recheck，静态0.2/1/2s×高/低×5，共30计量+30前置、1model；recovery_timing三段command→readback→predict→return按单调时序验证并求和，summary另列mean_recovery_extra_ms，等待时间单列。无动作执行/新取图、不改FlashRT/生产基线，历史结果保留。备份archive/pre-recovery-recheck-20261025；sudo-n仍需密码，正式复测未启动，用户普通终端执行venvpython -u scripts/profile_idle_payback.py --recovery-recheck。原--boundary和Continue默认不改；docs末节有命令与计时含义。

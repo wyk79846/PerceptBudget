@@ -125,6 +125,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
 
     directory = Path(directory)
     config = adapter.config
+    validation = bool(config.get('m2_continue_validation'))
+    repeats = 20 if validation else REPEATS
+    profiles = ('gpu_emc',) if validation else MATRIX_PROFILES
     gate = json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases']) != 6 or gate['render_cleanup']['errors']:
         raise RuntimeError('Render cleanup gate missing or failed')
@@ -147,6 +150,10 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             raise ValueError('History windows cannot compare camera modes')
         result.update(planned_windows=45,max_control_steps=495,comparison_period_seconds=.07,
             scope='No-inference Continue history at fixed target clocks: execute0/3/15 original actions, then measure next5 at70ms ticks; no repeated prefix, no hardware sleep or safe-buffer claim')
+        if validation:
+            result.update(planned_windows=60, max_control_steps=660,
+                validation_batch=config.get('m2_validation_batch'), shared_model_with_full_service=True,
+                requests_per_condition=20, profiles=list(profiles))
         if config.get('m2_continue_resume_run'):
             source=Path(config['m2_continue_resume_run'])
             previous_record=load_history_resume(source,config)
@@ -174,11 +181,11 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
         base._seed_process(7, np, torch)
         env = base._make_env(env_class, task)
         env._pb_lock_fixtures = True
-        for profile in MATRIX_PROFILES:
-            plan = [(r, off) for r in range(REPEATS)
-                    for off in ((False, True) if r%2==0 else (True, False))] if camera_compare else [(r, False) for r in range(REPEATS)]
+        for profile in profiles:
+            plan = [(r, off) for r in range(repeats)
+                            for off in ((False, True) if r%2==0 else (True, False))] if camera_compare else [(r, False) for r in range(repeats)]
             if history_windows:
-                plan=[(r,True,h) for h in (0.,.2,1.) for r in range(REPEATS)]
+                plan=[(r,True,h) for h in (0.,.2,1.) for r in range(repeats)]
             else:
                 plan=[(r,off,0.) for r,off in plan]
             for repeat, cameras_disabled,history in plan:
@@ -313,7 +320,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 _write_json_atomically(path, result)
                 print('CONTINUE_DONE='+label+' hz='+str(window['actual_hz']), flush=True)
         result['summary'] = []
-        for profile in MATRIX_PROFILES:
+        for profile in profiles:
           for disabled,history in ([(True,h) for h in (0.,.2,1.)] if history_windows else [(off,0.) for off in ((False, True) if camera_compare else (False,))]):
             rows = [w for w in result['windows'] if w['profile']==profile and w['cameras_disabled']==disabled and w['requested_history_seconds']==history]
             summary = dict(profile=profile, cameras_disabled=disabled, windows=len(rows),
