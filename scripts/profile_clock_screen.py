@@ -13,6 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def validation_purpose(fast, batch):
+    """Keep both service tags below create_run's32-character limit."""
+    if batch not in (1,2,3):
+        raise ValueError('Validation batch must be1,2,3')
+    return ('fast' if fast else 'full')+'-service-validation-b'+str(batch)
+
+
 def clock_preflight(run, profiles, summary):
     """Reject unavailable matrix clocks BEFORE expensive model loading."""
     summary['clock_preflight'] = []
@@ -121,6 +128,7 @@ def main():
             return 0
         if args.service_validation:
             print(json.dumps(dict(model_loads=1, mode='selected_fast' if args.live_service else 'full',
+                purpose=validation_purpose(args.live_service,args.validation_batch),
                 profiles=service_profiles, histories_seconds=[0,.2,1.], requests_per_condition=20,
                 requests=60*len(service_profiles), batch=args.validation_batch,
                 service_boundary='device preparation command to fresh observation and new action packet ready',
@@ -232,7 +240,7 @@ def main():
         config=dict(config,m2_continue_history=True)
     purpose = 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     if args.service_validation:
-        purpose += '-validation-batch'+str(args.validation_batch)
+        purpose = validation_purpose(args.live_service,args.validation_batch)
     if args.continue_validation:
         purpose = 'continue-validation-batch'+str(args.validation_batch)
     run = create_run(config, 'M2', purpose, repo_root=ROOT)

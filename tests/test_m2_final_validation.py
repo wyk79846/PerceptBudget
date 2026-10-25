@@ -8,6 +8,21 @@ import numpy as np
 import pytest
 
 
+@pytest.mark.parametrize('fast',[False,True])
+@pytest.mark.parametrize('batch',[1,2,3])
+def test_both_validation_tags_create_real_run_directories(tmp_path,fast,batch):
+    from scripts.profile_clock_screen import validation_purpose
+    from perceptbudget.experiment import create_run
+    repo=tmp_path/'repo';repo.mkdir()
+    config={'output_root':str(tmp_path/'outputs')}
+    purpose=validation_purpose(fast,batch)
+    # Exercise the same production validator which rejected the old Fast tag.
+    directory=create_run(config,'M2',purpose,repo_root=repo)
+    assert directory.is_dir()
+    assert len(purpose)<=32
+    assert json.loads((directory/'run.json').read_text())['purpose']==purpose
+
+
 @pytest.mark.parametrize('flags,state', [(['--full-service'], True),
     (['--selected-fast-clocks','--live-service'], False)])
 def test_validation_plan_unifies_sixty_live_requests_and_keeps_state_choice(flags,state,capsys):

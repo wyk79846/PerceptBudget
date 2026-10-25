@@ -2,6 +2,7 @@
 """Three independent batches, resident model inside each geometry/session."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,22 @@ def jobs(batches):
     return [dict(batch=batch, mode=mode, args=(['--full-service'] if mode=='full_continue'
             else ['--selected-fast-clocks', '--live-service']))
             for batch in batches for mode in ('full_continue', 'fast')]
+
+
+def reused_complete(job,prior):
+    return bool(prior and (job['mode']=='fast' or prior.get('continue_run')))
+
+
+def failure_detail(log, child):
+    detail='child failed; inspect logs'
+    paths=[Path(log)]
+    if child is not None:paths.append(Path(child)/'worker.log')
+    for path in paths:
+        if not path.exists():continue
+        errors=[line for line in path.read_text().splitlines()
+                if re.match(r'^[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception):',line)]
+        if errors:detail=errors[-1]
+    return detail
 
 
 FROZEN_KEYS=('checkpoint_provenance_revision','H','N','state_enabled','state_prompt_capacity',
@@ -112,18 +129,20 @@ def main():
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically
     config=load_config(repo_root=ROOT)
     reuse=resume_services(args.resume_session,config,batches) if args.resume_session else {}
+    pending=[j for j in jobs(batches) if not reused_complete(j,reuse.get((j['batch'],j['mode']),{}))]
     if args.dry_run:
         print(json.dumps(dict(jobs=jobs(batches),reuse=[dict(batch=k[0],mode=k[1],**v) for k,v in reuse.items()],
-            full_service_rerun=not any(k[1]=='full_continue' for k in reuse),partial_continue_windows_merged=False)))
+            full_service_rerun=not any(k[1]=='full_continue' for k in reuse),partial_continue_windows_merged=False,
+            model_loads=len(pending),pending_modes=[j['mode'] for j in pending])))
         return 0
     run=create_run(config,'M2','validation-session',repo_root=ROOT)
     print('index_dir='+str(run),flush=True)
-    result=dict(status='running',jobs=[],batches=list(batches),planned_model_loads=2*len(batches),
+    result=dict(status='running',jobs=[],batches=list(batches),planned_model_loads=len(pending),
                 resume_session=None if args.resume_session is None else str(args.resume_session.resolve()))
     try:
         for job in jobs(batches):
             prior=reuse.get((job['batch'],job['mode']),{})
-            if (job['mode']=='fast' and prior) or prior.get('continue_run'):
+            if reused_complete(job,prior):
                 row=dict(job,**prior)
                 row.update(run=prior.get('run',prior.get('continue_run')),exit_code=0,reused_verified=True)
                 result['jobs'].append(row)
@@ -152,7 +171,9 @@ def main():
             result['jobs'].append(row)
             _write_json_atomically(run/'validation_index.json',result)
             if code or child is None or json.loads((child/'summary.json').read_text())['status']!='completed':
-                raise RuntimeError('Validation failed at '+label+'; inspect '+str(log)+' and child clock restoration')
+                row['failure_detail']=failure_detail(log,child)
+                raise RuntimeError('Validation failed at '+label+': '+row['failure_detail']+
+                                   '; inspect '+str(log)+' and child clock restoration')
             print('DONE '+label+' run='+str(child),flush=True)
         for batch in batches:
             full_job=next(r for r in result['jobs'] if r['batch']==batch and r['mode']=='full_continue')
