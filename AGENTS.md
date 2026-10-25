@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-25用户要求长空闲恢复复测，暂缓最终确认代表点时间结论。核对原数据：静态1/2秒低频up命令→动作返回488.87/489.57ms；真实控制1秒575.09ms仍含恢复后到取图位置/采集等待，不能归为纯设备恢复或与静态混比。新原入口--recovery-recheck，静态0.2/1/2s×高/低×5，共30计量+30前置、1model；recovery_timing三段command→readback→predict→return按单调时序验证并求和，summary另列mean_recovery_extra_ms，等待时间单列。无动作执行/新取图、不改FlashRT/生产基线，历史结果保留。备份archive/pre-recovery-recheck-20261025；sudo-n仍需密码，正式复测未启动，用户普通终端执行venvpython -u scripts/profile_idle_payback.py --recovery-recheck。原--boundary和Continue默认不改；docs末节有命令与计时含义。
+
 - 2026-10-25静态边界59f2eb3e用户完成20/20、1model、exit0、4恢复，动作diff0/空闲与推理freq匹配/60原始积分重算一致。100/150ms平均省0.2190/0.2385J（各5/5正），范围0.0628～0.5249/0.1945～0.3391J，返回额外16.52/17.76ms；短尾平均0.2399/0.2197J。100ms有前段高收益后段较小，不称精确阈值。报告任务指导与相关参考/PerceptBudget_M2_短长空闲代表点选取_20261025.md：建议保留200ms短代表、1s长代表（200已有三频率成本及控制验证），不是最小正收益阈值或硬件状态；150ms可行初筛不改整表。用户已纠正本阶段目的是空闲代表选取，不再追加2s动作执行。当前审核记录无新GPU/代码改动，待按任务书其余缺口推进、不无限加密时长。
 
 - 2026-10-25用户明确回到短/长空闲代表点选取，暂不追加2秒动作执行。准备原profile_idle_payback.py --boundary，静态100/150ms×高频/降频×5=20计量+20前置请求、1model；用同样输入、d5s5和公共积分边界与旧50/200/1000/2000ms比较。只补root paired-idle两值白名单，不改变旧recovery/default40或Continue20，boundary禁止与control/preflight混用。短/长为代表历史，不当硬件状态/精确阈值；看重复稳定收益和恢复开销，不只看均值正。备份archive/pre-idle-boundary-20261025，FlashRT/生产基线不改。sudo-n沙盒外仍需密码，实际补测尚未运行，用户普通终端执行venvpython -u scripts/profile_idle_payback.py --boundary；docs末节有说明。

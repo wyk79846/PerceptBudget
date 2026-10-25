@@ -13,6 +13,7 @@ from perceptbudget.rtc_memory import memory_record
 
 DELAYS = (.05, .2, 1., 2.)
 BOUNDARY_DELAYS = (.1, .15)
+RECOVERY_DELAYS = (.2, 1., 2.)
 REPEATS = 5
 # A common 1s recovery allowance plus 2s sampling tail. This is a measurement
 # window, NOT a production deadline or a claim about sensor settling time.
@@ -20,7 +21,7 @@ AFTER_IDLE_SECONDS = 3.
 
 
 def plan(delays=DELAYS):
-    if tuple(delays) not in (DELAYS, BOUNDARY_DELAYS):
+    if tuple(delays) not in (DELAYS, BOUNDARY_DELAYS, RECOVERY_DELAYS):
         raise ValueError('Idle plan outside measured or boundary whitelist')
     return [(delay, profile) for index, delay in enumerate(delays)
             for profile in (('baseline', 'gpu_emc') if index % 2 == 0
@@ -40,6 +41,20 @@ class PairedIdleLease(RecoveryLease):
                 'paired-idle', '--profile', self.profile, '--idle-seconds', str(self.idle)]
 
 
+def recovery_timing(event, start, end):
+    """CPU clock/readback boundary only, not the first GPU kernel timestamp."""
+    command = event['up']['command_monotonic']
+    observed = event['up']['observed_match_monotonic']
+    if not command <= observed <= start <= end:
+        raise RuntimeError('Recovery timing boundaries are out of order')
+    return dict(command_to_readback_ms=(observed-command)*1000,
+        readback_to_predict_ms=(start-observed)*1000,
+        predict_to_actions_ms=(end-start)*1000,
+        recovery_to_actions_ms=(end-command)*1000,
+        actual_low_hold_ms=(command-event['down']['observed_match_monotonic'])*1000,
+        boundary='restore command to adapter action return; no observation acquisition, no first-kernel claim')
+
+
 def summarize(rows, *, delays=DELAYS, repeats=REPEATS):
     result = []
     for delay in delays:
@@ -51,6 +66,9 @@ def summarize(rows, *, delays=DELAYS, repeats=REPEATS):
                 energy_saved_j=high['matched_cycle']['energy_j']-low['matched_cycle']['energy_j'],
                 early_window_energy_saved_j=high['early_cycle']['energy_j']-low['early_cycle']['energy_j'],
                 actions_ready_extra_ms=low['actions_ready_from_origin_ms']-high['actions_ready_from_origin_ms']))
+            if 'recovery_timing' in high and 'recovery_timing' in low:
+                paired[-1]['recovery_to_actions_extra_ms'] = (low['recovery_timing']['recovery_to_actions_ms']
+                                                            - high['recovery_timing']['recovery_to_actions_ms'])
         result.append(dict(idle_seconds=delay, pairs=paired,
             mean_saved_j=statistics.mean(p['energy_saved_j'] for p in paired),
             early_mean_saved_j=statistics.mean(p['early_window_energy_saved_j'] for p in paired),
@@ -60,13 +78,22 @@ def summarize(rows, *, delays=DELAYS, repeats=REPEATS):
             mean_ready_extra_ms=statistics.mean(p['actions_ready_extra_ms'] for p in paired),
             positive_pairs=sum(p['energy_saved_j'] > 0 for p in paired),
             interpretation='Screening only; no automatic break-even threshold or deadline acceptance'))
+        if all('recovery_to_actions_extra_ms' in p for p in paired):
+            out = result[-1]
+            out['mean_recovery_extra_ms'] = statistics.mean(p['recovery_to_actions_extra_ms'] for p in paired)
+            out['recovery_segments'] = {profile: {key: statistics.mean(
+                r['recovery_timing'][key] for r in rows if r['idle_seconds'] == delay and r['profile'] == profile)
+                for key in ('command_to_readback_ms', 'readback_to_predict_ms',
+                            'predict_to_actions_ms', 'recovery_to_actions_ms', 'actual_low_hold_ms')}
+                for profile in ('baseline', 'gpu_emc')}
     return result
 
 
 def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
     import numpy as np
     directory = Path(directory)
-    delays = BOUNDARY_DELAYS if adapter.config.get('m2_idle_boundary') else DELAYS
+    delays = (RECOVERY_DELAYS if adapter.config.get('m2_recovery_recheck') else
+              BOUNDARY_DELAYS if adapter.config.get('m2_idle_boundary') else DELAYS)
     path = directory/'idle_payback.json'
     result = dict(metadata, status='running', rows=[], model_loads=1,
         scope='Saved Full inputs, resident-model static idle down/up versus high hold; not live Continue or task energy',
@@ -132,6 +159,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata):
                         low_stop = event['up']['command_monotonic']
                         hold_check = frequency_check(lease.events, profile, low_start, low_stop)
                         row = dict(idle_seconds=delay, profile=profile, index=index, timing=event,
+                            recovery_timing=recovery_timing(event, start, end),
                             preparation=prep, inference_started_monotonic=start, inference_ended_monotonic=end,
                             actions_ready_from_origin_ms=(end-origin)*1000,
                             request_dispatch_lateness_ms=(start-requested)*1000,

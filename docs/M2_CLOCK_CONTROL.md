@@ -446,3 +446,17 @@ cd /home/wyk/workspace/PerceptBudget
 沿用静态高频保持/降频恢复配对，不执行动作、不使用continue-control。100/150ms各两策略各5次，共20计量请求+20同输入前置推理，1model加载；其余输入、seed、d5/s5、40W、频率组合和等待+3s/提前1s积分边界保持不变。输出M2/*-idle-boundary-*，记录idle_payback.json、summary及原始功率/时钟。默认原40请求扫描与真实控制入口不变，--boundary禁止和--continue-control/--preflight混用。sudo只由有界频率helper使用，不sudo模型。
 
 合并已有50/200/1000/2000ms静态结果选代表点：看重复中节能是否一致、收益波动和恢复额外耗时，不能只凭均值正就准入。若接近零或反复变号，标为边界不确定。短/长是成本表的代表性空闲历史，不是证明GPU有三种硬件状态，也不是要求运行时只能等待这两个时长；不能混用真实控制数据强行推边界。尚未实跑补测，不提前确定短空闲/长空闲的最终数值。
+
+
+## 长空闲恢复时间复核（2026-10-25）
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/profile_idle_payback.py --recovery-recheck
+```
+
+0.2/1/2秒静态条件，两策略各5次，共30计量+30同输入前置推理，1次模型加载。无动作执行/取图，不和Continue计时混用；输入和积分边界保持静态协议一致，频率/功耗模式/保护不变。原历史结果不覆盖。
+
+新recovery_timing明确三段：up命令→频率实际读回、读回→调用predict、predict→动作返回；三段之和严格等于up命令→动作返回。actual_low_hold_ms另记，不混入恢复时间；不将读回当GPU首kernel，不将总恢复称纯硬件唤醒。summary增加分段均值及配对mean_recovery_extra_ms，保留原起点到返回字段兼容既有数据。
+
+旧静态1秒低频记录恢复命令→返回约488.9ms，2秒约489.6ms；旧真实控制1秒低频约575.1ms还含恢复后等到第20步取图/感知，不应拿它推GPU恢复随空闲变慢。该复核针对同口径重测，尚未证明旧静态设备实现有bug，也未宣布重新确认长空闲代表点。

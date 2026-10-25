@@ -85,3 +85,33 @@ def test_boundary_is_twenty_static_requests_and_no_control_or_model(capsys):
     with patch('sys.argv', ['probe', '--boundary', '--continue-control', '--dry-run']):
         with pytest.raises(SystemExit):
             main()
+
+
+def test_recovery_timing_excludes_idle_and_partitions_command_to_actions():
+    from perceptbudget.device_idle_payback import recovery_timing
+    event = dict(up=dict(command_monotonic=10., observed_match_monotonic=10.018),
+                 down=dict(observed_match_monotonic=8.))
+    r = recovery_timing(event, 10.020, 10.500)
+    assert r['recovery_to_actions_ms'] == pytest.approx(500.)
+    assert r['command_to_readback_ms'] == pytest.approx(18.)
+    assert r['readback_to_predict_ms'] == pytest.approx(2.)
+    assert r['predict_to_actions_ms'] == pytest.approx(480.)
+    assert r['actual_low_hold_ms'] == pytest.approx(2000.)
+    assert sum(r[k] for k in ('command_to_readback_ms','readback_to_predict_ms',
+                              'predict_to_actions_ms')) == pytest.approx(r['recovery_to_actions_ms'])
+    with pytest.raises(RuntimeError, match='out of order'):
+        recovery_timing(event, 10.010, 10.500)
+
+
+def test_recovery_recheck_is_thirty_static_requests_no_control(capsys):
+    from scripts.profile_idle_payback import main
+    with patch('sys.argv', ['probe', '--recovery-recheck', '--dry-run']), patch('subprocess.run') as command:
+        assert main() == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data['measured_requests'] == data['preparation_requests'] == 30
+    assert {p[0] for p in data['plan']} == {.2, 1., 2.}
+    assert not data['continue_control'] and data['model_loads'] == 1
+    command.assert_not_called()
+    with patch('sys.argv', ['probe', '--recovery-recheck', '--continue-control', '--dry-run']):
+        with pytest.raises(SystemExit):
+            main()

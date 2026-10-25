@@ -17,16 +17,19 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--continue-control', action='store_true', help='Bounded Spatial0 live action execution and one RTC handoff')
     parser.add_argument('--boundary', action='store_true', help='Static100/150ms paired idle supplement only')
+    parser.add_argument('--recovery-recheck', action='store_true', help='Static0.2/1/2s recovery timing recheck')
     parser.add_argument('--preflight', action='store_true', help='Continue-only one repeat per case, no clock writes or frequency/energy claims')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.recovery_recheck and (args.boundary or args.continue_control or args.preflight):
+        parser.error('--recovery-recheck is isolated static timing, not control/boundary/preflight')
     if args.boundary and (args.continue_control or args.preflight):
         parser.error('--boundary is static only; cannot combine with control/preflight')
     if args.preflight and not args.continue_control:
         parser.error('--preflight requires --continue-control')
-    from perceptbudget.device_idle_payback import plan, REPEATS, DELAYS, BOUNDARY_DELAYS
-    delays = BOUNDARY_DELAYS if args.boundary else DELAYS
+    from perceptbudget.device_idle_payback import plan, REPEATS, DELAYS, BOUNDARY_DELAYS, RECOVERY_DELAYS
+    delays = RECOVERY_DELAYS if args.recovery_recheck else BOUNDARY_DELAYS if args.boundary else DELAYS
     static_requests = len(delays)*2*REPEATS
     if args.dry_run:
         print(json.dumps(dict(plan=[p for p in plan(delays) if not args.continue_control or p[0] in (.2, 1.)],
@@ -46,6 +49,8 @@ def main():
     validate(config)
     if args.boundary:
         config = dict(config, m2_idle_boundary=True)
+    if args.recovery_recheck:
+        config = dict(config, m2_recovery_recheck=True)
     if args.preflight:
         config = dict(config, m2_continue_payback_preflight=True)
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
@@ -61,7 +66,8 @@ def main():
     if not args.preflight:
         subprocess.run(['sudo', '-v'], check=True)
     run = create_run(config, 'M2', ('continue-payback-preflight' if args.preflight else 'continue-payback')
-                     if args.continue_control else 'idle-boundary' if args.boundary else 'idle-payback', repo_root=ROOT)
+                     if args.continue_control else 'recovery-recheck' if args.recovery_recheck else
+                     'idle-boundary' if args.boundary else 'idle-payback', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', model_loads=0, source_run=str(source))
     try:
@@ -78,6 +84,8 @@ def main():
                 command.append('--preflight')
             if args.boundary:
                 command.append('--boundary')
+            if args.recovery_recheck:
+                command.append('--recovery-recheck')
             with (run/'worker.log').open('w') as out:
                 code = monitored_worker(command, out)
             summary['worker_exit_code'] = code
