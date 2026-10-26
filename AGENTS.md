@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-26用户完成M3 deadline-dvfs：session2f677c8b/run3c5d9913 completed，Spatial0 76steps success/6.016s，含收尾6.222s/120.453J、0underflow、494审计通过、功率积分复算全覆盖；初始physics/frame/state与既有同任务基线一致。2次低频驻留646.2/267.3ms合0.913s，低频样本匹配，8次Full计算高频样本均匹配；4次切换读回17.27/18.69/18.29/17.92ms，预检及最终RESTORED。仍有观测年龄39.6ms/邻近减速350.9ms/缓冲预计7.2ms三次计划时限迟到，实际动作供给未断，需后续校准与故障检查；不称全时限达标。单任务能量比记录基线140.557J低14.3%，比高频动态125.923J低4.3%，轨迹/步数不同不能归因全为DVFS。postrun_review.json保存来源SHA；M3进展/README已更新。下一步看门狗迟到/无返回/断供实测后再36配对；本轮仅审核/离线汇总，无新GPU或调频、M3未全部交付。
+
 - M3当前代码检查：全量555passed/9skip/110subtests/3既有环境warnings，后续小补恢复估计下界与preflight恢复错误状态对应测试通过。动态调频入口先运行无模型runtime LOW/HIGH/STOP预检，再加载模型；仍须用户终端密码，未做真实DVFS。当前所有GPU记录/短测均已结束，无后台模型任务。代码开发在原project/perceptbudget分支，改前归档分支archive/pre-m3-recording-20261026。
 
 - 2026-10-26 M3已授权开始并实施到高频短测：新增action_events.py/deadline_controller.py/closed_loop.py、m3.json和run_m3.py；现有执行器仅M3显式挂接，基线/FlashRT不改。先离线复用M1 task0 q5/q30六回合；live Spatial/Object/Goal task0分别79/142/123 success、0underflow。首会话74a639c6在第二环境构建触768MiB保护；先编译环境到本run MJB、回放核对后再加载权重，2be4951c同一模型顺序Object/Goal正常完成，physics/state0差、最多1像素1级，无保护线改动。

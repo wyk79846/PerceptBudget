@@ -1,6 +1,6 @@
 # PerceptBudget
 
-面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；M3已完成动作记录与高频最晚启动短测，下一步为降频恢复小测。**
+面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；M3已完成动作记录、高频最晚启动及单任务降频恢复小测，下一步为看门狗故障测试。**
 
 ## 唯一推理基线
 
@@ -45,7 +45,7 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 ```bash
 # 不加载模型，检查下一步计划
 /home/wyk/venvs/lutvla/bin/python scripts/run_m3.py --mode deadline-dvfs --dry-run
-# 单任务调频闭环小测；普通用户运行，内部调频助手要求sudo密码
+# 单任务调频闭环复现；已测成功，普通用户运行，内部调频助手要求sudo密码
 /home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode deadline-dvfs --suite libero_spatial
 ```
 
