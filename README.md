@@ -77,3 +77,5 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 ## Git与恢复
 
 当前开发分支为`project/perceptbudget`，[GitHub仓库](https://github.com/wyk79846/PerceptBudget)。M2报告整理前已保存`archive/pre-m2-report-archive-20261026`。历史实现保存在相应`archive/*`分支；历史说明不覆盖当前配置或最新授权。
+
+DVAC记录小实验已完成：五份已保存Spatial0输入、30组记录开关配对动作差值均为0；专家单独重放约158ms，记录开销未见明显增加。候选前缀受RTC引导和统计范围影响，目前只记录、不参与控制。数据：外部M3/20261026T131006.072736Z-dvac-probe-ce14dd73；详细结论见M3阶段进展报告。

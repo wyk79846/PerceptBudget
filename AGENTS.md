@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-26 DVAC小实验ce14dd73 completed：仅重放成功Spatial0五份保存输入，无新rollout、训练、FlashRT/调频或控制策略变更；30组开关记录动作maxabs0，正常RTC专家重放关158.424ms/开158.241ms（不含VLM，负差属波动）。候选前缀随观测变化但L3/L5、beta5/0存在差异，未认定为可靠缓冲；仅记录，下一步跨少量任务核对动作偏差再考虑接控制。改前分支archive/pre-dvac-probe-20261026，入口run_m3.py --mode dvac-probe --source-run单目录；进展报告已补实验与原始数据路径。
+
 - 2026-10-26用户完成M3 deadline-dvfs：session2f677c8b/run3c5d9913 completed，Spatial0 76steps success/6.016s，含收尾6.222s/120.453J、0underflow、494审计通过、功率积分复算全覆盖；初始physics/frame/state与既有同任务基线一致。2次低频驻留646.2/267.3ms合0.913s，低频样本匹配，8次Full计算高频样本均匹配；4次切换读回17.27/18.69/18.29/17.92ms，预检及最终RESTORED。仍有观测年龄39.6ms/邻近减速350.9ms/缓冲预计7.2ms三次计划时限迟到，实际动作供给未断，需后续校准与故障检查；不称全时限达标。单任务能量比记录基线140.557J低14.3%，比高频动态125.923J低4.3%，轨迹/步数不同不能归因全为DVFS。postrun_review.json保存来源SHA；M3进展/README已更新。下一步看门狗迟到/无返回/断供实测后再36配对；本轮仅审核/离线汇总，无新GPU或调频、M3未全部交付。
 
 - M3当前代码检查：全量555passed/9skip/110subtests/3既有环境warnings，后续小补恢复估计下界与preflight恢复错误状态对应测试通过。动态调频入口先运行无模型runtime LOW/HIGH/STOP预检，再加载模型；仍须用户终端密码，未做真实DVFS。当前所有GPU记录/短测均已结束，无后台模型任务。代码开发在原project/perceptbudget分支，改前归档分支archive/pre-m3-recording-20261026。

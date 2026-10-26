@@ -214,7 +214,7 @@ class SourceStepGraph:
             updated=(x+(1/self.expert.num_steps)*(velocity+gain*correction)).detach()
         return updated,-velocity.detach(),clean.detach(),residual,correction.detach()
 
-    def replay(self,noise,previous,delay,executed,*,trace=None):
+    def replay(self,noise,previous,delay,executed,*,trace=None,clean_trace=None):
         import torch
         h=self.expert.horizon
         if not 0<=delay<=h-executed or previous.shape!=(h-executed,32):
@@ -240,6 +240,8 @@ class SourceStepGraph:
                 before=self.x.detach().clone() if trace is not None else None
                 self.graph.replay()
                 out,v,clean,error,g=self.outputs
+                if clean_trace is not None:
+                    clean_trace.append(clean[:,:7].clone())
                 if trace is not None:
                     trace.append(dict(input=before,velocity=v.clone(),clean=clean.clone(),
                         error=error.clone(),vjp=g.clone(),output=out.clone()))

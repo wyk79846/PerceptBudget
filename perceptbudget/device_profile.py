@@ -115,7 +115,7 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
                      clock_transitions=False, clock_recovery=False, clock_matrix=False,
                      continue_control=False, full_service=False, service_profiles=('baseline',), fast_clocks=False,
                      visual_clocks=False, pooled_clocks=False, camera_compare=False, shared_views=False,
-                     shared_view_kind='wrist',selected_fast_clocks=False,continue_history=False,idle_state_scan=False,idle_payback=False,continue_payback=False):
+                     shared_view_kind='wrist',selected_fast_clocks=False,continue_history=False,idle_state_scan=False,idle_payback=False,continue_payback=False,dvac_probe=False):
     """Prepared-input Full/Fast RTC compute probe. No environment or clock writes.
 
     One model load for Full geometry, one for single-view geometry; agent/wrist
@@ -243,6 +243,9 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
     if selected_fast_clocks:
         result.update(selected_fast=True,state_in_prompt=False,full_preparation_state=True,
                       full_native_expert_release=full_cleanup)
+    if dvac_probe:
+        from perceptbudget.dvac import probe
+        return probe(adapter, source_run, directory, task, stats, torch, metadata=result)
     if clock_screen or clock_transitions or clock_recovery or clock_matrix or continue_control or full_service or fast_clocks or visual_clocks or pooled_clocks or selected_fast_clocks:
         if kind != 'full' and not visual_clocks:
             raise ValueError('Clock screening requires unmodified Full views')
