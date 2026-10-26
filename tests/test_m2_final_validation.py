@@ -47,7 +47,31 @@ def test_three_batches_have_six_model_sessions_without_per_request_reload(capsys
     launch.assert_not_called()
 
 
-def test_live_service_validation_keeps_all_sixty_requests_and_reuses_model_for_continue(tmp_path):
+def test_missing_full_cells_plan_skips_completed_continue(capsys):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe','--full-service','--service-validation',
+            '--service-profiles','balanced','gpu_emc','--skip-continue-validation','--dry-run']), \
+         patch('subprocess.run') as launch:
+        assert main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['requests']==120
+    assert result['profiles']==['balanced','gpu_emc']
+    assert not result['runs_continue_after_service']
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize('flags',[[],['--full-service'],
+    ['--selected-fast-clocks','--live-service','--service-validation']])
+def test_skip_continue_rejects_unrelated_modes(flags):
+    from scripts.profile_clock_screen import main
+    with patch('sys.argv',['probe',*flags,'--skip-continue-validation','--dry-run']), \
+         pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code==2
+
+
+@pytest.mark.parametrize('missing_cells_only', [False, True])
+def test_live_service_validation_keeps_all_sixty_requests_and_reuses_model_for_continue(tmp_path, missing_cells_only):
     from perceptbudget.device_service import screen
     gate=tmp_path/'gate';gate.mkdir()
     (gate/'reset_reuse_audit.json').write_text(json.dumps(dict(passed=True,cases=[{}]*6,render_cleanup={'errors':0})))
@@ -63,6 +87,8 @@ def test_live_service_validation_keeps_all_sixty_requests_and_reuses_model_for_c
     adapter=SimpleNamespace(config={'norm_stats_path':'unused','m2_service_validation':True,'m2_validation_batch':1},
         expert=SimpleNamespace(),step_bank=None,bootstrap=bootstrap,
         prepare_step_bank=lambda lengths:dict(passed=True),predict=lambda *a,**kw:actions)
+    if missing_cells_only:
+        adapter.config['m2_skip_continue_validation'] = True
     torch=SimpleNamespace(manual_seed=seeds.append,cuda=SimpleNamespace(empty_cache=lambda:None))
     def measured(*args,**kwargs):
         assert np.array_equal(args[4], raw[5:])
@@ -91,6 +117,7 @@ def test_live_service_validation_keeps_all_sixty_requests_and_reuses_model_for_c
         def stop(self):pass
         def sample(self):pass
     def continuation(*args,**kwargs):
+        assert not missing_cells_only
         assert args[0] is adapter and closed and adapter.config['m2_continue_validation']
         assert kwargs['history_windows']
         return dict(status='completed',windows=[{}]*60)
@@ -120,12 +147,14 @@ def test_live_service_validation_keeps_all_sixty_requests_and_reuses_model_for_c
             'perceptbudget.device_continue.screen':continuation,
         }
         for name,value in patches.items():stack.enter_context(patch(name,value))
-        result=screen(adapter,{},'test',np.zeros((45,32)),torch,tmp_path,{'valid_prefix':665,'model_loads':1})
-    assert result['status']=='completed' and len(result['requests'])==60
-    assert len(result['conditions'])==3 and all(c['services']==20 for c in result['conditions'])
-    assert len(lease_calls)==12
+        profiles=('balanced','gpu_emc') if missing_cells_only else ('baseline',)
+        result=screen(adapter,{},'test',np.zeros((45,32)),torch,tmp_path,{'valid_prefix':665,'model_loads':1},profiles=profiles)
+    count=len(profiles)
+    assert result['status']=='completed' and len(result['requests'])==60*count
+    assert len(result['conditions'])==3*count and all(c['services']==20 for c in result['conditions'])
+    assert len(lease_calls)==12*count
     assert all(c['max_raw_action_difference_vs_reference']==0 for c in result['conditions'])
-    assert [r['index'] for r in result['requests']]==list(range(20))*3
+    assert [r['index'] for r in result['requests']]==list(range(20))*3*count
     assert not adapter.config.get('m2_continue_validation')
     assert len(executed)==5 and np.array_equal(np.asarray(executed), actions[:5])
 

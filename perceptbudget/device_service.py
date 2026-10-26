@@ -483,7 +483,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 ctypes.CDLL(None).malloc_trim(0)
                 torch.cuda.empty_cache()
         _write_json_atomically(path, result)
-    if validation and not selected_fast:
+    if validation and not selected_fast and not cfg.get('m2_skip_continue_validation', False):
         from perceptbudget.device_continue import screen as continue_screen
         adapter.config['m2_continue_validation'] = True
         try:

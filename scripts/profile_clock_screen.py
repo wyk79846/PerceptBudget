@@ -86,11 +86,14 @@ def main():
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
     parser.add_argument('--service-validation', action='store_true', help='Twenty live services per hot/short/long condition; selected configurations only')
+    parser.add_argument('--skip-continue-validation', action='store_true', help='Full service only: reuse existing Continue evidence instead of repeating it')
     parser.add_argument('--continue-validation', action='store_true', help='Standalone selected Continue long test, preserving prior Full service results')
     parser.add_argument('--validation-batch', type=int, choices=(1,2,3), default=1)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.skip_continue_validation and not (args.service_validation and args.full_service):
+        parser.error('--skip-continue-validation requires --full-service --service-validation')
     if args.continue_validation and (not args.continue_history or args.resume_continue or args.service_validation):
         parser.error('--continue-validation requires isolated --continue-history without old-window merging')
     if args.service_validation and not (args.full_service or args.live_service):
@@ -112,6 +115,8 @@ def main():
     validate(config)
     if args.service_validation:
         config = dict(config, m2_service_validation=True, m2_validation_batch=args.validation_batch)
+    if args.skip_continue_validation:
+        config = dict(config, m2_skip_continue_validation=True)
     if args.continue_validation:
         config = dict(config, m2_continue_validation=True, m2_continue_validation_separate=True,
                       m2_validation_batch=args.validation_batch)
@@ -131,6 +136,7 @@ def main():
                 purpose=validation_purpose(args.live_service,args.validation_batch),
                 profiles=service_profiles, histories_seconds=[0,.2,1.], requests_per_condition=20,
                 requests=60*len(service_profiles), batch=args.validation_batch,
+                runs_continue_after_service=bool(args.full_service and not args.skip_continue_validation),
                 service_boundary='device preparation command to fresh observation and new action packet ready',
                 state_enabled=not args.live_service, independent_process_per_batch=True)))
             return 0
@@ -264,6 +270,8 @@ def main():
                        '--worker', '--run-dir', str(run)]
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
+            if args.skip_continue_validation:
+                command.append('--skip-continue-validation')
             if args.continue_validation:
                 command.extend(['--continue-validation', '--validation-batch', str(args.validation_batch)])
             if args.transitions:
@@ -319,7 +327,7 @@ def main():
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                services=len(record['requests']), conditions=record['conditions'],
                                **{key: record[key] for key in fields if key in record})
-                if args.service_validation and args.full_service:
+                if args.service_validation and args.full_service and not args.skip_continue_validation:
                     continuation=json.loads((run/'continue_control.json').read_text())
                     if continuation['status']!='completed' or len(continuation['windows'])!=60:
                         raise RuntimeError('Incomplete selected Continue validation')
