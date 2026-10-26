@@ -35,7 +35,26 @@ def prefix_decision(scores, history, *, expired=0, alpha=2.):
                 remaining_actions=max(0,prefix-expired),warmup=False)
 
 
-def probe(adapter, source_run, directory, task, stats, torch, *, metadata):
+def aligned_revision(scores, old_raw, next_request, observation_step, expired):
+    """Compare the same absolute action indices, outside both committed prefixes."""
+    import numpy as np
+    shift = int(next_request['observation_step'])-observation_step
+    if shift <= 0:
+        raise ValueError('Next observation must follow the current one')
+    next_delay = max(next_request['rtc_solver_inputs']['delay'],
+                     next_request['rtc_guidance']['actual_delay_steps'])
+    start = max(expired, shift+next_delay)
+    stop = min(len(old_raw), shift+len(next_request['actions_raw']))
+    indices = np.arange(start,stop,dtype=int)
+    new = np.asarray(next_request['actions_raw'],dtype=np.float64)
+    old = np.asarray(old_raw,dtype=np.float64)
+    errors = ((old[indices,:7]-new[indices-shift,:7])**2).mean(axis=1)
+    return dict(action_indices=indices.tolist(), variance=np.asarray(scores)[indices].tolist(),
+                normalized_action_mse=errors.tolist(), next_observation_step=next_request['observation_step'],
+                excluded_until=start, scope='Prediction revision proxy, not ground-truth action error')
+
+
+def probe(adapter, source_run, directory, task, stats, torch, *, metadata, validate=False):
     import gc
     import numpy as np
     from perceptbudget.h50_checkpoint import image_input, normalize_state
@@ -45,6 +64,9 @@ def probe(adapter, source_run, directory, task, stats, torch, *, metadata):
     requests_path = source_run/'rtc/q5_requests.json'
     requests = json.loads(requests_path.read_text())
     selected = [r for r in requests if r.get('observation_step') and 'actual_delay_steps' in r.get('rtc_guidance',{})]
+    following = {a['prediction_id']:b for a,b in zip(selected,selected[1:])}
+    if validate:
+        selected = selected[:-1]
     if len(selected) < 5:
         raise ValueError('DVAC probe requires five committed guided source requests')
     indices = np.linspace(0,len(selected)-1,5,dtype=int)
@@ -128,6 +150,13 @@ def probe(adapter, source_run, directory, task, stats, torch, *, metadata):
                     observation_step=source['observation_step'],source_commit_step=source.get('ready_observed_step'),
                     valid_prefix=valid,beta=beta,delay=delay,executed=executed,expired=expired,
                     timings=timings,results={})
+                if validate and beta==5.:
+                    row['replay_max_abs_vs_saved']=float(np.max(np.abs(raw_on-np.asarray(source['actions_raw']))))
+                    row['revisions']={str(tail):aligned_revision(scores[tail],raw_on,
+                        following[source['prediction_id']],source['observation_step'],max(expired,delay))
+                        for tail in (3,5)}
+                    from perceptbudget.action_events import detect_events
+                    row['command_events']=detect_events(source['actions'])
                 for tail in (3,5):
                     v=scores[tail]
                     row['results'][str(tail)]=dict(**decisions[tail],
@@ -162,4 +191,74 @@ def probe(adapter, source_run, directory, task, stats, torch, *, metadata):
             graph.beta.fill_(5.)
         _write_json_atomically(directory/'dvac_probe.json',result)
         _write_json_atomically(directory/'summary.json',result)
+    return result
+
+
+def rank_correlation(x,y):
+    import numpy as np
+    def ranks(a):
+        _, inverse, counts=np.unique(a,return_inverse=True,return_counts=True)
+        return (np.cumsum(counts)-counts+(counts-1)/2)[inverse]
+    a,b=ranks(x),ranks(y)
+    if len(a)<3 or a.std()==0 or b.std()==0:
+        return None
+    return float(np.corrcoef(a,b)[0,1])
+
+
+def validate_sources(adapter,sources,directory,stats,torch,config,metadata):
+    import numpy as np
+    from scripts import eval_q as base
+    from perceptbudget.experiment import _write_json_atomically
+    directory=Path(directory)
+    result=dict(status='running',mode='dvac_validate',model_loads=1,expert_loads=1,
+        new_episodes=0,policy_changed=False,clocks_changed=False,tasks=[],
+        scope='Saved trajectory replay: denoising variance versus aligned next-prediction revision; not success/accuracy ground truth')
+    for source in sources:
+        source=Path(source)
+        saved=json.loads((source/'run.json').read_text())['config_snapshot']
+        for key in ('H','N','checkpoint_provenance_revision','state_enabled','precision','rtc_beta'):
+            if saved[key]!=config[key]:
+                raise ValueError('Validation source configuration mismatch: '+key)
+        suite=saved['rtc_suite']
+        task_ids=saved['screen']['task_ids']
+        if len(task_ids)!=1:
+            raise ValueError('Require a single-task saved episode')
+        task=base._load_tasks(task_ids,[suite])[0]
+        child=directory/(suite+'-'+str(task_ids[0]))
+        child.mkdir()
+        evidence=probe(adapter,source,child,task,stats,torch,metadata=metadata,validate=True)
+        rows=[r for r in evidence['rows'] if r['beta']==5.]
+        summary=dict(suite=suite,task_id=task_ids[0],source_run=str(source),
+            evidence=str(child/'summary.json'),cases=len(rows),
+            max_replay_abs_vs_saved=max(r['replay_max_abs_vs_saved'] for r in rows),tails={})
+        for tail in ('3','5'):
+            correlations=[]
+            pooled_x=[];pooled_y=[]
+            for r in rows:
+                pair=r['revisions'][tail]
+                x,y=pair['variance'],pair['normalized_action_mse']
+                pooled_x+=x;pooled_y+=y
+                correlations.append(dict(observation_step=r['observation_step'],
+                    pairs=len(x),spearman=rank_correlation(x,y)))
+            buckets=[]
+            # Stratify by horizon position to avoid calling distant-tail effects a signal.
+            for lo in range(0,50,10):
+                pairs=[(v,e) for r in rows for i,v,e in zip(
+                    r['revisions'][tail]['action_indices'],r['revisions'][tail]['variance'],
+                    r['revisions'][tail]['normalized_action_mse']) if lo<=i<lo+10]
+                if len(pairs)>=4:
+                    a=np.asarray(pairs);cut=float(np.median(a[:,0]))
+                    low=a[a[:,0]<=cut,1];high=a[a[:,0]>cut,1]
+                    buckets.append(dict(start=lo,stop=lo+10,pairs=len(pairs),
+                        low_variance_mean_mse=float(low.mean()) if len(low) else None,
+                        high_variance_mean_mse=float(high.mean()) if len(high) else None,
+                        spearman=rank_correlation(a[:,0],a[:,1])))
+            summary['tails'][tail]=dict(pairs=len(pooled_x),per_snapshot=correlations,
+                pooled_spearman=rank_correlation(pooled_x,pooled_y),position_buckets=buckets)
+        result['tasks'].append(summary)
+        _write_json_atomically(directory/'validation.json',result)
+        print('DVAC_VALIDATION_TASK='+json.dumps(summary),flush=True)
+    result['status']='completed'
+    _write_json_atomically(directory/'validation.json',result)
+    _write_json_atomically(directory/'summary.json',result)
     return result

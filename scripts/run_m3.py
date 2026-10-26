@@ -17,7 +17,7 @@ def main():
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'analyze'), default='record-only')
+    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'analyze'), default='record-only')
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
@@ -35,11 +35,13 @@ def main():
         parser.error('Offline review requires --source-run, without worker')
     if args.mode == 'dvac-probe' and (not args.source_run or len(args.source_run)!=1):
         parser.error('DVAC probe requires exactly one --source-run')
-    if args.mode not in ('analyze','dvac-probe') and args.source_run:
+    if args.mode=='dvac-validate' and not args.source_run:
+        parser.error('DVAC validation requires saved source runs')
+    if args.mode not in ('analyze','dvac-probe','dvac-validate') and args.source_run:
         parser.error('--source-run is only for offline review or DVAC probe')
-    if args.dry_run and args.mode=='dvac-probe':
+    if args.dry_run and args.mode in ('dvac-probe','dvac-validate'):
         print(json.dumps(dict(mode=args.mode, model_loads=1, expert_loads=1,
-            saved_inputs=5, new_episodes=0, beta_variants=[5.,0.], repeat_pairs=3,
+            saved_inputs=5*len(args.source_run), new_episodes=0, beta_variants=[5.,0.], repeat_pairs=3,
             H=50, N=5, state=True, policy_changed=False, clocks_changed=False,
             timing_scope='Fixed-context expert replay; excludes VLM'),ensure_ascii=False))
         return 0
@@ -55,16 +57,17 @@ def main():
             parser.error('Worker requires an M3 directory')
         if args.mode=='deadline-dvfs':
             subprocess.run(['sudo','-n','true'],check=True)
-        if args.mode=='dvac-probe':
+        if args.mode in ('dvac-probe','dvac-validate'):
             from perceptbudget.device_profile import fixed_view_probe
-            fixed_view_probe(cfg,args.run_dir,args.source_run[0],'full',dvac_probe=True)
+            fixed_view_probe(cfg,args.run_dir,args.source_run[0],'full',dvac_probe=args.mode=='dvac-probe',
+                             dvac_sources=args.source_run if args.mode=='dvac-validate' else None)
         else:
             recording_session(cfg, settings, args.run_dir, CLEANUP_GATE)
         return 0
     if args.mode=='deadline-dvfs':
         subprocess.run(['sudo','-v'],check=True)
     cfg = dict(cfg, m3_settings=settings)
-    run = create_run(cfg, 'M3', 'action-review' if args.mode=='analyze' else 'dvac-probe' if args.mode=='dvac-probe' else 'record-session', repo_root=ROOT)
+    run = create_run(cfg, 'M3', 'action-review' if args.mode=='analyze' else args.mode if args.mode in ('dvac-probe','dvac-validate') else 'record-session', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     result = dict(status='running', mode=args.mode)
     try:
@@ -93,7 +96,7 @@ def main():
                     tail = (run/'worker.log').read_text()[-2500:]
                     raise RuntimeError(f'Recording worker exit{code}; {tail}')
                 result = json.loads((run/'summary.json').read_text())
-                if result['status'] != 'completed' or (args.mode!='dvac-probe' and
+                if result['status'] != 'completed' or (args.mode not in ('dvac-probe','dvac-validate') and
                         len(result.get('episodes', [])) != len(settings['calibration_tasks'])):
                     raise RuntimeError('Incomplete M3 recording session')
     except BaseException as exc:

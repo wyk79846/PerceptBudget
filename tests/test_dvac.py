@@ -45,3 +45,26 @@ def test_dvac_dry_run_does_not_load_models_or_launch_processes(capsys):
     assert d['H']==50 and d['N']==5 and d['model_loads']==1
     assert not d['policy_changed'] and not d['clocks_changed']
     launch.assert_not_called()
+
+
+def test_revision_aligns_absolute_indices_and_excludes_committed_prefixes():
+    from perceptbudget.dvac import aligned_revision
+    old=np.zeros((50,32))
+    old[:,0]=np.arange(50)
+    new=np.zeros_like(old)
+    new[:,0]=np.arange(50)+8
+    request=dict(observation_step=18,actions_raw=new.tolist(),
+        rtc_solver_inputs=dict(delay=5),rtc_guidance=dict(actual_delay_steps=7))
+    r=aligned_revision(np.arange(50),old,request,10,9)
+    assert r['action_indices']==list(range(15,50))
+    assert r['normalized_action_mse']==[0.]*35
+    assert r['variance']==list(range(15,50))
+    new[:,7:]=9999
+    request['actions_raw']=new.tolist()
+    assert aligned_revision(np.arange(50),old,request,10,9)['normalized_action_mse']==[0.]*35
+
+
+def test_rank_correlation_handles_ties_and_constant_scores():
+    from perceptbudget.dvac import rank_correlation
+    assert rank_correlation([1,1,2,3],[4,4,5,6])==pytest.approx(1.)
+    assert rank_correlation([1,1,1],[1,2,3]) is None

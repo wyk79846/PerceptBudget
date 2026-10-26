@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 DVAC三任务验证7cece092 completed：Spatial/Object/Goal task0各5保存观测，1model/1expert，无新rollout或控制改动。90组记录开关动作差0；467对齐位置（非独立回合）在排除RTC已承诺前缀后，L5波动与后续预测修改Spearman .415/.782/.183，L3 .482/.753/.203；Object逐观测有负值不能以合并相关宣称普适。重放比旧保存raw有max .02186/.01891/.01206，改用保存对保存label复算L5 .416/.794/.186结论不变；非真实正确性标签，含采样差异。逐位置分组/关键命令/图及analysis_source.py保存在run，M3进展已更新。全量563passed/9skip/110subtests。仅记录，不启用DVAC控制；建议保持旧上限与事件提示，下一小测只尝试高波动收紧边界。改前archive/pre-dvac-validation-20261026。
+
 - 2026-10-26 DVAC小实验ce14dd73 completed：仅重放成功Spatial0五份保存输入，无新rollout、训练、FlashRT/调频或控制策略变更；30组开关记录动作maxabs0，正常RTC专家重放关158.424ms/开158.241ms（不含VLM，负差属波动）。候选前缀随观测变化但L3/L5、beta5/0存在差异，未认定为可靠缓冲；仅记录，下一步跨少量任务核对动作偏差再考虑接控制。改前分支archive/pre-dvac-probe-20261026，入口run_m3.py --mode dvac-probe --source-run单目录；进展报告已补实验与原始数据路径。
 
 - 2026-10-26用户完成M3 deadline-dvfs：session2f677c8b/run3c5d9913 completed，Spatial0 76steps success/6.016s，含收尾6.222s/120.453J、0underflow、494审计通过、功率积分复算全覆盖；初始physics/frame/state与既有同任务基线一致。2次低频驻留646.2/267.3ms合0.913s，低频样本匹配，8次Full计算高频样本均匹配；4次切换读回17.27/18.69/18.29/17.92ms，预检及最终RESTORED。仍有观测年龄39.6ms/邻近减速350.9ms/缓冲预计7.2ms三次计划时限迟到，实际动作供给未断，需后续校准与故障检查；不称全时限达标。单任务能量比记录基线140.557J低14.3%，比高频动态125.923J低4.3%，轨迹/步数不同不能归因全为DVFS。postrun_review.json保存来源SHA；M3进展/README已更新。下一步看门狗迟到/无返回/断供实测后再36配对；本轮仅审核/离线汇总，无新GPU或调频、M3未全部交付。
