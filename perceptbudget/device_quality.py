@@ -185,6 +185,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
                         or config.get('m2_vision_pool_factor', 1) != 1):
         raise ValueError('M3 recording requires new explicit Full-view tasks without perception changes')
+    dvac_paired=bool(config.get('m3_dvac_comparison'))
+    if dvac_paired and (not record_only or config.get('m3_scheduler_mode')!='deadline_high'):
+        raise ValueError('DVAC comparison requires paired high-frequency M3 recording')
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
@@ -322,6 +325,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     views=('full','kv_once') if single_insertion else ('full','kv_reuse_split') if paired_split else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 if visual_comparison:
                     views=('full',visual_fast_mode+'_alternate')
+                if dvac_paired:
+                    views=('deadline_high','dvac_high')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -336,7 +341,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 env = base._make_env(env_class, task)
                 env._pb_lock_fixtures = True
                 observation, calibration = calibrate(env, task, np)
-                current_view = views[0]
+                current_view = 'full' if dvac_paired else views[0]
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)
                 cfg['screen'].update(suites=[suite], task_ids=[tid])
@@ -441,9 +446,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
-                    current_view = 'full' if recompute_comparison or visual_comparison else view
+                    current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else view
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
+                    if dvac_paired:
+                        child_cfg['m3_dvac_enabled']=view=='dvac_high'
                     if recompute_comparison:
                         child_cfg['m2_reuse_enabled']=view!='full'
                         child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
@@ -481,6 +488,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         result.update(episode_geometry(visual_fast_mode,view!='full'))
                     info = initial_info(active, episode)
                     review = None
+                    if dvac_paired and view=='dvac_high':
+                        reference=next(r['initial'] for r in record['episodes']
+                            if r['suite']==suite and r['task_id']==tid and r['view']=='deadline_high')
+                        review=compare_initial(reference,info)
                     if kind == 'single':
                         full = json.loads((directory/'full_quality.json').read_text())
                         reference = next(r['initial'] for r in full['episodes']

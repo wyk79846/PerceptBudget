@@ -17,7 +17,7 @@ def main():
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'analyze'), default='record-only')
+    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'analyze'), default='record-only')
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
@@ -29,6 +29,8 @@ def main():
     settings = load_settings(args.settings)
     if args.mode in ('deadline-high','deadline-dvfs'):
         settings = dict(settings, mode=args.mode.replace('-','_'), calibration_tasks=[[args.suite,0]])
+    if args.mode=='dvac-paired':
+        settings=dict(settings,mode='deadline_high',dvac_paired=True)
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
     if args.mode == 'analyze' and (not args.source_run or args.worker):
@@ -49,7 +51,8 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, H=50, N=5, state=True,
-            policy_changed=args.mode in ('deadline-high','deadline-dvfs'), clocks_changed=args.mode=='deadline-dvfs',
+            episodes=len(settings['calibration_tasks'])*(2 if args.mode=='dvac-paired' else 1),
+            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired'), clocks_changed=args.mode=='deadline-dvfs',
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:
@@ -67,7 +70,7 @@ def main():
     if args.mode=='deadline-dvfs':
         subprocess.run(['sudo','-v'],check=True)
     cfg = dict(cfg, m3_settings=settings)
-    run = create_run(cfg, 'M3', 'action-review' if args.mode=='analyze' else args.mode if args.mode in ('dvac-probe','dvac-validate') else 'record-session', repo_root=ROOT)
+    run = create_run(cfg, 'M3', 'action-review' if args.mode=='analyze' else args.mode if args.mode in ('dvac-probe','dvac-validate') else 'dvac-paired' if args.mode=='dvac-paired' else 'record-session', repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     result = dict(status='running', mode=args.mode)
     try:
@@ -97,7 +100,7 @@ def main():
                     raise RuntimeError(f'Recording worker exit{code}; {tail}')
                 result = json.loads((run/'summary.json').read_text())
                 if result['status'] != 'completed' or (args.mode not in ('dvac-probe','dvac-validate') and
-                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])):
+                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])*(2 if args.mode=='dvac-paired' else 1)):
                     raise RuntimeError('Incomplete M3 recording session')
     except BaseException as exc:
         result = dict(status='invalid', mode=args.mode, error=f'{type(exc).__name__}: {exc}')

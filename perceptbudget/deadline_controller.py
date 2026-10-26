@@ -63,7 +63,7 @@ class TimingPlan:
 
 
 def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
-                margin_seconds=.05, critical_step=None, observation_deadline=None):
+                margin_seconds=.05, critical_step=None, observation_deadline=None, dvac_step=None):
     """buffer_end_step is the caller's admitted exclusive end, not raw H.
 
     All deadlines use monotonic wall time. service_seconds already includes
@@ -76,6 +76,10 @@ def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
     if any(type(v) is not int for v in (step, buffer_end_step)):
         raise ValueError('Control indices must be integers')
     limits = [(now+(buffer_end_step-step)*period, 'buffer')]
+    if dvac_step is not None:
+        if type(dvac_step) is not int or dvac_step < 0:
+            raise ValueError('DVAC boundary must be a nonnegative absolute action index')
+        limits.append((now+(dvac_step-step)*period,'denoising_variance'))
     if critical_step is not None:
         if type(critical_step) is not int or critical_step < step:
             raise ValueError('Critical step must be a current or future integer index')

@@ -68,3 +68,27 @@ def test_rank_correlation_handles_ties_and_constant_scores():
     from perceptbudget.dvac import rank_correlation
     assert rank_correlation([1,1,2,3],[4,4,5,6])==pytest.approx(1.)
     assert rank_correlation([1,1,1],[1,2,3]) is None
+
+
+def test_tracker_uses_prior_history_and_new_episode_starts_fresh():
+    from perceptbudget.dvac import DvacTracker
+    x=np.zeros((5,50,7))
+    tracker=DvacTracker()
+    assert tracker.observe(x)['warmup']
+    x[:,12,0]=np.arange(5)
+    second=tracker.observe(x)
+    assert second['history_count']==1 and second['threshold']==0
+    assert second['prefix_actions']==12
+    assert DvacTracker().observe(x)['warmup']
+    for _ in range(8):tracker.observe(x)
+    assert len(tracker.history)==5
+
+
+def test_paired_dry_run_declares_six_episodes_without_clock_changes(capsys):
+    from scripts.run_m3 import main
+    with patch('sys.argv',['m3','--mode','dvac-paired','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==6 and plan['model_loads']==1
+    assert plan['policy_changed'] and not plan['clocks_changed']
+    launch.assert_not_called()

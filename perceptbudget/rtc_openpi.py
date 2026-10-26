@@ -155,8 +155,12 @@ class OriginalOpenPiRTCAdapter:
             enable_varlen_attention(self.expert)
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
+        clean_trace=[] if self.config.get('m3_dvac_enabled') and previous is not None else None
         if step_graph is not None and previous is not None:
-            raw,correction_norms=step_graph.replay(noise,previous,delay,executed)
+            if clean_trace is None:
+                raw,correction_norms=step_graph.replay(noise,previous,delay,executed)
+            else:
+                raw,correction_norms=step_graph.replay(noise,previous,delay,executed,clean_trace=clean_trace)
             norms=correction_norms.cpu().tolist()
         elif use_graph and previous is not None:
             raw, _, corrections = self.graph.replay(noise,previous,delay,executed)
@@ -170,6 +174,10 @@ class OriginalOpenPiRTCAdapter:
                 delay=delay,executed=executed,
                 solver='author_source_order' if self.config.get('rtc_author_order') else 'legacy')
         raw_actions = raw.cpu().numpy().copy()
+        if clean_trace:
+            request['dvac']=self._dvac_tracker.observe(torch.stack(clean_trace).cpu().numpy())
+        elif clean_trace is not None:
+            request['dvac']=dict(available=False,reason='No intermediate estimates on fallback; original limits retained')
         if not np.isfinite(raw_actions).all() or not np.isfinite(norms).all():
             raise RuntimeError('nonfinite original OpenPI RTC output or VJP')
         request['actions_raw'] = raw_actions.tolist()
@@ -197,6 +205,9 @@ class OriginalOpenPiRTCAdapter:
         return actions
 
     def bootstrap(self, snapshot, prompt, request):
+        if self.config.get('m3_dvac_enabled'):
+            from perceptbudget.dvac import DvacTracker
+            self._dvac_tracker=DvacTracker()
         return self._predict(snapshot, prompt, None, 0, 0, request)
 
     def predict(self, snapshot, prompt, previous_raw, *, delay, executed, request):

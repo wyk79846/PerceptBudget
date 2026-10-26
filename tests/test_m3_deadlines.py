@@ -88,3 +88,37 @@ def test_invalid_time_inputs_rejected(change):
     args=dict(now=10.,step=0,buffer_end_step=20,period=.05,service_seconds=.5)
     args.update(change)
     with pytest.raises(ValueError):timing_plan(**args)
+
+
+def test_variance_only_tightens_existing_deadlines_and_overdue_boundary_starts_now():
+    args=dict(now=10.,step=10,buffer_end_step=20,period=.05,service_seconds=.3,margin_seconds=.05)
+    original=timing_plan(**args)
+    assert timing_plan(**args,dvac_step=40).deadline==original.deadline
+    early=timing_plan(**args,dvac_step=15)
+    assert early.reason=='denoising_variance' and early.start_now
+    overdue=timing_plan(**args,dvac_step=9)
+    assert overdue.start_now and overdue.deadline_already_unreachable
+
+
+def test_variance_refresh_does_not_reject_otherwise_admitted_actions():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    config=dict(m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=20,
+            maximum_observation_age_seconds=2.,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(config)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    req=dict(prediction_id=1,observation_step=10,observation_monotonic=10.,actions=actions,
+        dvac=dict(prefix_actions=5))
+    runtime.committed(req,dict(commit_step=18,commit_monotonic=10.4))
+    queue={10+i:(a,1,10,i) for i,a in enumerate(actions)}
+    decision=runtime.decide(now=10.4,step=18,queue=queue,rows=[],inflight=False)
+    assert decision['reason']=='denoising_variance' and decision['start_now']
+    assert decision['dvac_step']==15
+    assert runtime.admitted(queue[29],29,10.4)
+    assert not runtime.admitted(queue[30],30,10.4)
+    config['m3_dvac_enabled']=False
+    baseline=DeadlineRuntime(config)
+    baseline.committed(req,dict(commit_step=18,commit_monotonic=10.4))
+    assert baseline.decide(now=10.4,step=18,queue=queue,rows=[],inflight=False)['dvac_step'] is None

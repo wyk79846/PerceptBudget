@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 DVAC提前刷新闭环d5144c8c completed：三suite task0各原deadline_high/DVAC配对共6，1model/1expert，seed7/init0三对初始physics/frame/state哈希精确一致。两组各3/3 success且0underflow；Spatial78→77步，Object144→144，Goal120→120；能量122.535→123.634/206.555→207.612/174.917→174.816J含收尾，原始积分全覆盖复算一致。DVAC请求原因Spatial0/Object2/Goal1次，Object/Goal各1提交时边界已过；只提前刷新不截队列、不放宽20步，warmup/历史按回合重置。无明确节能加速，不替换默认；现有开关仅dvac-paired启用，FlashRT未改。全量566passed/9skip/110subtests，后补dry-run定向检查。报告已追加，改前archive/pre-dvac-closed-loop-20261027；下一阶段需验证低波动放宽上限才可能减少请求，故障注入/长测仍未完成。
+
 - 2026-10-27 DVAC三任务验证7cece092 completed：Spatial/Object/Goal task0各5保存观测，1model/1expert，无新rollout或控制改动。90组记录开关动作差0；467对齐位置（非独立回合）在排除RTC已承诺前缀后，L5波动与后续预测修改Spearman .415/.782/.183，L3 .482/.753/.203；Object逐观测有负值不能以合并相关宣称普适。重放比旧保存raw有max .02186/.01891/.01206，改用保存对保存label复算L5 .416/.794/.186结论不变；非真实正确性标签，含采样差异。逐位置分组/关键命令/图及analysis_source.py保存在run，M3进展已更新。全量563passed/9skip/110subtests。仅记录，不启用DVAC控制；建议保持旧上限与事件提示，下一小测只尝试高波动收紧边界。改前archive/pre-dvac-validation-20261026。
 
 - 2026-10-26 DVAC小实验ce14dd73 completed：仅重放成功Spatial0五份保存输入，无新rollout、训练、FlashRT/调频或控制策略变更；30组开关记录动作maxabs0，正常RTC专家重放关158.424ms/开158.241ms（不含VLM，负差属波动）。候选前缀随观测变化但L3/L5、beta5/0存在差异，未认定为可靠缓冲；仅记录，下一步跨少量任务核对动作偏差再考虑接控制。改前分支archive/pre-dvac-probe-20261026，入口run_m3.py --mode dvac-probe --source-run单目录；进展报告已补实验与原始数据路径。

@@ -35,6 +35,19 @@ def prefix_decision(scores, history, *, expired=0, alpha=2.):
                 remaining_actions=max(0,prefix-expired),warmup=False)
 
 
+class DvacTracker:
+    """Per-episode rolling signal; caller uses its boundary only to refresh earlier."""
+    def __init__(self):
+        self.history=deque(maxlen=5)
+
+    def observe(self, clean):
+        scores=variance_scores(clean,tail=5)
+        result=prefix_decision(scores,self.history,alpha=2.)
+        result.update(scores=scores.tolist(),tail=5,alpha=2.,history_count=len(self.history))
+        self.history.append(scores.copy())
+        return result
+
+
 def aligned_revision(scores, old_raw, next_request, observation_step, expired):
     """Compare the same absolute action indices, outside both committed prefixes."""
     import numpy as np

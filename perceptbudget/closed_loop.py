@@ -34,6 +34,8 @@ def recording_session(config, settings, directory, cleanup_gate):
             probability=settings['timing']['service_quantile'])
         cfg.update(m3_scheduler_mode=settings['mode'], m3_timing=settings['timing'],
                    m3_service_samples={k:list(v) for k,v in times.samples.items()})
+    if settings.get('dvac_paired'):
+        cfg['m3_dvac_comparison']=True
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
@@ -44,6 +46,8 @@ def recording_session(config, settings, directory, cleanup_gate):
     result['mode'] = settings.get('mode','record_only')
     result['policy_changed'] = result['mode'] != 'record_only'
     result['clocks_changed'] = result['mode'] == 'deadline_dvfs'
+    if settings.get('dvac_paired'):
+        result['comparison'] = ['deadline_high','dvac_high']
     _write_json_atomically(Path(directory)/'summary.json', result)
     return result
 
@@ -60,6 +64,7 @@ class DeadlineRuntime:
         self.events, self.chunks, self.plan = [], {}, None
         self.covered_events = []
         self.mode = config['m3_scheduler_mode']
+        self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
         self.clocks = None
         self.recovering_plan = None
 
@@ -85,6 +90,9 @@ class DeadlineRuntime:
     def committed(self, request, commit):
         pid, origin = request['prediction_id'], request['observation_step']
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
+        signal=request.get('dvac',{})
+        prefix=signal.get('prefix_actions') if self.dvac_enabled else None
+        self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
         self.events = [dict(e, target_step=origin+e['offset'], prediction_id=pid)
                        for e in detect_events(request['actions'], self.events_config,
                            start_offset=max(0,commit['commit_step']-origin))]
@@ -129,11 +137,13 @@ class DeadlineRuntime:
         recovery = self.clocks is not None and (self.clocks.profile!='baseline' or self.clocks.pending is not None)
         plan = timing_plan(now=now,step=step,buffer_end_step=end,period=period,
             critical_step=critical,
+            dvac_step=current.get('dvac_step') if current else None,
             observation_deadline=current['observation']+self.settings['maximum_observation_age_seconds'] if current else None,
             service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds)
         self.plan = dict(asdict(plan), admitted_remaining_actions=end-step,
                          decision_monotonic=now,
                          estimated_control_period_seconds=period, critical_step=critical,
+                         dvac_step=current.get('dvac_step') if current else None,
                          inflight=inflight, path='low_continue_recovery' if recovery else 'high_frequency',
                          current_profile=self.clocks.profile if self.clocks else 'baseline',
                          covered_event_count=len(self.covered_events),
