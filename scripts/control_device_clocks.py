@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from perceptbudget.device_clocks import ClockControl, PROFILES, MATRIX_PROFILES, cycle_trace, recovery_trace
+from perceptbudget.device_clocks import ClockControl, PROFILES, MATRIX_PROFILES, cycle_trace, recovery_trace, runtime_trace
 
 STATE = Path('/run/perceptbudget-clocks')
 
@@ -34,6 +34,9 @@ def main():
     paired = sub.add_parser('paired-idle', help='Five command-origin matched idle/recovery exchanges')
     paired.add_argument('--profile', required=True, choices=('baseline', 'gpu_emc'))
     paired.add_argument('--idle-seconds', type=float, required=True, choices=(.05, .1, .15, .2, 1., 2.))
+    runtime = sub.add_parser('runtime', help='Bounded HIGH/LOW/STOP commands for one real task')
+    runtime.add_argument('--seconds', type=int, default=120, choices=range(1,601))
+    runtime.set_defaults(profile='baseline')
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -64,6 +67,8 @@ def main():
         control.validate(args.profile)
         if args.command in ('cycles', 'recovery', 'paired-idle'):
             control.validate('baseline')
+        if args.command == 'runtime':
+            control.validate('gpu_emc')
         if args.command == 'paired-idle':
             args.serve_profile = 'baseline'
         if args.command in ('recovery', 'paired-idle'):
@@ -78,6 +83,12 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, interrupted)
         try:
+            if args.command == 'runtime':
+                control.apply('baseline')
+                print(json.dumps(dict(status='READY',monotonic=time.monotonic(),profile='baseline',
+                    settings=control.snapshot(),actual=control.actual(),lease_seconds=args.seconds)),flush=True)
+                runtime_trace(control,lambda e:print(json.dumps(e),flush=True),sys.stdin.fileno(),seconds=args.seconds)
+                return
             if args.command in ('cycles', 'recovery', 'paired-idle'):
                 control.apply(args.serve_profile if args.command in ('recovery', 'paired-idle') else 'baseline')
                 print(json.dumps(dict(status='READY', monotonic=time.monotonic(),

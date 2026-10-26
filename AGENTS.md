@@ -8,6 +8,12 @@
 
 ## 已完成与待推进
 
+- M3当前代码检查：全量555passed/9skip/110subtests/3既有环境warnings，后续小补恢复估计下界与preflight恢复错误状态对应测试通过。动态调频入口先运行无模型runtime LOW/HIGH/STOP预检，再加载模型；仍须用户终端密码，未做真实DVFS。当前所有GPU记录/短测均已结束，无后台模型任务。代码开发在原project/perceptbudget分支，改前归档分支archive/pre-m3-recording-20261026。
+
+- 2026-10-26 M3已授权开始并实施到高频短测：新增action_events.py/deadline_controller.py/closed_loop.py、m3.json和run_m3.py；现有执行器仅M3显式挂接，基线/FlashRT不改。先离线复用M1 task0 q5/q30六回合；live Spatial/Object/Goal task0分别79/142/123 success、0underflow。首会话74a639c6在第二环境构建触768MiB保护；先编译环境到本run MJB、回放核对后再加载权重，2be4951c同一模型顺序Object/Goal正常完成，physics/state0差、最多1像素1级，无保护线改动。
+- M3高频调度：初始M2 Q95约553ms＋50ms，max action offset20与max obs age2s为校准候选，Full+Continue；351cef1a的78步success曾被旧固定q审计拒绝（原失败保留，新动态审计500 checks通过）；修正同一夹爪事件已刷新覆盖后不重复触发，04386ec6/fcf1e739当前80步success、0underflow、动态审计通过，刷新间隔10/11/10/9/12/12/11。含收尾任务能量125.923J、动作完成6.307s，记录基线140.557J/6.225s，仅单次配对；仍有一次邻近减速提示提前量不足，晚提示时刻0.347s但无断供，继续校准。统一离线汇总5024aca0。
+- 下一步已准备run_m3.py --mode deadline-dvfs --suite libero_spatial：普通用户终端sudo-v、先在线时钟协议LOW/HIGH/STOP预检并确认恢复，再单任务模型常驻。新增root runtime120s有界协议，非阻塞ACK配合控制线程，Full保持高频、低频Continue按实算空档/200ms候选门槛；完整服务从恢复命令计起只算一次。协议模拟通过，但真实调频尚未执行：沙盒外sudo-n仍需密码，需用户终端启动，不用root运行模型。完整模型卡住/迟到/断供故障注入与36回合尚未实施，不称M3完成或看门狗已全部验证。详见任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md。
+
 - 2026-10-26已拟M3任务书：任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md，待用户审阅，尚无新实现/实验。按Word第3/4/5节及最新授权提前接机制一：事件/缓冲/观测年龄定截止时间，M2完整服务分位与时间余量定启动，高频保持或低频Continue提前恢复，Full+Continue/既定RTC。先记录校准、再高频时机短测、再调频/三类看门狗、最后9任务×4策略=36正式配对回合。三suite task0作校准，task1/3/6为第一轮比较；初始Q95/50ms余量及约200ms降频候选均为校准起点。M3统一整任务VDD_IN，失败/超时计每成功任务能量分子；模型常驻、代码职责三模块+单入口、原基线/FlashRT不改。
 
 - 2026-10-26用户授权M2仿M1归档及GitHub上传：35份M2相关根目录报告已迁至任务指导与相关参考/PerceptBudget归档/M2相关报告，主入口为其中PerceptBudget_M2阶段交付报告_20261025.md（含27格），附归档索引与迁移清单；原始实验结果不移动/不改写。README去除过时M2待测叙述，项目引用更新；整理前分支archive/pre-m2-report-archive-20261026。

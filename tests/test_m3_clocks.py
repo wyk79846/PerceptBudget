@@ -1,0 +1,91 @@
+import os
+import threading
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from perceptbudget.device_clocks import runtime_trace
+
+
+def test_runtime_protocol_accepts_serial_high_low_and_stop():
+    read,write=os.pipe()
+    applied=threading.Event()
+    events=[]
+    errors=[]
+    control=SimpleNamespace(actual=lambda:{'clock':1})
+    def emit(event):
+        events.append(event)
+        if event['status']=='APPLIED':applied.set()
+    def run():
+        try:runtime_trace(control,emit,read,seconds=2)
+        except BaseException as e:errors.append(e)
+    with patch('perceptbudget.device_clocks.observed_switch',return_value={'observed_match_monotonic':1.}):
+        thread=threading.Thread(target=run);thread.start()
+        try:
+            os.write(write,b'LOW\n');assert applied.wait(1);applied.clear()
+            os.write(write,b'HIGH\n');assert applied.wait(1)
+            os.write(write,b'STOP\n');thread.join(2)
+            assert not thread.is_alive() and not errors
+        finally:
+            os.close(write);thread.join(3);os.close(read)
+    changes=[e for e in events if e['status']=='APPLIED']
+    assert [e['profile'] for e in changes]==['gpu_emc','baseline']
+    assert [e['request_index'] for e in changes]==[0,1]
+    assert events[-1]['status']=='STOPPED'
+
+
+@pytest.mark.parametrize('payload',[b'REBOOT\n',b'LOW\nHIGH\n',b'x'*33])
+def test_runtime_rejects_unknown_batched_or_oversize_commands(payload):
+    read,write=os.pipe()
+    try:
+        os.write(write,payload)
+        with pytest.raises(ValueError):runtime_trace(SimpleNamespace(actual=lambda:{}),lambda e:None,read,seconds=1)
+    finally:os.close(read);os.close(write)
+
+
+def test_runtime_writer_exit_returns_so_owner_can_restore():
+    read,write=os.pipe();os.close(write)
+    try:runtime_trace(SimpleNamespace(actual=lambda:{}),lambda e:None,read,seconds=1)
+    finally:os.close(read)
+
+
+def test_runtime_expiry_is_bounded():
+    read,write=os.pipe()
+    try:
+        with pytest.raises(TimeoutError):
+            runtime_trace(SimpleNamespace(actual=lambda:{}),lambda e:None,read,seconds=1)
+    finally:os.close(read);os.close(write)
+
+
+def test_dvfs_plan_keeps_root_model_off_and_uses_one_task(capsys):
+    import json
+    from scripts.run_m3 import main
+    with patch('sys.argv',['m3','--mode','deadline-dvfs','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    d=json.loads(capsys.readouterr().out)
+    assert d['clocks_changed'] and d['policy_changed']
+    assert len(d['tasks'])==1 and d['model_loads']==1
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize('failed',[False,True])
+def test_clock_preflight_restores_before_model_load_even_on_failure(tmp_path,failed):
+    import json
+    from perceptbudget.closed_loop import clock_preflight
+    closed=[]
+    class Clock:
+        pending=None
+        last_change={}
+        def __init__(self,*a):pass
+        def __enter__(self):return self
+        def switch(self,profile):
+            if failed:raise RuntimeError('frequency unavailable')
+            self.last_change={'profile':profile}
+        def close(self):closed.append(True)
+    with patch('perceptbudget.closed_loop.RuntimeClocks',Clock):
+        if failed:
+            with pytest.raises(RuntimeError,match='frequency unavailable'):clock_preflight(tmp_path)
+        else:assert clock_preflight(tmp_path)['status']=='completed'
+    d=json.loads((tmp_path/'clock_preflight.json').read_text())
+    assert d['restored'] and not d['model_loaded'] and closed==[True]

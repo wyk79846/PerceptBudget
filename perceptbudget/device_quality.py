@@ -166,7 +166,7 @@ def select_candidate(full, single):
     return next((v for v in ('agent', 'wrist') if passed(single, v)), None)
 
 
-def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False, paired_split=False, visual_comparison=False, visual_fast_mode='wrist'):
+def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None, calibration_only=False, task_plan=None, recompute_comparison=False, split_delay_comparison=False, single_insertion=False, paired_split=False, visual_comparison=False, visual_fast_mode='wrist', record_only=False):
     import numpy as np
     from scripts import eval_q as base, probe_delay_buffer as probe
     from scripts.complete_m1_h50 import cleanup, calibrate, initial_info
@@ -182,6 +182,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
+    if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
+                        or config.get('m2_vision_pool_factor', 1) != 1):
+        raise ValueError('M3 recording requires new explicit Full-view tasks without perception changes')
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
@@ -221,7 +224,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     expected_tokens=visual_tokens(cfg) if kind=='full' else 256
     os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl',
                       CUBLAS_WORKSPACE_CONFIG=':4096:8')
-    path = directory/f'{kind}_quality.json'
+    path = directory/('recording.json' if record_only else f'{kind}_quality.json')
     if path.exists() and not resume:
         raise ValueError('Quality worker output already exists; do not overwrite episodes')
     record = dict(status='loading', kind=kind, episodes=[], model_loads=0, suffix_loads=0,
@@ -249,6 +252,16 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             pooled_view=cfg.get('m2_pool_view','both'),visual_tokens=expected_tokens,
             scope='fixed dual-view pooled perception across requested tasks; not Full/Fast switching',
             holdout_policy='No calibration selection or extra holdout; execute the explicit task plan only')
+    if record_only:
+        scheduled = cfg.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs')
+        cfg.update(m3_record_only=not scheduled,
+                   execution_mode='m3_'+cfg.get('m3_scheduler_mode','record_only')+'_actual_async')
+        record.update(scope='M3 Full baseline recording; q5 actual async RTC; action hints reviewed after each episode; no scheduling or clock changes',
+                      holdout_policy='Explicit calibration tasks only', mode='deadline_high' if scheduled else 'record_only')
+        if scheduled:
+            record['scope'] = 'M3 event/buffer/age deadlines; high-frequency Full/Continue; actual async RTC; no clock changes'
+            if cfg['m3_scheduler_mode']=='deadline_dvfs':
+                record.update(scope='M3 deadlines with low-frequency Continue and early high-frequency Full recovery',mode='deadline_dvfs')
     if recompute_comparison:
         record.update(recompute_comparison=True,
             scope='paired Full vs alternating stale-KV expert-only RTC; no spatial compression',
@@ -440,7 +453,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m2_split_delay']=view!='full'
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
-                    active = create_run(child_cfg, 'M2', quality_run_purpose(label))
+                    active = create_run(child_cfg, 'M3' if record_only else 'M2',
+                                        'record-full' if record_only else quality_run_purpose(label))
                     trace_dir = active/'rtc'
                     trace_dir.mkdir()
                     _write_json_atomically(active/'control_period_calibration.json', calibration)
@@ -473,6 +487,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                          if r['suite']==suite and r['task_id']==tid)
                         review = compare_initial(reference, info)
                     result['initial_pair_review'] = review
+                    if record_only:
+                        from perceptbudget.action_events import EventConfig, analyze_episode
+                        event_record = analyze_episode(active, EventConfig(**cfg.get('m3_events', {})))
+                        _write_json_atomically(active/'action_events.json', event_record)
+                        result['action_event_summary'] = event_record['summary']
                     _write_json_atomically(active/'summary.json', result)
                     metadata = json.loads((active/'run.json').read_text())
                     metadata['status'] = 'completed'
@@ -485,6 +504,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         initial_pair_review=review, inference_median_ms=result['steady_inference_median_ms']))
                     if visual_comparison:
                         record['episodes'][-1].update(episode_geometry(visual_fast_mode,view!='full'))
+                    if record_only:
+                        record['episodes'][-1]['action_events'] = str(active/'action_events.json')
                     record['status'] = 'running'
                     save()
                     print('quality_episode='+json.dumps(record['episodes'][-1]), flush=True)

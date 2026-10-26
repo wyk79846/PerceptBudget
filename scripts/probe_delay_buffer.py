@@ -313,6 +313,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     late_policy = 'discard'
     pauses = []
     monitor = PowerMonitor(poll_interval=0.1)
+    scheduler = None
+    if config.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs'):
+        from perceptbudget.closed_loop import DeadlineRuntime
+        scheduler = DeadlineRuntime(config)
+        scheduler.start_clocks(run_dir)
     executor = ThreadPoolExecutor(max_workers=1)
     monitor.start()
     start = time.monotonic()
@@ -338,6 +343,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             'observation_raw_state': snapshot['raw_state'].tolist(),
             'queue_before_submit_actions': buffer_count(queue, step),
         }
+        if scheduler is not None:
+            scheduler.requested(request)
         selected_delay_queue=delay_queue
         if mode_delay_queues is not None:
             mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
@@ -496,6 +503,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             result['rtc_action_fusion'] = rtc_fusion
             result['merge_seconds'] = time.monotonic() - merge_start
         commits.append(result)
+        if scheduler is not None:
+            scheduler.committed(current_request, result)
         previous_commit_step = step
         base._trace(stream, 'prediction_committed', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition,
@@ -528,6 +537,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             harvest(step)
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
+            if scheduler is not None:
+                decision = scheduler.decide(now=time.monotonic(),step=step,queue=queue,
+                                            rows=rows,inflight=future is not None)
+                decision = scheduler.control_clocks(decision,inflight=future is not None)
+                due = decision['start_now'] and future is None and step-previous_request_step >= q
+                base._trace(stream, 'm3_decision', step=step, **decision)
             if (rtc_adapter is not None and config.get('rtc_wait_for_delay_feasibility')
                     and future is None and step > 0 and due):
                 recent_rows = rows[-16:]
@@ -557,6 +572,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                                 trial_index=trial_index, condition=condition, step=step)
             queued = buffer_count(queue, step)
             item = queue.pop(step, None)
+            if scheduler is not None and not scheduler.admitted(item, step, time.monotonic()):
+                item = None
             if item is None:
                 underflows.append(step)
                 action = np.zeros(7, dtype=np.float32)
@@ -628,7 +645,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     finally:
         if stop is None:
             stop = time.monotonic()
-        drain = _drain_executor(executor, monitor, start, stop)
+        try:
+            if scheduler is not None:
+                scheduler.stop_clocks()
+        finally:
+            drain = _drain_executor(executor, monitor, start, stop)
         base._trace(stream, 'episode_drain', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition, **drain)
         if env_audit is not None:

@@ -45,6 +45,26 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_dynamic_refresh_requires_recorded_deadline_instead_of_fixed_counter(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_scheduler_mode='deadline_high',
+        m3_timing={'maximum_action_offset':20,'maximum_observation_age_seconds':1000})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    decision=dict(step=5,start_now=True,inflight=False,deadline=51.,latest_start=50.,
+                  service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='action_event')
+    events.append(dict(event='m3_decision',**decision))
+    requests[1]['m3_timing']=dict(decision)
+    save()
+    assert audit(tmp_path)['passed']
+    decision['start_now']=False
+    events[-1].update(decision)
+    save()
+    result=audit(tmp_path)
+    assert not result['passed']
+    assert 'm3_request_triggered_by_recorded_deadline' in [f['check'] for f in result['failures']]
+
+
 @pytest.mark.parametrize('fast_mode',['wrist','pool2'])
 @pytest.mark.parametrize('fast_no_state',[False,True])
 def test_fresh_visual_audit_checks_current_source_geometry_and_mode_history(tmp_path,fast_mode,fast_no_state):

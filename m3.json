@@ -1,0 +1,25 @@
+{
+  "mode": "record_only",
+  "q": 5,
+  "calibration_tasks": [["libero_spatial", 0], ["libero_object", 0], ["libero_goal", 0]],
+  "events": {
+    "gripper_threshold": 0.2,
+    "confirm_steps": 2,
+    "minimum_motion": 0.1,
+    "slowdown_ratio": 0.5,
+    "turn_degrees": 60.0,
+    "match_steps": 5
+  },
+  "timing": {
+    "source_summary": "/home/wyk/workspace/任务产出/perceptbudget/M2/20261026T023602.896667Z-cost-table-27-d4594b43/summary.json",
+    "service_quantile": 0.95,
+    "safety_margin_seconds": 0.05,
+    "minimum_low_idle_seconds": 0.2,
+    "maximum_action_offset": 20,
+    "maximum_observation_age_seconds": 2.0,
+    "minimum_request_steps": 5,
+    "margin_updates": false,
+    "scope": "Calibration start: offset20 from existing task0 q20 successes; event and age limits can trigger earlier"
+  },
+  "threshold_status": "initial command-unit thresholds; record first, calibrate before scheduling"
+}

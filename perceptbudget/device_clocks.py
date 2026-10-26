@@ -20,6 +20,42 @@ SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')
 MATRIX_PROFILES = ('baseline', 'balanced', 'gpu_emc')
 
 
+def runtime_trace(control, emit, fd, *, seconds=120):
+    """Finite online HIGH/LOW/STOP protocol; caller owns action timing."""
+    import os
+    import select
+    import time
+    if type(seconds) is not int or not 1 <= seconds <= 600:
+        raise ValueError('Runtime clock lifetime must be1..600 seconds')
+    deadline, current, data, index = time.monotonic()+seconds, 'baseline', b'', 0
+    while time.monotonic() < deadline:
+        emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual()))
+        ready, _, _ = select.select([fd], [], [], min(.02,max(0.,deadline-time.monotonic())))
+        if not ready:
+            continue
+        chunk = os.read(fd, 32)
+        if not chunk:
+            return  # Writer died: the command owner's finally restores clocks.
+        data += chunk
+        if len(data) > 32:
+            raise ValueError('Runtime token too long')
+        if b'\n' not in data:
+            continue
+        token, data = data.split(b'\n',1)
+        if data:
+            raise ValueError('Only one outstanding runtime command allowed')
+        if token == b'STOP':
+            emit(dict(status='STOPPED', monotonic=time.monotonic()))
+            return
+        if token not in (b'HIGH',b'LOW'):
+            raise ValueError('Only HIGH/LOW/STOP accepted')
+        target = 'baseline' if token==b'HIGH' else 'gpu_emc'
+        changed = observed_switch(control,target,current)
+        emit(dict(status='APPLIED', profile=target, request_index=index, **changed))
+        current, index = target, index+1
+    raise TimeoutError('Runtime clock lifetime expired')
+
+
 def observed_switch(control, target, current):
     import time
     command = time.monotonic()

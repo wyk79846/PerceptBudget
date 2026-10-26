@@ -1,6 +1,6 @@
 # PerceptBudget
 
-面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；下一阶段为M3最小闭环，尚未启动新调度实验。**
+面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；M3已完成动作记录与高频最晚启动短测，下一步为降频恢复小测。**
 
 ## 唯一推理基线
 
@@ -22,7 +22,7 @@
 
 - **M1**：[统一交付报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1阶段交付报告_新模型H50_20261021.md)。[历史报告目录](../任务指导与相关参考/PerceptBudget归档/M1相关报告/)。
 - **M2**：[统一交付报告（含27项小表）](../任务指导与相关参考/PerceptBudget归档/M2相关报告/PerceptBudget_M2阶段交付报告_20261025.md)。[归档索引](../任务指导与相关参考/PerceptBudget归档/M2相关报告/归档索引.md)。操作接口和恢复见[调频说明](docs/M2_CLOCK_CONTROL.md)。
-- **M3待实施**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。先用Full＋Continue，按最新讨论提前接入未来动作提示，结合缓冲、设备状态相关的完整服务耗时和安全余量计算启动时刻；验证降频/恢复、RTC衔接与异常回退。动态Fast选择及完整联合搜索后续再加入。
+- **M3进行中**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。先用Full＋Continue，按最新讨论提前接入未来动作提示，结合缓冲、设备状态相关的完整服务耗时和安全余量计算启动时刻；验证降频/恢复、RTC衔接与异常回退。动态Fast选择及完整联合搜索后续再加入。
 
 M2已有27格成本覆盖，重点9格各60次，其余Full/Fast每格20次、高频/均衡Continue每格5窗。刷新能量是相对静态等待的平均增量，Continue能量是执行窗绝对能量，两者不能直接混算；这些不是整任务节能结果。200ms/1s是空闲标定点，不是运行时固定等待指令或已证实的GPU断电状态。
 
@@ -37,6 +37,19 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 - `docs/`：必要的操作和恢复说明。
 
 生成结果统一放在`/home/wyk/workspace/任务产出/perceptbudget/`，不上传模型、数据或大体积运行输出。阶段报告统一放在`任务指导与相关参考/PerceptBudget归档/`。新批次优先常驻模型，保留内存保护、GPU锁和异常记录。
+
+## M3当前入口
+
+[阶段进展](../任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md)包含已完成结果和待测问题。`m3.json`集中存放校准参数。
+
+```bash
+# 不加载模型，检查下一步计划
+/home/wyk/venvs/lutvla/bin/python scripts/run_m3.py --mode deadline-dvfs --dry-run
+# 单任务调频闭环小测；普通用户运行，内部调频助手要求sudo密码
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode deadline-dvfs --suite libero_spatial
+```
+
+模型前预编译环境并核对回放，连续任务沿用一次加载的模型；M3运行结果统一写入外部`M3/`目录。
 
 ## 检查和运行
 

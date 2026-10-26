@@ -36,6 +36,8 @@ def audit(run):
     events=[json.loads(s) for s in (run/'rtc/trace.jsonl').read_text().splitlines()]
     controls=[r for r in events if r['event']=='control_step']
     commits=[r for r in events if r['event']=='prediction_committed']
+    m3=cfg.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs')
+    decisions={r['step']:r for r in events if r['event']=='m3_decision'}
     by_step={r['step']:r for r in controls}
     by_id={r['prediction_id']:r for r in requests}
     committed={r['prediction_id']:r for r in commits}
@@ -132,7 +134,21 @@ def audit(run):
                 check('old_target_alignment',g.get('guidance_enabled') is True
                     and solver['executed']==s==g['executed_steps']
                     and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
-            check('next_request_counter_rule',origin==max(old['observation_step']+q,previous['commit_step']),pid)
+            if m3:
+                d=decisions.get(origin,{})
+                t=request.get('m3_timing',{})
+                check('m3_request_minimum_interval',origin>=max(old['observation_step']+q,previous['commit_step']),pid)
+                check('m3_request_triggered_by_recorded_deadline',
+                      d.get('start_now') is True and d.get('inflight') is False
+                      and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
+                check('m3_service_and_margin_subtracted_once',bool(d)
+                      and abs(d['latest_start']-(d['deadline']-d['service_seconds']-d['margin_seconds']))<1e-8,pid)
+                check('m3_nonnegative_wait_and_due',d.get('wait_seconds')==0
+                      and d.get('service_seconds',0)>0 and d.get('margin_seconds',-1)>=0,pid)
+                # The source step and normalized state checks above independently
+                # bind this request to the actual observation at the trigger.
+            else:
+                check('next_request_counter_rule',origin==max(old['observation_step']+q,previous['commit_step']),pid)
             check('no_overlapping_inference',request['inference_started_monotonic']>=old['inference_ended_monotonic'],pid)
             check('guidance_delay_matches_solver',solver['delay']==g['delay_estimate_steps'],pid)
             if synchronous:
@@ -168,7 +184,9 @@ def audit(run):
             for step in range(origin,at):
                 source=by_step[step]['source']
                 old=by_id[previous['prediction_id']]
-                exhausted=step>=old['observation_step']+cfg['H']
+                limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
+                exhausted=(step>=old['observation_step']+limit or (m3 and
+                    by_step[step]['action_start_monotonic']>=old['observation_monotonic']+cfg['m3_timing']['maximum_observation_age_seconds']))
                 check('old_actions_during_inference',source is None if exhausted else
                       source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
@@ -187,7 +205,9 @@ def audit(run):
         if step:
             check('sequential_action_timestamps',by_step[step-1]['action_end_monotonic']<=row['tick_monotonic'],step)
         check('commit_before_action',active['commit_monotonic']<=row['action_start_monotonic'],step)
-        if offset>=cfg['H']:
+        limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
+        if offset>=limit or (m3 and row['action_start_monotonic']>=
+                request['observation_monotonic']+cfg['m3_timing']['maximum_observation_age_seconds']):
             underflows.append(step)
             check('exhausted_chunk_zero_underflow',row['source'] is None
                   and eq(row['action'],np.zeros(7)) and row['applied_arm_gain']==1
@@ -218,8 +238,8 @@ def audit(run):
     return dict(run=str(run),passed=not failures,checks=count,failures=failures,
         controls=len(controls),requests=len(requests),commits=len(commits),
         estimate_minus_actual=slacks,
-        audit_mode='sync_no_rtc' if synchronous else 'async_rtc',
-        scope_id='m1_sync_no_rtc_records_v1' if synchronous else 'm1_async_rtc_records_v1',
+        audit_mode='m3_dynamic_rtc' if m3 else 'sync_no_rtc' if synchronous else 'async_rtc',
+        scope_id='m3_dynamic_rtc_records_v1' if m3 else 'm1_sync_no_rtc_records_v1' if synchronous else 'm1_async_rtc_records_v1',
         supply_quality=dict(passed=not underflows,underflow_steps=underflows,
                             classification='supply_quality_issue' if underflows else 'no_underflow'),
         scope='recorded state/normalization/inference timestamps/Algorithm1 counters/crop/physical actions; not all-input or full-model proof')
