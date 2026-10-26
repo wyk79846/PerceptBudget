@@ -1,88 +1,66 @@
 # PerceptBudget
 
-面向Orin NX的VLA时限与能耗调度。任务依据为[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)。M1测量已交付，下一阶段为M2设备标定；尚未启动调频实验。
+面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；下一阶段为M3最小闭环，尚未启动新调度实验。**
 
-## 唯一基线
+## 唯一推理基线
 
-配置入口为[config.json](config.json)，约束在[baseline.py](perceptbudget/baseline.py)。
+设置以[config.json](config.json)和[baseline.py](perceptbudget/baseline.py)为准，正式入口为[scripts/run_baseline.py](scripts/run_baseline.py)。
 
-| 项目 | 固定值 |
+| 项目 | 设置 |
 |---|---|
-| 权重 | LeRobot pi05_libero_finetuned_quantiles_v044，revision b6bfb493bc0f21c4ab24d816409ea3cebf5e43bd |
-| 预测长度／去噪 | H=50／N=5 |
-| 精度 | BF16权重，保留当前FP32动作求解与RTC引导路径 |
-| state | 启用；8维归一化后补至32维，文本容量200 |
-| 衔接 | 完整VJP RTC、真实异步；beta=5，延迟按实际历史更新 |
-| 推理后端 | FlashRT编码器＋OpenPI专家，source-step CUDA图、条件缓存、Flash注意力、融合norm、autotune |
-| q | 默认5；扫描5、10、20、30、40；q是两次推理启动的最小控制步间隔 |
-| 控制 | 名义20Hz，记录实际频率；推理期间不人为减半运动，不暂停仿真 |
+| 模型 | LeRobot pi05_libero_finetuned_quantiles_v044；revision b6bfb493bc0f21c4ab24d816409ea3cebf5e43bd |
+| 预测长度、去噪 | H=50、N=5 |
+| 精度 | BF16权重；既定FP32动作求解和RTC引导 |
+| state | Full启用，文本容量200 |
+| 动作衔接 | 完整VJP RTC、真实异步，beta=5 |
+| 后端 | FlashRT感知上下文＋OpenPI专家；source-step图、条件缓存、Flash注意力、融合norm、autotune |
+| 控制 | 名义20Hz，记录实际频率；推理期间继续推进仿真 |
 
-先检查配置和启动参数（不加载模型）：
+诊断执行器及保存的参考run/gate是当前依赖，不作为另一套默认基线，也不能删除证据目录。Fast保持为隔离候选，不覆盖Full默认。未经确认不修改FlashRT、模型、精度或去噪步数。
+
+## 阶段交付
+
+- **M1**：[统一交付报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1阶段交付报告_新模型H50_20261021.md)。[历史报告目录](../任务指导与相关参考/PerceptBudget归档/M1相关报告/)。
+- **M2**：[统一交付报告（含27项小表）](../任务指导与相关参考/PerceptBudget归档/M2相关报告/PerceptBudget_M2阶段交付报告_20261025.md)。[归档索引](../任务指导与相关参考/PerceptBudget归档/M2相关报告/归档索引.md)。操作接口和恢复见[调频说明](docs/M2_CLOCK_CONTROL.md)。
+- **M3待实施**：先用Full＋Continue，按最新讨论提前接入未来动作提示，结合缓冲、设备状态相关的完整服务耗时和安全余量计算启动时刻；验证降频/恢复、RTC衔接与异常回退。动态Fast选择及完整联合搜索后续再加入。
+
+M2已有27格成本覆盖，重点9格各60次，其余Full/Fast每格20次、高频/均衡Continue每格5窗。刷新能量是相对静态等待的平均增量，Continue能量是执行窗绝对能量，两者不能直接混算；这些不是整任务节能结果。200ms/1s是空闲标定点，不是运行时固定等待指令或已证实的GPU断电状态。
+
+M3开始按相同任务、初始状态和计量范围比较**整任务能量、成功率、完成时间及断供**；需要时补充J/执行步。不为统一口径重复M2测量。动作事件是刷新提示，不是动作可靠性的保证。
+
+## 项目结构
+
+- `perceptbudget/`：推理、RTC、设备控制、功率记录与公共分析。
+- `scripts/`：基线、阶段标定、正确性诊断及分析入口。
+- `tests/`：功能、数值、记录及供给时序检查。
+- `patches/`：既有FlashRT加载与tokenizer补丁及说明。
+- `docs/`：必要的操作和恢复说明。
+
+生成结果统一放在`/home/wyk/workspace/任务产出/perceptbudget/`，不上传模型、数据或大体积运行输出。阶段报告统一放在`任务指导与相关参考/PerceptBudget归档/`。新批次优先常驻模型，保留内存保护、GPU锁和异常记录。
+
+## 检查和运行
+
+以下两条仅检查设置和启动计划，不加载模型：
 
 ```bash
 /home/wyk/venvs/lutvla/bin/python scripts/check_setup.py
 /home/wyk/venvs/lutvla/bin/python scripts/run_baseline.py --dry-run
 ```
 
-单任务基线测试（会实际使用GPU）：
+单任务基线（实际使用GPU）：
 
 ```bash
 /home/wyk/venvs/lutvla/bin/python scripts/run_baseline.py --suite libero_spatial --task-id 0 --q 5
 ```
 
-正式单任务入口只有`run_baseline.py`。`diagnose_rtc_handoff.py`是其受保护的内部执行器，也供同步/固定延迟正确性诊断使用；诊断不是另一套生产基线。`eval_rtc_openpi.py`与`eval_q.py`只保留公共函数，不再提供旧独立运行命令。当前入口使用已保存的参考run与正确性gate，路径见配置，不能删除这些证据依赖。
-
-## 目录与职责
-
-- `perceptbudget/`：当前推理实现、设备/功率基础、公共评测与分析函数。
-- `scripts/`：基线入口、M1复现和分析、正确性审计、环境检查；旧性能探针已清理。
-- `tests/`：当前功能、数值参考、日志和供给时序检查。
-- `patches/`：现有加载与分词器补丁，保留版本记录。
-- 生成结果统一在`/home/wyk/workspace/任务产出/perceptbudget/`，不写进代码仓库。
-
-历史实现代码存于Git分支`archive/pre-single-baseline-20261021`；更早的SEAM/硬前缀实现存于`archive/pre-m2-cleanup-20261021`。历史文档统一在[M1相关报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/)，不作为当前运行指令。
-
-## M1结果与复现
-
-[最终交付报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1阶段交付报告_新模型H50_20261021.md)；[完整主扫描结果](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1主扫描结果_新模型H50_20261021.md)。
-
-保留`run_m1_h50.py`、`complete_m1_h50.py`、`analyze_m1_h50.py`与`analyze_m1_h50_stages.py`供复现。原300次批次已完成，不重新启动或用新源码续写旧批次。主扫描历史逐任务隔离加载，仅作为原实验复现，不作为后续批量测试范式；新测试优先常驻模型。
-
-M1名义动作余量不等于已验证安全缓冲；节能机会估计不等于已实现节能。板载VDD_IN记录称模块输入能量。M2保持模型与算法基线，新增感知档位和设备控制须单独验证。
-
-## 验证
-
-M2首步入口：`scripts/profile_device.py`（只读接口快照）；`--sensor-check`仅执行合成GPU忙闲阶跃，用于传感器检查，不加载模型、不改变频率。结果在外部`M2/`目录。EMC当前需要管理员权限，正式频率组合标定尚未开始。Fast已做固定输入计算短测，尚无真实异步闭环速度或质量结论。
-
-M2固定输入短测入口：`--fast-probe --source-run <成功的H50 Spatial0 q5记录> --repeats 5`。这是隔离的M2视角实验，不覆盖Full基线。20261021短测Full/外部单视角/腕部单视角为461/327/326ms，实际视觉token减半，尚无单视角闭环成功率结论；不把这一数值当完整服务L。
-
-20261021已完成task0三个集合的9条真实异步校准：Full3/3、外部单视角1/3、腕部单视角2/3，均无断供，9条记录独立审计通过。未追加留出验证。它们是长期固定视角的小样本结果，不能据此否定Full/Fast交替；后续优先尝试保留双视角的token合并，目前尚未接入。原始结果在`M2/20261021T094148.675320Z-fast-quality-b689fe6c/summary.md`。
-
-连续测试内存修复：常驻建图流避免cuBLAS逐流工作区累计，精确长度图共用KV底层存储（无padding/模型数学变化）。新一轮Full三任务单次加载全部成功，51个长度动作/VJP范数对照误差0，未触发保护，释放图后的allocated持平；不保证任意长批次无峰值。[排查报告](../任务指导与相关参考/PerceptBudget_M2连续测试内存排查_20261021.md)。`scripts/diagnose_resident_memory.py`仅做无模型环境生命周期诊断。FlashRT未修改。
-
-M2双视角token合并入口（不改Full默认、不训练、不改FlashRT）：
-
-```bash
-/home/wyk/venvs/lutvla/bin/python scripts/eval_pooled_views.py --pool-factor 2 4 --dry-run
-/home/wyk/venvs/lutvla/bin/python -u scripts/eval_pooled_views.py --pool-factor 2 4 --suite libero_spatial --task-ids 0 1 2 3 4 5 6 7 8 9
-```
-
-第二条顺序测两档，各10任务，每档一轮模型加载，共20回合；H50/N5/state/q5/seed7/init0固定，全程使用指定pool，不是Full/Fast动态切换。两路SigLIP仍完整编码512个token，后续实际消费128/32个；不是缩短视觉编码器本身。原生RTC精确前缀bank随token数缩短。`--probe-only`为固定输入短测，默认2次请求，不能当成功率。20261021两档短测324.01/276.55ms，图与同输入参考的动作/VJP范数误差0，闭环10任务待用户执行。结果分别在外部`M2/*-token-pool2-*`、`M2/*-token-pool4-*`，父`summary.json`及日志`POOL_TERMINAL_STATUS`记录包括外guard失败的真实退出状态；子日志为`worker.log`。
-
-上述20回合计划已被用户叫停：pool2完成7条、1成功6超时，pool4未开始；不重启。失败task0固定输入正反序6次对照：内存修复前独立KV、当前共享KV、不使用图的RTC、已存动作均误差0，原生池化与CPU参考逐元素相同。证据在`M2/20261021T111535.952274Z-pool-memory-parity-d756b3a2/summary.md`。`scripts/diagnose_pool_parity.py --source-run <已记录pool回合>`只做诊断，不跑新闭环。该证据未发现内存优化数值错误，不代表pool质量通过或全部原因已排除。
-
-用户下一轮改为单路合并、另一路保留完整：`scripts/eval_pooled_views.py --pool-factor 2 4 --pool-view agent wrist --suite libero_spatial --task-ids 0 1 2 3 4 5 6 7 8 9`。顺序为外部2/外部4/腕部2/腕部4，4组各10回合，总40，非4组并行；每组模型常驻一次。`agent`表示被合并的是外部视角，`wrist`表示被合并的是腕部视角，输入始终两路，token总数320/272。项目侧`mixed_view_pool.py`仅继承原pipeline、在分配前设置实际序列容量、调用原池化内核并按原视角顺序保留另一视角完整特征；不修改FlashRT源码、不训练、不降分辨率、不以mask替代计算。沿用内存保护及独立审计，不允许此实验覆盖Full基线。
-
-上述40计划仅完成第一组7条（3成功4超时），创建task7触发外保护761.4MiB，未完成/不自动续跑。进一步修复M2硬重置时旧渲染缓冲延迟释放：在显式sim.free边界释放；六任务图像/物理gate全同。常驻十环境生命周期与另两条task6→7实际闭环均完成，无保护退出；后一条仍为动作超时，不能把内存修复当质量修复。完整一路只指SigLIP特征保留，联合模型隐藏状态与KV仍受另一视角压缩及位置变化影响，并非独立Full路径兜底。[本次报告](../任务指导与相关参考/PerceptBudget_M2环境峰值修复与单路压缩核查_20261021.md)。不声称任意长批次无内存峰值。
-
-查证FlashRT本地部署文档明确将pool2/4列为有损选项、须逐任务验证，性能表及示例preset均pool1，不能拿接口存在当质量保证。三份失败任务固定输入对照中，保留原token的抽样比均值压缩更接近Full，但尚无成功率结论；平均但保留原长度/位置也会改变动作，不能只归因位置。[文档与对照报告](../任务指导与相关参考/PerceptBudget_FlashRT池化说明与固定输入对照_20261021.md)。`scripts/diagnose_pool_mechanism.py`仅诊断动作敏感性，复用Full大小分配，不作为新生产/加速路径，不训练或启动闭环。
-
-旧KV专家重算隔离入口：`scripts/eval_expert_recompute.py --suite libero_spatial --task-id 0`，默认只同任务两回合、一轮模型加载，正常RTC对照Full/仅专家交替；`--dry-run`不加载。bootstrap始终Full，不压缩token，复用轮次也复用旧state；运行时/独立审计限制原KV的H步名义有效期，不将它当已验证安全缓冲。首测各1次均成功，但77→197步、6.17→14.61秒；expert-only约170ms，Full约490ms。当前快慢模式共享延迟history，对expert实际2–3步估成8–9步，需分模式估计后才适合进一步评价，不直接认定stale KV为唯一减速原因、不自动扩测。[报告](../任务指导与相关参考/PerceptBudget_旧KV专家重算配对小测_20261021.md)。生产默认仍每次更新KV，FlashRT未改。
-
-后续已增加`--split-delay`：同一任务三回合分别为正常RTC、旧共享延迟交替、新分模式延迟交替；各模式单独初始化/更新实际延迟队列，expert估计3步、实际2–3步，独立审计重建两份history。首测三者均成功，77/197/176步、6.22/14.65/12.90秒；新方案有改善但仍慢于正常RTC，不宣称整体加速/节能。仍N5、不改FlashRT，不自动扩测；默认无此参数保留历史两回合模式。
+测试：
 
 ```bash
 /home/wyk/venvs/lutvla/bin/python -m pytest -q
 ```
 
-GPU专项检查在无CUDA环境下会跳过，不能把CPU回归通过写成新一轮GPU闭环验证。FlashRT固定为配置所指工作区，本轮清理不修改其源码。
+无CUDA环境下的GPU专项跳过不等于真实闭环验证。sudo仅供有界调频助手使用，不用root加载模型。历史实验已完成，复现入口保留但不需要重新执行；原始失败记录也保留。
+
+## Git与恢复
+
+当前开发分支为`project/perceptbudget`，[GitHub仓库](https://github.com/wyk79846/PerceptBudget)。M2报告整理前已保存`archive/pre-m2-report-archive-20261026`。历史实现保存在相应`archive/*`分支；历史说明不覆盖当前配置或最新授权。
