@@ -16,6 +16,7 @@ class EventConfig:
     slowdown_ratio: float = .5
     turn_degrees: float = 60.
     match_steps: int = 5
+    slowdown_window_steps: int = 1
 
     def __post_init__(self):
         if not (0 < self.gripper_threshold <= 1 and self.minimum_motion > 0
@@ -25,6 +26,8 @@ class EventConfig:
             raise ValueError('confirm_steps must be a positive integer')
         if type(self.match_steps) is not int or self.match_steps < 0:
             raise ValueError('match_steps must be a nonnegative integer')
+        if type(self.slowdown_window_steps) is not int or self.slowdown_window_steps not in (1,3,5):
+            raise ValueError('slowdown_window_steps must be 1, 3, or 5')
         if not all(math.isfinite(v) for v in (self.gripper_threshold,
                 self.minimum_motion, self.slowdown_ratio, self.turn_degrees)):
             raise ValueError('Event thresholds must be finite')
@@ -78,11 +81,18 @@ def detect_events(actions, config=None, *, start_offset=0):
     slowed = turned = False
     for i in range(1, len(actions)-n+1):
         prior = motion[i-1]
+        reference = median(motion[max(0,i-config.slowdown_window_steps):i])
         if prior >= config.minimum_motion:
             low = all(v <= prior*config.slowdown_ratio for v in motion[i:i+n])
-            if low and not slowed:
+            confirmed = reference >= config.minimum_motion and all(
+                v <= reference*config.slowdown_ratio for v in motion[i:i+n])
+            # Confirm an existing onset, never introduce extra onsets or
+            # postpone a rejected one into the same low-motion segment.
+            if low and not slowed and confirmed:
+                detail=({} if config.slowdown_window_steps==1 else
+                        dict(reference_command_norm=reference,reference_window_steps=min(i,config.slowdown_window_steps)))
                 emit('slowdown', i, previous_command_norm=prior,
-                     next_command_norm=motion[i])
+                     next_command_norm=motion[i],**detail)
             slowed = low
         elif motion[i] >= config.minimum_motion:
             slowed = False

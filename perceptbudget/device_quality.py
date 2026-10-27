@@ -483,6 +483,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             strategy,_,repeat=trigger.partition('__repeat')
                             child_cfg['m3_trigger_strategy']=strategy
                             child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
+                            if 'events_and_variance_slowdown3' in (cfg.get('m3_trigger_variants') or []):
+                                child_cfg['m3_events']['slowdown_window_steps']=(
+                                    3 if strategy=='events_and_variance_slowdown3' else 1)
                             child_cfg['m3_dvac_enabled']=strategy!='events_only'
                             child_cfg['m3_action_events_enabled']=strategy!='variance_only'
                             if cfg.get('m3_device_comparison'):
@@ -543,7 +546,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     result['initial_pair_review'] = review
                     if record_only:
                         from perceptbudget.action_events import EventConfig, analyze_episode
-                        event_record = analyze_episode(active, EventConfig(**cfg.get('m3_events', {})))
+                        event_record = analyze_episode(active, EventConfig(**child_cfg.get('m3_events', {})))
                         _write_json_atomically(active/'action_events.json', event_record)
                         result['action_event_summary'] = event_record['summary']
                     _write_json_atomically(active/'summary.json', result)
@@ -578,7 +581,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_event_dedup_comparison'):
+            if (cfg.get('m3_event_dedup_comparison') or
+                    'events_and_variance_slowdown3' in (cfg.get('m3_trigger_variants') or [])):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired

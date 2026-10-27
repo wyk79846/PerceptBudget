@@ -248,3 +248,19 @@ def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path
     result=audit_paired_bootstraps(episodes)
     assert result['passed']==(changed is None)
     assert len(result['cases'])==count-1
+
+
+def test_slowdown_candidate_pair_reuses_one_model_and_requires_exact_start(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    strategies=['events_and_variance','events_and_variance_slowdown3']
+    assert comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies))==tuple(strategies)
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10',
+        '--trigger-task-id','1','--device-dvfs','--strategies',*strategies,'--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['slowdown_windows']==[1,3]
+    launch.assert_not_called()
+    with pytest.raises(ValueError):
+        comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
