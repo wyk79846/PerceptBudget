@@ -125,7 +125,7 @@ class DeadlineRuntime:
         self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
         self.covered_events = []
-        self.event_coverage_mode=config.get('m3_event_coverage_mode','shared_refresh')
+        self.event_coverage_mode=config.get('m3_event_coverage_mode','event_only')
         if self.event_coverage_mode not in ('event_only','shared_refresh'):
             raise ValueError('Unknown action-event coverage policy')
         self.mode = config['m3_scheduler_mode']

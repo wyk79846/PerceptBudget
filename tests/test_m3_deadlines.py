@@ -58,6 +58,7 @@ def test_runtime_reads_future_hints_and_counts_only_admitted_actions():
         m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
         rtc_initial_control_period_seconds=.05)
     runtime=DeadlineRuntime(config)
+    assert runtime.event_coverage_mode=='event_only'
     actions=[[1.,0.,0.,0.,0.,0.,-1. if i<16 else 1.] for i in range(50)]
     request=dict(prediction_id=0,observation_step=0,observation_monotonic=9.5,actions=actions)
     runtime.committed(request,dict(commit_step=0,commit_monotonic=10.))
