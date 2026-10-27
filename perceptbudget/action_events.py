@@ -17,6 +17,9 @@ class EventConfig:
     turn_degrees: float = 60.
     match_steps: int = 5
     slowdown_confirm_steps: int | None = None
+    slowdown_detector: str = 'drop'
+    valley_radius_steps: int = 5
+    valley_spacing_steps: int = 5
 
     def __post_init__(self):
         if not (0 < self.gripper_threshold <= 1 and self.minimum_motion > 0
@@ -29,6 +32,10 @@ class EventConfig:
         if self.slowdown_confirm_steps is not None and (
                 type(self.slowdown_confirm_steps) is not int or self.slowdown_confirm_steps<1):
             raise ValueError('slowdown_confirm_steps must be a positive integer or None')
+        if self.slowdown_detector not in ('drop','valley'):
+            raise ValueError('Unknown slowdown detector')
+        if any(type(x) is not int or x<1 for x in (self.valley_radius_steps,self.valley_spacing_steps)):
+            raise ValueError('Valley radius and spacing must be positive integers')
         if not all(math.isfinite(v) for v in (self.gripper_threshold,
                 self.minimum_motion, self.slowdown_ratio, self.turn_degrees)):
             raise ValueError('Event thresholds must be finite')
@@ -39,6 +46,36 @@ def _actions(actions):
     if any(len(a) != 7 or not all(math.isfinite(v) for v in a) for a in result):
         raise ValueError('Events require finite decoded LIBERO 7D actions')
     return result
+
+
+def _phase_valleys(motion, config):
+    """Engineering candidate on decoded XYZ-command amplitude, not physical speed."""
+    size=len(motion)
+    smooth=[median(motion[max(0,i-1):min(size,i+2)]) for i in range(size)]
+    candidates=[]
+    i=1
+    while i<size-1:
+        left=i
+        while i+1<size and smooth[i+1]==smooth[left]:
+            i+=1
+        right=i
+        if smooth[left]<smooth[left-1] and right+1<size and smooth[right]<smooth[right+1]:
+            lo=max(0,left-config.valley_radius_steps)
+            hi=min(size,right+config.valley_radius_steps+1)
+            shoulder=min(max(smooth[lo:left]),max(smooth[right+1:hi]))
+            floor=smooth[left]
+            if shoulder>=config.minimum_motion and floor<=shoulder*config.slowdown_ratio:
+                point=(left+right)//2
+                candidates.append(dict(offset=point,confirmed_offset=min(size-1,hi),
+                    detector='phase_valley',valley_command_norm=floor,shoulder_command_norm=shoulder,
+                    prominence=shoulder-floor,relative_depth=(shoulder-floor)/shoulder,
+                    smoothing_window_steps=3))
+        i+=1
+    selected=[]
+    for event in sorted(candidates,key=lambda e:(-e['prominence'],e['offset'])):
+        if all(abs(event['offset']-old['offset'])>=config.valley_spacing_steps for old in selected):
+            selected.append(event)
+    return sorted(selected,key=lambda e:e['offset'])
 
 
 def detect_events(actions, config=None, *, start_offset=0):
@@ -82,7 +119,7 @@ def detect_events(actions, config=None, *, start_offset=0):
 
     slowed = False
     slowdown_n=config.slowdown_confirm_steps or n
-    for i in range(1, len(actions)-slowdown_n+1):
+    for i in range(1, len(actions)-slowdown_n+1) if config.slowdown_detector=='drop' else ():
         prior = motion[i-1]
         if prior >= config.minimum_motion:
             low = all(v <= prior*config.slowdown_ratio for v in motion[i:i+slowdown_n])
@@ -92,6 +129,8 @@ def detect_events(actions, config=None, *, start_offset=0):
             slowed = low
         elif motion[i] >= config.minimum_motion:
             slowed = False
+    if config.slowdown_detector=='valley':
+        events.extend(dict(e,kind='slowdown') for e in _phase_valleys(motion,config) if e['offset']>=start_offset)
     turned = False
     for i in range(1, len(actions)-n+1):
         prior = motion[i-1]

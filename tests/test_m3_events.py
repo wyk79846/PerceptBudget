@@ -188,6 +188,39 @@ def test_tiny_or_single_tick_turns_do_not_trigger():
     assert detect_events([action(x=.001), action(x=0,y=.001), action(x=0,y=.001)]) == []
 
 
+@pytest.mark.parametrize('motion,offsets',[
+    ([1,1,1,.3,.1,.3,1,1,1],[4]),
+    ([1,1,1,3,1,1,1],[]),
+    ([1,1,1,.1,1,1,1],[]),
+    ([.03,.02,.01,.02,.03],[]),
+    ([1,.8,.6,.4,.2,.1,0],[]),
+    ([0,0,0,0,0],[]),
+])
+def test_phase_valley_uses_surrounding_motion_and_filters_isolated_noise(motion,offsets):
+    acts=[action(x=v) for v in motion]
+    events=[e for e in detect_events(acts,EventConfig(slowdown_detector='valley')) if e['kind']=='slowdown']
+    assert [e['offset'] for e in events]==offsets
+    assert all(e['relative_depth']>=.5 and e['detector']=='phase_valley' for e in events)
+    assert all(e['offset']<=e['confirmed_offset']<len(acts) for e in events)
+
+
+def test_phase_valley_changes_only_slowdown_and_keeps_absolute_onset_after_crop():
+    acts=[action(x=v,grip=-1 if i<6 else 1) for i,v in enumerate([1,1,1,.3,.1,.3,1,1,1])]
+    original=detect_events(acts)
+    cfg=EventConfig(slowdown_detector='valley')
+    new=detect_events(acts,cfg)
+    assert [e for e in original if e['kind']!='slowdown']==[e for e in new if e['kind']!='slowdown']
+    assert detect_events(acts,cfg,start_offset=5)==[e for e in new if e['offset']>=5]
+    assert EventConfig().slowdown_detector=='drop'
+
+
+def test_phase_valley_spacing_selects_one_of_two_close_boundaries():
+    from perceptbudget.action_events import _phase_valleys
+    cfg=EventConfig(slowdown_detector='valley',valley_spacing_steps=12)
+    events=_phase_valleys([1,1,1,.3,.1,.3,1,1,1,.2,0,.2,1,1,1],cfg)
+    assert len(events)==1 and events[0]['offset']==10
+
+
 @pytest.mark.parametrize('motion,baseline,sustained',[
     ([1,1,.4,.3,1,1],[2],[]),
     ([1,1,.4,.3,.2,1],[2],[2]),

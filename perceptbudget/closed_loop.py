@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -52,6 +52,10 @@ def comparison_variants(config):
                 tuple(variants)!=('events_and_variance','events_and_variance_open_probe')
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('Open-event probe requires one baseline/probe resident pair')
+        if 'events_and_variance_valley' in variants and (
+                tuple(variants)!=('events_and_variance','events_and_variance_valley')
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('Phase valleys require one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
