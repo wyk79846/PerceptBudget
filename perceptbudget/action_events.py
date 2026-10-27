@@ -147,6 +147,32 @@ def detect_events(actions, config=None, *, start_offset=0):
     return sorted(events, key=lambda e: (e['offset'], e['kind']))
 
 
+def merge_nearby_slowdowns(events, max_gap_steps):
+    """Merge a slowdown into an adjacent predicted gripper event in this chunk.
+
+    Only current forecasts are inspected; this does not infer physical contact.
+    Other event types or simultaneous events prevent merging.
+    """
+    if type(max_gap_steps) is not int or max_gap_steps<1:
+        raise ValueError('Use a positive integer event gap')
+    kept,merged=[],[]
+    for event in events:
+        if event['kind']=='slowdown':
+            simultaneous=[e for e in events if e is not event and e['offset']==event['offset']]
+            later=[e for e in events if e['offset']>event['offset']]
+            next_offset=min((e['offset'] for e in later),default=None)
+            next_events=[e for e in later if e['offset']==next_offset]
+            if (not simultaneous and next_offset is not None
+                    and next_offset-event['offset']<=max_gap_steps
+                    and all(e['kind'] in ('gripper_close','gripper_open') for e in next_events)):
+                merged.append(dict(event,replacement_offset=next_offset,
+                    replacement_kinds=sorted({e['kind'] for e in next_events}),
+                    gap_steps=next_offset-event['offset']))
+                continue
+        kept.append(event)
+    return kept,merged
+
+
 def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 

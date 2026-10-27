@@ -97,6 +97,30 @@ def test_open_probe_absent_target_is_not_an_execution_error():
     assert select_open_refresh_probe([old,new,following],commits) is None
 
 
+@pytest.mark.parametrize('gap,intervening,expected',[(8,None,True),(9,None,False),(14,None,False),(3,'turn',False),(3,'slowdown',False)])
+def test_nearby_slowdown_only_merges_adjacent_gripper(gap,intervening,expected):
+    from perceptbudget.action_events import merge_nearby_slowdowns
+    import copy
+    events=[dict(kind='slowdown',offset=10),dict(kind='gripper_close',offset=10+gap)]
+    if intervening:events.append(dict(kind=intervening,offset=11))
+    before=copy.deepcopy(events)
+    kept,merged=merge_nearby_slowdowns(events,8)
+    assert events==before
+    assert (events[0] not in kept)==expected
+    assert any(e['kind']=='gripper_close' for e in kept)
+    if expected:assert merged[0]['replacement_offset']==10+gap
+
+
+def test_nearby_slowdown_keeps_simultaneous_and_unconfirmed_tail():
+    from perceptbudget.action_events import merge_nearby_slowdowns,detect_events
+    events=[dict(kind='slowdown',offset=10),dict(kind='turn',offset=10),dict(kind='gripper_open',offset=12)]
+    assert merge_nearby_slowdowns(events,8)==(events,[])
+    actions=[[1. if i<4 else .1,0.,0.,0.,0.,0.,-1. if i<9 else 1.] for i in range(10)]
+    ev=detect_events(actions)
+    assert not any(e['kind'].startswith('gripper') for e in ev)
+    assert merge_nearby_slowdowns(ev,8)==(ev,[])
+
+
 def test_single_slowdown_probe_selects_real_refresh_and_retains_other_signals():
     from perceptbudget.action_events import select_slowdown_refresh_probe
     from perceptbudget.closed_loop import DeadlineRuntime

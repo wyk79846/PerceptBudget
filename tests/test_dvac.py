@@ -309,6 +309,20 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
 
 
+def test_nearby_event_merge_is_online_two_episode_resident_pair(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    strategies=['events_and_variance','events_and_variance_merge']
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10','--trigger-task-id','4',
+        '--strategies',*strategies,'--device-dvfs','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert not plan['exact_preintervention_prefix'] and plan['merge_gap_steps']==[None,8]
+    with pytest.raises(ValueError):comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
+    launch.assert_not_called()
+
+
 def test_slowdown_probe_is_a_single_resident_long_task_pair(capsys):
     from scripts.run_m3 import main
     strategies=['events_and_variance','events_and_variance_slowdown_probe']

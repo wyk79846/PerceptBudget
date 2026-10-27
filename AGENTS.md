@@ -303,3 +303,5 @@
 - 完整历史协作说明与旧README已迁入M1报告归档，旧指令不覆盖当前基线。
 
 - 2026-10-27新增单次减速提示对照候选events_and_variance_slowdown_probe，仅LIBERO-10 task4 DVFS两回合/单模型；回看本轮基线选第一次单独slowdown触发的刷新，候选仅删除源chunk一条提示，去噪/夹爪/后续减速/RTC保护保留。复用open_probe_plan及前缀审核（现按plan.kind支持slowdown），无目标显式skip不当失败，干预前差异判invalid。默认取早未改；FlashRT未改，固定成功算法补丁仅外部提案未应用。离线8条取早成功记录（含重复task1/2/3/4）夹爪close15/open8、slowdown5/turn0，task0排除；报告任务产出/perceptbudget/M3/20261027-event-refresh-review/review.md。尚未运行新闭环，禁止声称节能有效。备份archive/pre-m3-single-slowdown-probe-20261027。
+
+- 2026-10-27单次slowdown探针d5172a96 task4成功229→225步，12.878→12.556s，197.068→175.039J（−11.18%），11→9请求，初预测与0..27控制一致，0underflow/restore。新增在线候选events_and_variance_merge：当前已确认事件内，独立slowdown紧接下一个gripper且间隔≤8步才合并；转向/中间减速/同位置事件阻止，去噪与RTC硬限保留。初始8步仅来自开发单例，非通用结论；默认仍原取早。183项相关检查通过，task4/task2各配对尚未运行；FlashRT未改。离线报告任务产出/perceptbudget/M3/20261027-event-refresh-review/review.md，备份archive/pre-m3-nearby-event-merge-20261027。

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from dataclasses import asdict
 from statistics import median
 
-from perceptbudget.action_events import EventConfig, analyze_episode, detect_events
+from perceptbudget.action_events import EventConfig, analyze_episode, detect_events, merge_nearby_slowdowns
 from perceptbudget.deadline_controller import FullServiceTimes, SafetyMargin, timing_plan
 from perceptbudget.experiment import _write_json_atomically
 
@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -69,6 +69,10 @@ def comparison_variants(config):
                 tuple(variants)!=('events_and_variance','events_and_variance_slowdown_probe')
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('Slowdown probe requires one baseline/candidate resident pair')
+        if 'events_and_variance_merge' in variants and (
+                tuple(variants)!=('events_and_variance','events_and_variance_merge')
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('Nearby-event merge requires one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
@@ -169,6 +173,10 @@ class DeadlineRuntime:
         self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
         self.action_events_enabled = bool(config.get('m3_action_events_enabled',True))
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
+        self.merge_gap=config.get('m3_merge_slowdown_steps')
+        if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
+            raise ValueError('Use a positive integer event gap')
+        self.merged_slowdowns=[]
         self.clocks = None
         self.recovering_plan = None
 
@@ -202,6 +210,9 @@ class DeadlineRuntime:
                        for e in detect_events(request['actions'], self.events_config,
                            start_offset=max(0,commit['commit_step']-origin))
                        if not (self.ignore_turn and e['kind']=='turn')] if self.action_events_enabled else []
+        self.merged_slowdowns=[]
+        if self.merge_gap is not None:
+            self.events,self.merged_slowdowns=merge_nearby_slowdowns(self.events,self.merge_gap)
         if self.open_probe is not None and pid==self.open_probe['prediction_id']:
             plan=self.open_probe
             matches=[e for e in self.events if e['kind']==plan['kind'] and e['target_step']==plan['target_step']]
@@ -299,6 +310,7 @@ class DeadlineRuntime:
                          covered_event_count=len(self.covered_events),
                          event_coverage_mode=self.event_coverage_mode,
                          signal_policy=self.signal_policy,
+                         merged_slowdowns=self.merged_slowdowns,
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
