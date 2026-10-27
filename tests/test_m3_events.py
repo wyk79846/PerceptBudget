@@ -34,51 +34,35 @@ def test_tiny_or_single_tick_turns_do_not_trigger():
     assert detect_events([action(x=.001), action(x=0,y=.001), action(x=0,y=.001)]) == []
 
 
-@pytest.mark.parametrize('motion,legacy,candidate',[
-    ([1,1,1,3,1,1,1],[4],[]),  # A one-step spike is not sustained motion.
-    ([1,1,1,.4,.3,.3],[3],[3]),
-    ([1,1,1,.2,1,1],[],[]),
-    ([.01,.01,.01,.003,.003],[],[]),
-    ([.95,.8,.65,.45,.3,.2],[],[]),  # Confirmation must not expand the legacy trigger range.
-    ([1,.4,.3],[1],[1]),  # Use available history at chunk start.
+@pytest.mark.parametrize('motion,baseline,sustained',[
+    ([1,1,.4,.3,1,1],[2],[]),
+    ([1,1,.4,.3,.2,1],[2],[2]),
+    ([1,1,.4,.3],[2],[]),  # Insufficient future tail is not a confirmed third step.
+    ([.01,.01,.003,.003,.003],[],[]),
 ])
-def test_slowdown_window_filters_spikes_and_retains_sustained_changes(motion,legacy,candidate):
+def test_slowdown_duration_changes_only_predicted_persistence(motion,baseline,sustained):
     acts=[action(x=v) for v in motion]
-    def offsets(window):
-        return [e['offset'] for e in detect_events(acts,EventConfig(slowdown_window_steps=window)) if e['kind']=='slowdown']
-    assert offsets(1)==legacy
-    assert offsets(3)==candidate
-    assert set(offsets(3))<=set(offsets(1))
+    def events(n):return [e for e in detect_events(acts,EventConfig(slowdown_confirm_steps=n)) if e['kind']=='slowdown']
+    assert [e['offset'] for e in events(2)]==baseline
+    result=events(3)
+    assert [e['offset'] for e in result]==sustained
+    assert all(e['confirmed_offset']==e['offset']+2 for e in result)
 
 
-def test_slowdown_candidate_does_not_change_gripper_turn_or_consumed_prefix():
-    acts=[action(x=1),action(x=1),action(x=1),action(x=3),action(x=1),
-          action(x=1,grip=1),action(x=0,y=1,grip=1),action(x=0,y=1,grip=1)]
-    original=detect_events(acts)
-    changed=detect_events(acts,EventConfig(slowdown_window_steps=3))
-    assert [e for e in original if e['kind']!='slowdown']==[e for e in changed if e['kind']!='slowdown']
-    assert detect_events(acts,EventConfig(slowdown_window_steps=3),start_offset=6)==[e for e in changed if e['offset']>=6]
+def test_slowdown_confirmation_does_not_change_gripper_turn_or_start_offset():
+    acts=[action(x=1),action(x=1),action(x=.4,grip=1),action(x=.3,grip=1),
+          action(x=.2,grip=1),action(x=0,y=1,grip=1),action(x=0,y=1,grip=1)]
+    old=detect_events(acts)
+    new=detect_events(acts,EventConfig(slowdown_confirm_steps=3))
+    assert [e for e in old if e['kind']!='slowdown']==[e for e in new if e['kind']!='slowdown']
+    assert detect_events(acts,EventConfig(slowdown_confirm_steps=3),start_offset=3)==[e for e in new if e['offset']>=3]
+    assert next(e for e in new if e['kind']=='gripper_close')['confirmed_offset']==3
+    assert EventConfig().confirm_steps==2 and EventConfig().slowdown_confirm_steps is None
 
 
-@pytest.mark.parametrize('value',[0,2,-1,True,3.0])
-def test_slowdown_window_validation(value):
-    with pytest.raises(ValueError):EventConfig(slowdown_window_steps=value)
-
-
-@pytest.mark.parametrize('window',[3,5])
-def test_window_confirmation_only_removes_legacy_onsets_across_noisy_chunks(window):
-    import random
-    rng=random.Random(7)
-    for _ in range(100):
-        acts=[]
-        for i in range(30):
-            scale=10**rng.uniform(-3,1)
-            acts.append([scale*rng.uniform(-1,1) for _ in range(3)]+[0.,0.,0.,rng.choice([-1.,0.,1.])])
-        start=rng.randrange(30)
-        old=detect_events(acts,start_offset=start)
-        new=detect_events(acts,EventConfig(slowdown_window_steps=window),start_offset=start)
-        assert {e['offset'] for e in new if e['kind']=='slowdown'}<={e['offset'] for e in old if e['kind']=='slowdown'}
-        assert [e for e in new if e['kind']!='slowdown']==[e for e in old if e['kind']!='slowdown']
+@pytest.mark.parametrize('value',[0,-1,True,3.0])
+def test_slowdown_duration_validation(value):
+    with pytest.raises(ValueError):EventConfig(slowdown_confirm_steps=value)
 
 
 @pytest.mark.parametrize('data', [[[0]*32], [[float('nan')]*7]])

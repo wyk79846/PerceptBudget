@@ -41,13 +41,13 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_slowdown3') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
-        if 'events_and_variance_slowdown3' in variants and (
-                tuple(variants)!=('events_and_variance','events_and_variance_slowdown3')
+        if 'events_and_variance_hold3' in variants and (
+                tuple(variants)!=('events_and_variance','events_and_variance_hold3')
                 or repeats!=1 or config.get('m3_device_comparison')):
-            raise ValueError('Slowdown candidate requires one mixed/candidate resident pair without device pairing')
+            raise ValueError('Sustained slowdown requires a single mixed/hold3 resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):

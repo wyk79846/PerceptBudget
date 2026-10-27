@@ -483,9 +483,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             strategy,_,repeat=trigger.partition('__repeat')
                             child_cfg['m3_trigger_strategy']=strategy
                             child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
-                            if 'events_and_variance_slowdown3' in (cfg.get('m3_trigger_variants') or []):
-                                child_cfg['m3_events']['slowdown_window_steps']=(
-                                    3 if strategy=='events_and_variance_slowdown3' else 1)
+                            if 'events_and_variance_hold3' in (cfg.get('m3_trigger_variants') or []):
+                                child_cfg['m3_events']['slowdown_confirm_steps']=(
+                                    3 if strategy=='events_and_variance_hold3' else 2)
                             child_cfg['m3_dvac_enabled']=strategy!='events_only'
                             child_cfg['m3_action_events_enabled']=strategy!='variance_only'
                             if cfg.get('m3_device_comparison'):
@@ -582,7 +582,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
             if (cfg.get('m3_event_dedup_comparison') or
-                    'events_and_variance_slowdown3' in (cfg.get('m3_trigger_variants') or [])):
+                    'events_and_variance_hold3' in (cfg.get('m3_trigger_variants') or [])):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired

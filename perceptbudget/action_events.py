@@ -16,7 +16,7 @@ class EventConfig:
     slowdown_ratio: float = .5
     turn_degrees: float = 60.
     match_steps: int = 5
-    slowdown_window_steps: int = 1
+    slowdown_confirm_steps: int | None = None
 
     def __post_init__(self):
         if not (0 < self.gripper_threshold <= 1 and self.minimum_motion > 0
@@ -26,8 +26,9 @@ class EventConfig:
             raise ValueError('confirm_steps must be a positive integer')
         if type(self.match_steps) is not int or self.match_steps < 0:
             raise ValueError('match_steps must be a nonnegative integer')
-        if type(self.slowdown_window_steps) is not int or self.slowdown_window_steps not in (1,3,5):
-            raise ValueError('slowdown_window_steps must be 1, 3, or 5')
+        if self.slowdown_confirm_steps is not None and (
+                type(self.slowdown_confirm_steps) is not int or self.slowdown_confirm_steps<1):
+            raise ValueError('slowdown_confirm_steps must be a positive integer or None')
         if not all(math.isfinite(v) for v in (self.gripper_threshold,
                 self.minimum_motion, self.slowdown_ratio, self.turn_degrees)):
             raise ValueError('Event thresholds must be finite')
@@ -56,9 +57,10 @@ def detect_events(actions, config=None, *, start_offset=0):
     motion = [math.sqrt(sum(x*x for x in a[:3])) for a in actions]
     events = []
 
-    def emit(kind, i, **detail):
+    def emit(kind, i, *, confirmation_steps=None, **detail):
         if i >= start_offset:
-            events.append(dict(kind=kind, offset=i, confirmed_offset=i+n-1, **detail))
+            count=n if confirmation_steps is None else confirmation_steps
+            events.append(dict(kind=kind, offset=i, confirmed_offset=i+count-1, **detail))
 
     def grip(value):
         return 1 if value >= config.gripper_threshold else -1 if value <= -config.gripper_threshold else 0
@@ -78,24 +80,21 @@ def detect_events(actions, config=None, *, start_offset=0):
                      from_command=state, to_command=value)
             state, pending = value, 0
 
-    slowed = turned = False
-    for i in range(1, len(actions)-n+1):
+    slowed = False
+    slowdown_n=config.slowdown_confirm_steps or n
+    for i in range(1, len(actions)-slowdown_n+1):
         prior = motion[i-1]
-        reference = median(motion[max(0,i-config.slowdown_window_steps):i])
         if prior >= config.minimum_motion:
-            low = all(v <= prior*config.slowdown_ratio for v in motion[i:i+n])
-            confirmed = reference >= config.minimum_motion and all(
-                v <= reference*config.slowdown_ratio for v in motion[i:i+n])
-            # Confirm an existing onset, never introduce extra onsets or
-            # postpone a rejected one into the same low-motion segment.
-            if low and not slowed and confirmed:
-                detail=({} if config.slowdown_window_steps==1 else
-                        dict(reference_command_norm=reference,reference_window_steps=min(i,config.slowdown_window_steps)))
+            low = all(v <= prior*config.slowdown_ratio for v in motion[i:i+slowdown_n])
+            if low and not slowed:
                 emit('slowdown', i, previous_command_norm=prior,
-                     next_command_norm=motion[i],**detail)
+                     next_command_norm=motion[i],confirmation_steps=slowdown_n)
             slowed = low
         elif motion[i] >= config.minimum_motion:
             slowed = False
+    turned = False
+    for i in range(1, len(actions)-n+1):
+        prior = motion[i-1]
         direction_changed = False
         angles = []
         if prior >= config.minimum_motion and all(v >= config.minimum_motion for v in motion[i:i+n]):
