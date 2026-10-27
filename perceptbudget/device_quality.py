@@ -451,6 +451,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else view
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
+                    episode_q=5
                     if dvac_paired:
                         child_cfg['m3_dvac_enabled']=view!='deadline_high'
                         if cfg.get('m3_trigger_comparison'):
@@ -466,6 +467,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                 child_cfg['m3_device_profile']=device
                         if cfg.get('m3_dvac_horizon_comparison'):
                             child_cfg['m3_timing']['maximum_action_offset']=20 if view=='dvac_h20' else cfg['H']
+                        if view.startswith('fixed_q'):
+                            from perceptbudget.closed_loop import configure_fixed_baseline
+                            episode_q=configure_fixed_baseline(child_cfg,int(view.removeprefix('fixed_q')))
                     if recompute_comparison:
                         child_cfg['m2_reuse_enabled']=view!='full'
                         child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
@@ -482,7 +486,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     _write_json_atomically(active/'control_period_calibration.json', calibration)
                     mem('before_'+suite+str(tid)+view)
                     with (trace_dir/'trace.jsonl').open('w') as stream:
-                        episode = probe.run_episode(env, task, 5, model, stats, child_cfg, np, torch,
+                        episode = probe.run_episode(env, task, episode_q, model, stats, child_cfg, np, torch,
                             trace_dir, stream, rtc_adapter=adapter, condition='m2_'+label,
                             refresh_policy='latest_due', pending_arm_gain=1.)
                     _write_json_atomically(active/'summary.json', dict(status='validating', episode=episode))
@@ -490,7 +494,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     _write_json_atomically(active/'system_audit.json', checked)
                     if not checked['passed']:
                         raise RuntimeError('Quality episode independent record audit failed')
-                    requests = json.loads((trace_dir/'q5_requests.json').read_text())
+                    requests = json.loads((trace_dir/f'q{episode_q}_requests.json').read_text())
                     if any(r['rtc_guidance'].get('variable_length_fallback') for r in requests):
                         raise RuntimeError('Unexpected slow fallback in quality screen')
                     result = dict(status='completed', episode=episode, audit_passed=True,

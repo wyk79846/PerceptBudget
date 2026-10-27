@@ -1,5 +1,6 @@
 from unittest.mock import patch
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -171,3 +172,37 @@ def test_long_task0_device_pair_plan_retains_default_three_suites(capsys):
     assert plan['tasks']==[['libero_10',0]] and plan['episodes']==2 and plan['model_loads']==1
     assert plan['maximum_observation_age_seconds'] is None and plan['H']==50
     launch.assert_not_called()
+
+
+def test_long_task1_fixed_q20_vs_dynamic_pair_is_two_episodes_one_model(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    assert comparison_variants({'m3_static_q':20})==('fixed_q20','variance_only__device_dvfs')
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10',
+        '--trigger-task-id','1','--static-q','20','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['tasks']==[['libero_10',1]] and plan['episodes']==2
+    assert plan['static_q']==20 and plan['model_loads']==1 and plan['clocks_changed']
+    assert plan['maximum_observation_age_seconds'] is None
+    launch.assert_not_called()
+
+
+def test_nonzero_long_task_settings_load_without_changing_default(tmp_path):
+    from perceptbudget.closed_loop import load_settings
+    settings=json.loads((Path(__file__).resolve().parents[1]/'m3.json').read_text())
+    settings['calibration_tasks']=[['libero_10',1]]
+    path=tmp_path/'settings.json';path.write_text(json.dumps(settings))
+    assert load_settings(path)['calibration_tasks']==[['libero_10',1]]
+
+
+@pytest.mark.parametrize('q',[5,10,20,30,40])
+def test_fixed_baseline_disables_dynamic_scheduler_and_preserves_rtc(q):
+    from perceptbudget.closed_loop import configure_fixed_baseline
+    cfg=dict(m3_scheduler_mode='deadline_dvfs',m3_dvac_enabled=True,
+             m3_action_events_enabled=True,H=50,rtc_paper_schedule=True,state_in_prompt=True)
+    assert configure_fixed_baseline(cfg,q)==q
+    assert cfg['candidate_q']==[q] and cfg['m3_scheduler_mode']=='record_only'
+    assert not cfg['m3_dvac_enabled'] and not cfg['m3_action_events_enabled']
+    assert cfg['m3_device_profile']=='high'
+    assert cfg['H']==50 and cfg['rtc_paper_schedule'] and cfg['state_in_prompt']

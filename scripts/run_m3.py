@@ -22,6 +22,8 @@ def main():
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
     parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal','libero_10'))
+    parser.add_argument('--trigger-task-id', type=int, choices=range(10), default=0)
+    parser.add_argument('--static-q', type=int, choices=(5,10,20,30,40), help='Pair one fixed-q high-frequency baseline with variance-only DVFS')
     parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
@@ -32,6 +34,10 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if (args.static_q is not None or args.trigger_task_id) and args.mode!='trigger-comparison':
+        parser.error('Task selection and static baseline require trigger-comparison')
+    if args.static_q is not None and (args.compare_device or args.device_dvfs or args.repeats!=1 or args.strategies not in (None,['variance_only'])):
+        parser.error('Static pair uses variance_only, one repeat, and its own device pairing')
     if args.device_dvfs and args.mode!='trigger-comparison':
         parser.error('--device-dvfs requires --mode trigger-comparison')
     if args.no_age_limit and args.mode!='trigger-comparison':
@@ -45,18 +51,20 @@ def main():
         settings=dict(settings,mode='deadline_high',dvac_paired=True,
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
     if args.mode=='trigger-comparison':
-        settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs or args.compare_device else 'deadline_high',dvac_paired=True,trigger_comparison=True,
-            device_comparison=args.compare_device,
+        settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs or args.compare_device or args.static_q is not None else 'deadline_high',dvac_paired=True,trigger_comparison=True,
+            device_comparison=args.compare_device or args.static_q is not None,static_q=args.static_q,
             trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
-            settings['calibration_tasks']=[[args.trigger_suite,0]]
+            settings['calibration_tasks']=[[args.trigger_suite,args.trigger_task_id]]
+        elif args.trigger_task_id:
+            parser.error('--trigger-task-id requires --trigger-suite')
         if args.no_age_limit:
             settings['timing']['maximum_observation_age_seconds']=None
         from perceptbudget.closed_loop import comparison_variants
         try:
             variants_per_task=len(comparison_variants(dict(m3_trigger_comparison=True,
-                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats,m3_device_comparison=args.compare_device)))
+                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats,m3_device_comparison=args.compare_device,m3_static_q=args.static_q)))
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -83,7 +91,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
-            tasks=settings['calibration_tasks'], q=5, H=50, N=5, state=True,
+            tasks=settings['calibration_tasks'], q=5, static_q=args.static_q, H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
@@ -123,6 +131,9 @@ def main():
                 if args.source_run:
                     command += ['--source-run',*[str(p.resolve()) for p in args.source_run]]
                 if args.mode=='trigger-comparison':
+                    command += ['--trigger-task-id',str(args.trigger_task_id)]
+                    if args.static_q is not None:
+                        command += ['--static-q',str(args.static_q)]
                     command += ['--repeats',str(args.repeats)]
                     if args.device_dvfs:
                         command += ['--device-dvfs']

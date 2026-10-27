@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户要求换一个LIBERO-10任务比较静态/动态，已准备task1固定q20高频异步 vs variance-only动态刷新/DVFS各一次、同模型共2回合。run_m3新增--trigger-task-id与--static-q，后者禁用静态子回合DeadlineRuntime/DVAC/事件触发，仍保持原RTC异步计数并按q保存请求；动态组不改。原默认与FlashRT未改，73相关tests通过，backup archive/pre-fixed-q-dynamic-pair-20261027。sudo-n仍需要密码，尚未启动闭环；用户需终端执行run_m3.py --mode trigger-comparison --trigger-suite libero_10 --trigger-task-id 1 --static-q 20 --no-age-limit。结果应审核初始状态配对、实际刷新间隔、任务能量/耗时/断供及频率恢复。此前task0高频重测e16d41bf/e5ce7e2e success257/14.915s/0gap，调频e655a81f success272/16.215s/0gap；含收尾219.244/207.340J，仅单次不同轨迹对照。
+
 - 2026-10-27 用户Long会话35462fef invalid已定位修复。高频9630a785是有效timeout520/0underflow，18pred/16有效DVAC判断/8波动触发；调频9ca871a6第327步d10 s41 H50只余9前缀触发保护，原326才升频、327才提交，非OOM或接入失败。预检/失败任务均RESTORED。DeadlineRuntime新增与submit同DelayQueue的离散最晚提交origin+H-d，低频留1控制tick确认+现有margin折算步数，与原启动取早；不缩d或H。原324步记录离线复放旧False/新rtc_prefix启动True、最晚submit326 guard2；无新GPU重测。75相关通过，全量590passed/9skip/110subtests，backup archive/pre-rtc-submit-bound-20261027。原命令可重跑；高频质量超时需另分析，不能称Long成功。报告与原run/failure_replay_review.json保存证据。
 
 - 2026-10-27 用户授权接LIBERO-Long后测一个。M3 --trigger-suite支持libero_10 task0，两物体alphabet soup/tomato sauce入篮；max_steps520取本地OpenPI/LeRobot/FlashRT一致设置。M2默认三suite与正式baseline范围不改。Long无M1轨迹，compiled_environments用固定20步小幅移动/夹爪序列做XML/cache一致性，旧suite仍历史回放。73相关tests通过；无主模型GPU环境预检80dc3f19 passed，physics/state/pixels全0差、model_loads0/无调频。完整Long VLA未跑，待用户命令run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_10 --compare-device --no-age-limit（单任务高频/DVFS各1共2、1model）。完成后除质量能量与恢复还核对DVAC阈值是否真正激活。备份archive/pre-libero-long-20261027，报告/任务书已补，FlashRT未改。

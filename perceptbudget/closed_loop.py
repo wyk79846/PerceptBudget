@@ -21,13 +21,18 @@ def load_settings(path):
     tasks = settings['calibration_tasks']
     allowed = {'libero_spatial', 'libero_object', 'libero_goal', 'libero_10'}
     if not tasks or len({tuple(t) for t in tasks}) != len(tasks) or any(
-            len(t) != 2 or t[0] not in allowed or t[1] != 0 for t in tasks):
-        raise ValueError('Use distinct suite/task0 calibration tasks')
+            len(t) != 2 or t[0] not in allowed or type(t[1]) is not int or not 0 <= t[1] < 10 for t in tasks):
+        raise ValueError('Use distinct suite/task pairs with task IDs 0 through 9')
     EventConfig(**settings['events'])
     return settings
 
 
 def comparison_variants(config):
+    if config.get('m3_static_q') is not None:
+        q=config['m3_static_q']
+        if q not in (5,10,20,30,40):
+            raise ValueError('Use an established fixed-q baseline')
+        return (f'fixed_q{q}', 'variance_only__device_dvfs')
     if config.get('m3_trigger_comparison'):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
@@ -43,6 +48,16 @@ def comparison_variants(config):
     if config.get('m3_dvac_horizon_comparison'):
         return ('dvac_h20','dvac_h50')
     return ('deadline_high','dvac_high')
+
+
+def configure_fixed_baseline(config, q):
+    """Use the original async q counter; do not leave the deadline scheduler active."""
+    if q not in (5,10,20,30,40):
+        raise ValueError('Use an established fixed-q baseline')
+    config.update(candidate_q=[q],m3_scheduler_mode='record_only',
+        m3_record_only=True,m3_dvac_enabled=False,m3_action_events_enabled=False,
+        execution_mode='m3_fixed_q_actual_async',m3_device_profile='high')
+    return q
 
 
 def recording_session(config, settings, directory, cleanup_gate):
@@ -72,6 +87,7 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg['m3_trigger_variants']=settings.get('trigger_variants')
         cfg['m3_trigger_repeats']=settings.get('trigger_repeats',1)
         cfg['m3_device_comparison']=bool(settings.get('device_comparison'))
+        cfg['m3_static_q']=settings.get('static_q')
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
