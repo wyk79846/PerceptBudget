@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 Object0减速确认配对ecd7ed8b completed：同模型/初始画面与state/noise/bootstrap全相同；7112f494原混合147步/8.6485s/136.9408J/8pred，7617ec72窗口3候选147步/8.5853s/136.3711J/8pred，均成功/0gap/审计/功率全覆盖/RESTORED。两组事件刷新一致：49夹爪闭合、121减速、131松爪；各已存轨迹2处减速预测在1/3窗下全保留，未复现M1q20旧轨迹上的被过滤信号。能量差-0.42%、时间-0.73%不能作为有效优化证据；不升级默认。审核postrun_review.json，未再次调默认或门槛。
+
 - 2026-10-27 减速候选实现完成、默认仍旧规则：EventConfig.slowdown_window_steps默认1；可选3仅对原减速起点作前三步幅度中位数确认，不新增/延后起点。直接替换参照的初版扩大信号26→72已否决并仅存0e91a6a6归档；收窄版3760f8f4同12个M3回合124预测26→26、夹爪/转向精确不变、旧默认对archive逐项一致。再查M1新权重H50异步q20 seed7/init0三套30任务218预测：减速54→53仅过滤Object0/c2ca2305预测5的133步门槛附近信号；转向前三步方向确认11→11无收益证据。源SHA/明细m1_extended_signal_screen.json。候选events_and_variance_slowdown3只允许与原混合单次同模型配对，启用严格bootstrap审核；两组都默认event_only/50ms/DVAC不变。149相关tests通过、最新dry-run字段复查40tests通过。backup archive/pre-slowdown-window-candidate-20261027，FlashRT未改，无GPU重测。用户可测Object0两组：run_m3.py --mode trigger-comparison --trigger-suite libero_object --strategies events_and_variance events_and_variance_slowdown3 --device-dvfs --no-age-limit；潜在收益较小，不宣称已节能。
 
 - 2026-10-27 用户确认当前按最小闭环已跑通、进入优化阶段推进，逐项慢改不急扩测。夹爪离线首查已完成，无模型/调频/默认变更：c5e80dd5原混合4次实际开合指令均有预测、首次预测位置误差0/-1/0/0步；3次首次可见时前瞻短于当轮已观测请求服务时间（仅诊断，不能当抓取识别或新deadline）。现有夹爪门槛暂保留。其余3组明细与源SHA在c5e80dd5/mechanism1_gripper_review.json；下一项先研究减速单点前值噪声，再转向，保持每次单项对照与50ms/DVAC不变。工程闭环已通不等于正式全任务/故障验证已完成。
