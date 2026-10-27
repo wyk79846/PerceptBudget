@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 机制一首轮优化：仅修复跨触发来源的事件去重，不调50ms余量/去噪阈值/事件门槛。Long task1混合bba99fb2 success233/13.809s/195.977J/0gap（仅去噪251/14.666s/187.346J，固定q20 244/13.877s/244.620J）；第117步variance刷新、126提交已覆盖130附近松爪，新预测129仍被126重复触发。现在任意触发来源只要提交不晚于原关键步且新预测存在同类±match_steps事件，就记已覆盖；方向改变/大位移/到达晚仍可重触发。原126步同记录离线before action_event/startTrue→after buffer/startFalse/suppressed1；证据在8f08fb93/mechanism1_dedup_replay.json。85相关tests通过，backup archive/pre-mechanism1-event-dedup-20261027。闭环收益未测，sudo凭据需用户密码；复测原task1 events_and_variance --device-dvfs --no-age-limit命令即可。FlashRT和默认配置未改。
+
 - 2026-10-27 用户要求换一个LIBERO-10任务比较静态/动态，已准备task1固定q20高频异步 vs variance-only动态刷新/DVFS各一次、同模型共2回合。run_m3新增--trigger-task-id与--static-q，后者禁用静态子回合DeadlineRuntime/DVAC/事件触发，仍保持原RTC异步计数并按q保存请求；动态组不改。原默认与FlashRT未改，73相关tests通过，backup archive/pre-fixed-q-dynamic-pair-20261027。sudo-n仍需要密码，尚未启动闭环；用户需终端执行run_m3.py --mode trigger-comparison --trigger-suite libero_10 --trigger-task-id 1 --static-q 20 --no-age-limit。结果应审核初始状态配对、实际刷新间隔、任务能量/耗时/断供及频率恢复。此前task0高频重测e16d41bf/e5ce7e2e success257/14.915s/0gap，调频e655a81f success272/16.215s/0gap；含收尾219.244/207.340J，仅单次不同轨迹对照。
 
 - 2026-10-27 用户Long会话35462fef invalid已定位修复。高频9630a785是有效timeout520/0underflow，18pred/16有效DVAC判断/8波动触发；调频9ca871a6第327步d10 s41 H50只余9前缀触发保护，原326才升频、327才提交，非OOM或接入失败。预检/失败任务均RESTORED。DeadlineRuntime新增与submit同DelayQueue的离散最晚提交origin+H-d，低频留1控制tick确认+现有margin折算步数，与原启动取早；不缩d或H。原324步记录离线复放旧False/新rtc_prefix启动True、最晚submit326 guard2；无新GPU重测。75相关通过，全量590passed/9skip/110subtests，backup archive/pre-rtc-submit-bound-20261027。原命令可重跑；高频质量超时需另分析，不能称Long成功。报告与原run/failure_replay_review.json保存证据。

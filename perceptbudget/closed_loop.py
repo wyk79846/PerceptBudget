@@ -158,10 +158,17 @@ class DeadlineRuntime:
             actual = commit['commit_monotonic']-service_start
             timing['actual_service_seconds'] = actual
             timing['arrival_lateness_seconds'] = max(0.,commit['commit_monotonic']-timing['deadline'])
-            if (timing['reason']=='action_event' and not timing['arrival_lateness_seconds']
-                    and commit['commit_step'] <= timing['critical_step']):
-                self.covered_events.extend(dict(kind=kind,target_step=timing['critical_step'])
-                    for kind in timing['candidate_event_kinds'])
+            critical=timing.get('critical_step')
+            if (self.action_events_enabled and critical is not None
+                    and origin <= commit['commit_step'] <= critical):
+                # A variance/buffer-triggered refresh can also cover an action
+                # event. Its own (earlier) deadline is not the event deadline.
+                # Only match a transition still present near the old forecast;
+                # changed direction or a larger shift must remain eligible.
+                self.covered_events.extend(dict(kind=kind,target_step=critical)
+                    for kind in timing.get('candidate_event_kinds',[])
+                    if any(e['kind']==kind and abs(e['target_step']-critical)<=self.events_config.match_steps
+                           for e in self.events))
             if self.settings.get('margin_updates'):
                 timing['margin_update'] = self.margin.observe(predicted=timing['service_seconds'],actual=actual,
                     start_lateness=max(0.,service_start-timing['latest_start']))

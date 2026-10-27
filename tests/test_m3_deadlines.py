@@ -83,6 +83,38 @@ def test_runtime_reads_future_hints_and_counts_only_admitted_actions():
     assert decision['critical_step'] is None
 
 
+@pytest.mark.parametrize('reason',['denoising_variance','buffer','action_event'])
+@pytest.mark.parametrize('target,new_kind,commit_step,suppressed',[
+    (129,'gripper_close',126,1),
+    (136,'gripper_close',126,0),  # A materially moved transition is new evidence.
+    (129,'gripper_open',126,0),   # Opposite commands cannot cover each other.
+    (132,'gripper_close',131,0),  # Arrival after the old event does not cover it.
+])
+def test_fresh_prediction_covers_nearby_event_regardless_of_trigger(reason,target,new_kind,commit_step,suppressed):
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(cfg)
+    origin=117
+    sign=1 if new_kind=='gripper_close' else -1
+    actions=[[1.,0.,0.,0.,0.,0.,-sign if origin+i<target else sign] for i in range(50)]
+    request=dict(prediction_id=1,observation_step=origin,observation_monotonic=10.,actions=actions,
+        dvac=dict(prefix_actions=50),m3_timing=dict(reason=reason,deadline=10.9,critical_step=130,
+            candidate_event_kinds=['gripper_close'],service_seconds=.3))
+    # It misses the variance deadline in wall time, yet reaches the controller
+    # before the action-event step. Those are distinct deadline checks.
+    runtime.committed(request,dict(commit_step=commit_step,commit_monotonic=11.))
+    queue={origin+i:(a,1,origin,i) for i,a in enumerate(actions)}
+    plan=runtime.decide(now=11.,step=commit_step,queue=queue,rows=[],inflight=False)
+    assert plan['suppressed_event_count']==suppressed
+    assert plan['critical_step']==(None if suppressed else target)
+    assert request['m3_timing']['arrival_lateness_seconds']==pytest.approx(.1)
+    assert runtime.margin.seconds==.05
+
+
 @pytest.mark.parametrize('change',[dict(period=0),dict(service_seconds=float('nan')),dict(critical_step=1.5)])
 def test_invalid_time_inputs_rejected(change):
     args=dict(now=10.,step=0,buffer_end_step=20,period=.05,service_seconds=.5)
