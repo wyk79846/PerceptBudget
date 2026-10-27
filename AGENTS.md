@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户仅去噪H50 DVFS三任务c4b1faa3 completed，1model/1expert，3/3success。Spatial78步6.043s90.978J/1underflow；Object143步8.413s122.331J/0；Goal144步8.277s141.577J/0。原始功率积分全覆盖复算、Full全部高频采样匹配、低频采样匹配、预检与三任务最终RESTORED通过。匹配031611 varonly单回合能量-5.93/-10.02/-16.39%，Goal155→144步有轨迹差异；较新Goal高频3次均150.532J，本次低5.95%。Spatial第19步旧观测2.0196s超2s，队列仍31、offset19未耗H50；新结果第20步到达。首恢复预算553ms+50margin，启动晚46.3ms，完整服务634.4ms，截止晚77.7ms；硬件切换约18ms正常。后续在线更新无新缺口；下一步用实测异步恢复样本校准首次预算并单测Spatial，再故障/正式比较。5.3未以零缺口通过，不称M3完成。Goal初始图片仅1像素1级差通过既有渲染LSB门，物理/state精确；报告/CSV/频率和缺口审核已保存。本轮仅离线审核，未改推理代码或开新GPU。
+
 - 2026-10-27 用户授权当前去噪主线进入M3调频。已接入run_m3.py --mode trigger-comparison --strategies variance_only --device-dvfs：三suite task0×1，H50/N5/state/beta5，机制一只记录；1model常驻，Full高频/低频Continue/提前恢复复用旧runtime。按settings实际mode统一父进程sudo-v、无模型LOW/HIGH/STOP预检、同TTY监控及worker参数/凭据检查，避免新模式走普通guard。49定向通过，全量577passed/9skip/110subtests/3既有warnings。M3任务书已同步当前5.3计划、机制一后续接入及B/C/D同去噪触发；备份archive/pre-variance-dvfs-20261027。实际新DVFS三任务未执行：sudo-n true确认助手会话无凭据，需用户普通终端输入密码；未改频率或加载GPU。旧单任务DVFS已验证不能当新去噪三任务结果。待用户完成后审核能量/供给/Full高频覆盖/LOW驻留/最终RESTORED，再做三类故障与正式对照。
 
 - 2026-10-27 用户Goal复测053b6539 completed：var/fusion各3，同模型/专家各1，三对初始physics/frame/state哈希精确一致。两组本次均3/3 success/0underflow；步数var155/137/143、融合155/137/142；均时间8.243/8.209s，均整任务能量150.532/152.989J，原始积分全覆盖复算通过。两组均15波动+8年龄触发，融合仅额外1关键动作请求，第一轮154步触发但155步成功结束、未提交，增加收尾计算。前次融合Goal timeout本次未复现，不作融合必然更差结论；本次无额外收益、仅去噪更简洁作为候选，默认未改。审核/CSV/脚本及M3进展已补，本轮无新GPU或代码改动。
