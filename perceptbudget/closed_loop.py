@@ -111,6 +111,9 @@ def recording_session(config, settings, directory, cleanup_gate):
     result['mode'] = settings.get('mode','record_only')
     result['policy_changed'] = result['mode'] != 'record_only'
     result['clocks_changed'] = result['mode'] == 'deadline_dvfs'
+    if record.get('diagnostic_status')=='not_applicable':
+        result.update(diagnostic_status='not_applicable',skipped_episodes=record['skipped_episodes'],
+            scope='Baseline completed; no comparable target, so the intervention was not run')
     if 'paired_bootstrap_audit' in record:
         result['paired_bootstrap_audit']=record['paired_bootstrap_audit']
     if 'open_probe_prefix_audit' in record:

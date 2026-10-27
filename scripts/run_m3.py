@@ -173,8 +173,15 @@ def main():
                     tail = (run/'worker.log').read_text()[-2500:]
                     raise RuntimeError(f'Recording worker exit{code}; {tail}')
                 result = json.loads((run/'summary.json').read_text())
+                skipped=result.get('skipped_episodes',[])
+                no_target_probe=(args.strategies==['events_and_variance','events_and_variance_open_probe']
+                    and result.get('diagnostic_status')=='not_applicable'
+                    and len(result.get('episodes',[]))==1 and result['episodes'][0].get('view')=='events_and_variance'
+                    and result['episodes'][0].get('audit_passed') is True
+                    and len(skipped)==1 and skipped[0].get('view')=='events_and_variance_open_probe'
+                    and skipped[0].get('reason_code')=='no_comparable_open_event')
                 if result['status'] != 'completed' or (args.mode not in ('dvac-probe','dvac-validate') and
-                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])*variants_per_task):
+                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])*variants_per_task and not no_target_probe):
                     raise RuntimeError('Incomplete M3 recording session')
     except BaseException as exc:
         result = dict(status='invalid', mode=args.mode, error=f'{type(exc).__name__}: {exc}')

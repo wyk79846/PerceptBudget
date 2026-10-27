@@ -494,6 +494,16 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                 reference_requests=json.loads((reference_run/'rtc/q5_requests.json').read_text())
                                 reference_episode=json.loads((reference_run/'summary.json').read_text())['episode']
                                 child_cfg['m3_open_probe_plan']=select_open_refresh_probe(reference_requests,reference_episode['commits'])
+                                if child_cfg['m3_open_probe_plan'] is None:
+                                    skipped=dict(suite=suite,task_id=tid,view=view,
+                                        reason_code='no_comparable_open_event',reference_run=str(reference_run),
+                                        reason='This baseline has no comparable repeated open-event refresh; no intervention executed')
+                                    record.setdefault('skipped_episodes',[]).append(skipped)
+                                    record['diagnostic_status']='not_applicable'
+                                    _write_json_atomically(directory/'open_probe_plan.json',dict(status='not_applicable',**skipped))
+                                    save()
+                                    print('quality_episode_skipped='+json.dumps(skipped),flush=True)
+                                    continue
                                 _write_json_atomically(directory/'open_probe_plan.json',child_cfg['m3_open_probe_plan'])
                             child_cfg['m3_dvac_enabled']=strategy!='events_only'
                             child_cfg['m3_action_events_enabled']=strategy!='variance_only'
@@ -590,14 +600,14 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if (cfg.get('m3_event_dedup_comparison') or
+            if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe'))):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 if not paired['passed']:
                     raise RuntimeError('Resident comparison bootstrap differs; do not attribute outcomes to the policy change')
-            if 'events_and_variance_open_probe' in (cfg.get('m3_trigger_variants') or []):
+            if not record.get('skipped_episodes') and 'events_and_variance_open_probe' in (cfg.get('m3_trigger_variants') or []):
                 from perceptbudget.action_events import audit_open_probe_prefix
                 prefix=audit_open_probe_prefix(record['episodes'][0]['run'],record['episodes'][1]['run'],
                     json.loads((directory/'open_probe_plan.json').read_text()))

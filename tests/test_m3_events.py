@@ -86,6 +86,17 @@ def open_probe_fixture():
     return old,new,plan
 
 
+def test_open_probe_absent_target_is_not_an_execution_error():
+    from perceptbudget.action_events import select_open_refresh_probe
+    old,new,_=open_probe_fixture()
+    old['actions']=old['actions'][:6]  # Coverage ends before the new open event.
+    following=dict(prediction_id=2,observation_step=5,
+        m3_timing=dict(reason='action_event',critical_step=7,candidate_event_kinds=['gripper_open']))
+    commits=[dict(prediction_id=0,observation_step=0,commit_step=0),
+             dict(prediction_id=1,observation_step=3,commit_step=5)]
+    assert select_open_refresh_probe([old,new,following],commits) is None
+
+
 def test_open_probe_selects_one_repeated_event_and_preserves_variance_deadline():
     from perceptbudget.closed_loop import DeadlineRuntime
     old,new,plan=open_probe_fixture()

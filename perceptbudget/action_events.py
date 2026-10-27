@@ -203,7 +203,7 @@ def select_open_refresh_probe(requests, commits):
                     observation_step=current['observation_step'],commit_step=current_commit['commit_step'],
                     target_step=event['new_target_step'],kind='gripper_open',available_features=event))
     if not candidates:
-        raise ValueError('Baseline has no matched repeated open-event refresh to probe')
+        return None
     selected=min(candidates,key=lambda x:x['available_features']['local_window']['mean_direction_degrees']
                  if x['available_features']['local_window']['mean_direction_degrees'] is not None else float('inf'))
     return dict(selected,scope='Retrospective single-event intervention selected from this resident baseline; not an online classifier')

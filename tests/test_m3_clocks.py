@@ -141,3 +141,29 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
         assert '--compare-event-dedup' in command
         assert command[command.index('--trigger-task-id')+1]=='1'
     assert not any('guarded_run.py' in part for part in command)
+
+
+@pytest.mark.parametrize('reason',['no_comparable_open_event','unexplained_missing_episode'])
+def test_open_probe_no_target_completes_but_other_missing_episodes_fail(tmp_path,reason):
+    import json
+    from pathlib import Path
+    from scripts.run_m3 import main
+    from perceptbudget.experiment import load_config
+    cfg=load_config(repo_root=Path(__file__).resolve().parents[1]);cfg['output_root']=str(tmp_path)
+    run=tmp_path/'M3'/'probe';run.mkdir(parents=True)
+    (run/'run.json').write_text(json.dumps({'status':'created'}))
+    result=dict(status='completed',diagnostic_status='not_applicable',
+        episodes=[dict(view='events_and_variance',audit_passed=True)],
+        skipped_episodes=[dict(view='events_and_variance_open_probe',reason_code=reason)])
+    def worker(command,log):
+        (run/'summary.json').write_text(json.dumps(result))
+        return 0
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_object',
+        '--strategies','events_and_variance','events_and_variance_open_probe','--device-dvfs','--no-age-limit']), \
+         patch('perceptbudget.experiment.load_config',return_value=cfg), \
+         patch('perceptbudget.experiment.create_run',return_value=run), \
+         patch('subprocess.run'),patch('perceptbudget.closed_loop.clock_preflight'), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=worker):
+        if reason=='no_comparable_open_event':assert main()==0
+        else:
+            with pytest.raises(RuntimeError,match='Incomplete'):main()

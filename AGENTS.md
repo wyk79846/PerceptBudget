@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户open_probe报错098ae156：基线bf27967b有效success147/8.5795s/125.6356J/0gap/审计通过/RESTORED，诊断未启动。新基线origin86覆盖至135，新松爪138已在共同未来外，无合法可比目标；未套用旧131点，也不放宽匹配强行跳过。select_open_refresh_probe此前把无目标抛ValueError，此处理已修正为None；runner正常保留基线、记录diagnostic_status=not_applicable/明确skipped候选，跳过不存在的bootstrap/prefix对照；外层只接受这种显式无目标、已审核基线的缺回合，其他不完整仍报错。159相关tests通过（无共同覆盖、合法跳过/非法缺回合）。原invalid记录不改，error_review.json保存离线复核；这次无需重跑，未执行干预也无节能结论。backup archive/pre-open-probe-no-target-handling-20261027。
+
 - 2026-10-27 用户授权尝试Object0候选，已准备单事件诊断events_and_variance_open_probe，与原混合同模型配对，仅限CLI Object0/DVFS。同次基线完成后select_open_refresh_probe选取已知前后动作可配对且实际导致再刷新的一个松爪事件，按局部方向变化最小定位；选择借助完整基线，是定点干预而非上线判别器。回放7112f494定位pid5/origin121/commit131/open138。候选仅从该预测的事件列表删除这一条，保留DVAC/缓冲/RTC最晚提交/50ms/其他事件；每次新预测仍正常检测。上下文origin/commit/target不符则invalid不计任务失败。严格bootstrap外，open_probe_prefix_audit检查干预前所有预测/输入state/noise/raw动作与执行动作/状态相同、干预确实执行，否则不报告有效收益。156相关tests通过，backup archive/pre-single-open-refresh-probe-20261027；未改默认、FlashRT/模型。sudo-n需密码，尚未GPU运行。用户命令run_m3.py --mode trigger-comparison --trigger-suite libero_object --strategies events_and_variance events_and_variance_open_probe --device-dvfs --no-age-limit，2回合1模型；run中保存open_probe_plan.json/open_probe_prefix_audit.json。
 
 - 2026-10-27 已完成关键动作逐例与后一次刷新比较，87c82f66（summary.json/comparison.md/review.py）。筛出当前原混合2步、H50/无age/已审核的5次运行4任务，21处未来夹爪预测中5处可配对（Long1重复运行2例，非5独立任务），15处共同覆盖不足、1处旧预测无对应事件。当前可用局部特征与后续结果严格分栏，因果时间核对通过；未改在线策略/门槛、未GPU。Long1松爪附近方向差36.5°，随后事件刷新交接后7步相对XYZ改动31.7%；Object0方向差2.75°，后续6步改动7.72%，优先验证但不能拿未来7.72%做在线输入；Object6方向差35.4°、后续5步改动23.0%，先保留。Long0下一次由DVAC触发，单屏蔽事件不会少算，且后续只有2步不足比较。所有匹配案例都为松爪，后次刷新均在松爪后才交接，必须考虑后续动作，不能只看开合瞬间或把RTC一致性当可靠。尚无已证实可安全跳过的新案例；默认继续原混合。
