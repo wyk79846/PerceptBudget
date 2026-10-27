@@ -112,6 +112,79 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def compare_gripper_windows(previous, current, commit_step, config=None, *, radius=3):
+    """Compare already available forecasts at common absolute control indices.
+
+    Decoded actions are controller commands, not predicted Cartesian poses.
+    No similarity threshold or online suppression decision is made here.
+    """
+    config=config or EventConfig()
+    if type(radius) is not int or radius<0 or type(commit_step) is not int:
+        raise ValueError('Use an integer commit step and nonnegative radius')
+    old_origin,new_origin=previous['observation_step'],current['observation_step']
+    if any(type(x) is not int or x<0 for x in (old_origin,new_origin,commit_step)) or not old_origin<new_origin<=commit_step:
+        raise ValueError('Require ordered prediction origins before the commit')
+    old,new=_actions(previous['actions']),_actions(current['actions'])
+    start=max(commit_step,old_origin,new_origin)
+    end=min(old_origin+len(old),new_origin+len(new))
+    old_events=[dict(e,target=old_origin+e['offset']) for e in detect_events(old,config)
+                if e['kind'].startswith('gripper') and start<=old_origin+e['offset']<end
+                and old_origin+e['confirmed_offset']<end]
+    new_events=[dict(e,target=new_origin+e['offset']) for e in detect_events(new,config)
+                if e['kind'].startswith('gripper') and new_origin+e['offset']>=start]
+
+    def metrics(lo,hi):
+        if lo>=hi:return None
+        pairs=[(old[s-old_origin],new[s-new_origin]) for s in range(lo,hi)]
+        xyz=[[b[k]-a[k] for k in range(3)] for a,b in pairs]
+        rotation=[[b[k]-a[k] for k in range(3,6)] for a,b in pairs]
+        norm=lambda v:math.sqrt(sum(x*x for x in v))
+        angles=[];magnitude=[];cumulative=[0.,0.,0.];max_cumulative=0.
+        for (a,b),delta in zip(pairs,xyz):
+            an,bn=norm(a[:3]),norm(b[:3]);magnitude.append(abs(an-bn))
+            if min(an,bn)>=config.minimum_motion:
+                cosine=sum(a[k]*b[k] for k in range(3))/(an*bn)
+                angles.append(math.degrees(math.acos(max(-1.,min(1.,cosine)))))
+            cumulative=[x+y for x,y in zip(cumulative,delta)]
+            max_cumulative=max(max_cumulative,norm(cumulative))
+        grip=lambda v:1 if v>=config.gripper_threshold else -1 if v<=-config.gripper_threshold else 0
+        return dict(start_step=lo,end_step_exclusive=hi,steps=hi-lo,
+            xyz_rmse=math.sqrt(sum(x*x for v in xyz for x in v)/(3*len(pairs))),
+            xyz_max_l2=max(norm(v) for v in xyz),
+            rotation_rmse=math.sqrt(sum(x*x for v in rotation for x in v)/(3*len(pairs))),
+            mean_xyz_magnitude_difference=sum(magnitude)/len(magnitude),
+            mean_direction_degrees=sum(angles)/len(angles) if angles else None,
+            direction_comparable_steps=len(angles),
+            max_cumulative_xyz_command_difference=max_cumulative,
+            gripper_sign_disagreement_steps=sum(grip(a[6])!=grip(b[6]) for a,b in pairs))
+
+    result=[]
+    delay=current.get('rtc_guidance',{}).get('delay_estimate_steps')
+    for event in new_events:
+        row=dict(kind=event['kind'],previous_prediction_id=previous['prediction_id'],
+            current_prediction_id=current['prediction_id'],available_at_commit_step=commit_step,
+            new_target_step=event['target'],common_future_start=start,common_future_end_exclusive=end)
+        candidates=[e for e in old_events if e['kind']==event['kind']]
+        if event['target']>=end or new_origin+event['confirmed_offset']>=end:
+            row['status']='outside_common_future'
+        elif not candidates:
+            row['status']='new_event_not_in_old_forecast'
+        else:
+            nearest=min(candidates,key=lambda e:abs(e['target']-event['target']))
+            new_count=sum(e['kind']==event['kind'] and e['target']<end
+                          and new_origin+e['confirmed_offset']<end for e in new_events)
+            lo=max(start,event['target']-radius);hi=min(end,event['target']+radius+1)
+            row.update(status='matched' if len(candidates)==new_count==1 else 'ambiguous_match',
+                old_target_step=nearest['target'],event_step_shift=event['target']-nearest['target'],
+                same_kind_old_candidates=len(candidates),same_kind_new_candidates=new_count,
+                window_complete=lo==event['target']-radius and hi==event['target']+radius+1,
+                local_window=metrics(lo,hi),
+                beyond_estimated_delay=(metrics(max(lo,new_origin+delay),hi)
+                    if type(delay) is int and delay>=0 else None))
+        result.append(row)
+    return result
+
+
 def analyze_episode(run, config=None):
     """Read an existing episode without changing it; use only past ticks for ETA."""
     config = config or EventConfig()
@@ -179,6 +252,12 @@ def analyze_episode(run, config=None):
                 command_time_error_seconds=nearest['command_monotonic']-time_estimate if nearest else None,
                 observed_command_source=controls[nearest['step']]['source'] if nearest else None))
 
+    window_comparisons=[]
+    for previous_commit,current_commit in zip(commits,commits[1:]):
+        previous=dict(requests[previous_commit['prediction_id']],observation_step=previous_commit['observation_step'])
+        current=dict(requests[current_commit['prediction_id']],observation_step=current_commit['observation_step'])
+        window_comparisons.extend(compare_gripper_windows(previous,current,current_commit['commit_step'],config))
+
     # Physical evidence accompanies, but never relabels, command predictions.
     physical = []
     contact_before = None
@@ -212,6 +291,8 @@ def analyze_episode(run, config=None):
                      disposition_counts=dict(Counter(e['disposition'] for e in forecasts)),
                      matched_command_forecasts=sum(e['observed_command_step'] is not None for e in forecasts)),
         chunks=chunks, forecasts=forecasts, actual_command_events=actual, physical_events=physical,
+        gripper_window_comparisons=window_comparisons,
+        gripper_window_scope='Post-commit diagnostics only; absolute-step aligned commands, not Cartesian positions. RTC-guided agreement does not prove future reliability or justify skipping the prediction that produced it.',
         matching='Nearest same command event within match_steps; repeated forecasts may match one event. Contact evidence is separate. Overwritten tails are not executed ground truth.',
         sources=[dict(path=str(p), sha256=_sha(p)) for p in (trace_path, requests_path, run/'run.json',
             *([summary_path] if summary_path.exists() else []))])

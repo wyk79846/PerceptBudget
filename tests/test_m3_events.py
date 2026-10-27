@@ -13,6 +13,86 @@ def action(x=1., y=0., grip=-1.):
     return [x, y, 0., 0., 0., 0., grip]
 
 
+def window_requests(new_target=7):
+    old=dict(prediction_id=0,observation_step=0,
+             actions=[action(x=1+i*.1,grip=-1 if i<7 else 1) for i in range(12)])
+    new=dict(prediction_id=1,observation_step=3,
+             actions=[action(x=1+(i+3)*.1,grip=-1 if i+3<new_target else 1) for i in range(12)],
+             rtc_guidance={'delay_estimate_steps':6})
+    return old,new
+
+
+def test_gripper_windows_align_absolute_steps_and_exclude_consumed_actions():
+    from perceptbudget.action_events import compare_gripper_windows
+    old,new=window_requests()
+    result=compare_gripper_windows(old,new,5,radius=2)[0]
+    assert result['status']=='matched' and result['event_step_shift']==0
+    assert result['local_window']['start_step']==5 and result['local_window']['end_step_exclusive']==10
+    assert result['local_window']['xyz_rmse']==0 and result['local_window']['gripper_sign_disagreement_steps']==0
+    assert result['beyond_estimated_delay']['start_step']==9
+    old['actions'][4][0]=999
+    assert compare_gripper_windows(old,new,5,radius=2)[0]==result
+
+
+def test_same_gripper_event_position_does_not_hide_different_local_actions():
+    from perceptbudget.action_events import compare_gripper_windows
+    old,new=window_requests()
+    new['actions'][4][0]+=.4
+    new['actions'][4][3]+=.2
+    result=compare_gripper_windows(old,new,5,radius=2)[0]
+    assert result['event_step_shift']==0
+    assert result['local_window']['xyz_max_l2']==pytest.approx(.4)
+    assert result['local_window']['rotation_rmse']>0
+    assert result['local_window']['max_cumulative_xyz_command_difference']==pytest.approx(.4)
+
+
+def test_gripper_window_reports_event_shift_and_unavailable_overlap():
+    from perceptbudget.action_events import compare_gripper_windows
+    old,new=window_requests(new_target=8)
+    result=compare_gripper_windows(old,new,5,radius=2)[0]
+    assert result['event_step_shift']==1 and result['local_window']['gripper_sign_disagreement_steps']==1
+    assert compare_gripper_windows(old,new,8)[0]['status']=='new_event_not_in_old_forecast'
+    old,new=window_requests(new_target=13)
+    assert compare_gripper_windows(old,new,5)[0]['status']=='outside_common_future'
+
+
+def test_gripper_window_marks_multiple_same_kind_transitions_ambiguous():
+    from perceptbudget.action_events import compare_gripper_windows
+    old,new=window_requests()
+    for i in range(12):old['actions'][i][6]=1 if 3<=i<5 or i>=7 else -1
+    result=compare_gripper_windows(old,new,3)[0]
+    assert result['status']=='ambiguous_match'
+
+
+def test_gripper_window_rejects_future_observation_and_invalid_radius():
+    from perceptbudget.action_events import compare_gripper_windows
+    old,new=window_requests()
+    with pytest.raises(ValueError):compare_gripper_windows(old,new,2)
+    with pytest.raises(ValueError):compare_gripper_windows(old,new,5,radius=-1)
+
+
+def test_offline_episode_attaches_aligned_window_metrics_without_modifying_records(tmp_path):
+    old,new=window_requests()
+    (tmp_path/'rtc').mkdir()
+    (tmp_path/'rtc/q5_requests.json').write_text(json.dumps([old,new]))
+    (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':{
+        'rtc_suite':'libero_spatial','rtc_initial_control_period_seconds':.05}}))
+    trace=[dict(event='prediction_committed',prediction_id=0,observation_step=0,commit_step=0,commit_monotonic=10.),
+           dict(event='prediction_committed',prediction_id=1,observation_step=3,commit_step=5,commit_monotonic=10.25)]
+    for i in range(12):
+        q=old if i<5 else new
+        trace.append(dict(event='control_step',step=i,q=5,task_id=0,applied_arm_gain=1.,
+            action=q['actions'][i-q['observation_step']],action_start_monotonic=10+i*.05,
+            action_end_monotonic=10+i*.05+.04,source={'prediction_id':q['prediction_id']},after={'contacts':[]}))
+    (tmp_path/'rtc/trace.jsonl').write_text('\n'.join(json.dumps(e) for e in trace))
+    before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    result=analyze_episode(tmp_path)
+    comparison=result['gripper_window_comparisons'][0]
+    assert comparison['status']=='matched' and comparison['local_window']['xyz_rmse']==0
+    assert comparison['local_window']['start_step']>=5
+    assert all(p.read_bytes()==content for p,content in before.items())
+
+
 def test_gripper_hysteresis_ignores_jitter_and_labels_both_directions():
     values = [-1, -1, .05, .3, -.1, 1, 1, -.1, -1, -1]
     events = detect_events([action(grip=g) for g in values])
