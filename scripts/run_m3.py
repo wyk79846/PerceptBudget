@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal','libero_10'))
     parser.add_argument('--trigger-task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--static-q', type=int, choices=(5,10,20,30,40), help='Pair one fixed-q high-frequency baseline with variance-only DVFS')
+    parser.add_argument('--compare-event-dedup', action='store_true', help='Resident before/after event deduplication pair with exact bootstrap audit')
     parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
@@ -34,6 +35,10 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.compare_event_dedup and (args.mode!='trigger-comparison' or not args.device_dvfs
+            or args.compare_device or args.static_q is not None or args.repeats!=1
+            or args.strategies not in (None,['events_and_variance'])):
+        parser.error('Event dedup pair requires trigger-comparison --device-dvfs, one repeat, and events_and_variance')
     if (args.static_q is not None or args.trigger_task_id) and args.mode!='trigger-comparison':
         parser.error('Task selection and static baseline require trigger-comparison')
     if args.static_q is not None and (args.compare_device or args.device_dvfs or args.repeats!=1 or args.strategies not in (None,['variance_only'])):
@@ -53,6 +58,7 @@ def main():
     if args.mode=='trigger-comparison':
         settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs or args.compare_device or args.static_q is not None else 'deadline_high',dvac_paired=True,trigger_comparison=True,
             device_comparison=args.compare_device or args.static_q is not None,static_q=args.static_q,
+            event_dedup_comparison=args.compare_event_dedup,
             trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
@@ -64,7 +70,8 @@ def main():
         from perceptbudget.closed_loop import comparison_variants
         try:
             variants_per_task=len(comparison_variants(dict(m3_trigger_comparison=True,
-                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats,m3_device_comparison=args.compare_device,m3_static_q=args.static_q)))
+                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats,m3_device_comparison=args.compare_device,m3_static_q=args.static_q,
+                m3_event_dedup_comparison=args.compare_event_dedup)))
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -91,7 +98,8 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
-            tasks=settings['calibration_tasks'], q=5, static_q=args.static_q, H=50, N=5, state=True,
+            tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
+            exact_bootstrap_pair=args.compare_event_dedup, H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
@@ -131,6 +139,8 @@ def main():
                 if args.source_run:
                     command += ['--source-run',*[str(p.resolve()) for p in args.source_run]]
                 if args.mode=='trigger-comparison':
+                    if args.compare_event_dedup:
+                        command += ['--compare-event-dedup']
                     command += ['--trigger-task-id',str(args.trigger_task_id)]
                     if args.static_q is not None:
                         command += ['--static-q',str(args.static_q)]

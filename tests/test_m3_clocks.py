@@ -104,8 +104,12 @@ def test_variance_dvfs_plan_is_three_h50_tasks_without_sudo_or_model_load(capsys
     launch.assert_not_called()
 
 
-@pytest.mark.parametrize('device_args,episode_count',[(['--device-dvfs'],3),(['--compare-device','--trigger-suite','libero_spatial'],2)])
-def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path,device_args,episode_count):
+@pytest.mark.parametrize('device_args,episode_count,strategy',[
+    (['--device-dvfs'],3,'variance_only'),
+    (['--compare-device','--trigger-suite','libero_spatial'],2,'variance_only'),
+    (['--device-dvfs','--compare-event-dedup','--trigger-suite','libero_10','--trigger-task-id','1'],2,'events_and_variance'),
+])
+def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path,device_args,episode_count,strategy):
     import json
     from pathlib import Path
     from scripts.run_m3 import main
@@ -121,7 +125,7 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
         order.append('worker');commands.append(command)
         (run/'summary.json').write_text(json.dumps({'status':'completed','episodes':[{}]*episode_count}))
         return 0
-    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only','--no-age-limit',*device_args]), \
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies',strategy,'--no-age-limit',*device_args]), \
          patch('perceptbudget.experiment.load_config',return_value=cfg), \
          patch('perceptbudget.experiment.create_run',return_value=run), \
          patch('subprocess.run') as sudo, \
@@ -132,5 +136,8 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
     assert order==['preflight','worker']
     command=commands[0]
     assert command[0]==cfg['python_executable'] and device_args[0] in command and '--no-age-limit' in command
-    assert command[command.index('--strategies')+1]=='variance_only'
+    assert command[command.index('--strategies')+1]==strategy
+    if '--compare-event-dedup' in device_args:
+        assert '--compare-event-dedup' in command
+        assert command[command.index('--trigger-task-id')+1]=='1'
     assert not any('guarded_run.py' in part for part in command)

@@ -10,6 +10,25 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
+def audit_paired_bootstraps(episodes):
+    """Require identical starting inputs and outputs, not identical future trajectories."""
+    import numpy as np
+    cases=[]
+    for suite,tid in sorted({(e['suite'],e['task_id']) for e in episodes}):
+        pair=[e for e in episodes if e['suite']==suite and e['task_id']==tid]
+        if len(pair)!=2:
+            raise ValueError('Require exactly two resident episodes per task')
+        requests=[json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())[0] for e in pair]
+        checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[1]['initial']['initial_hashes']}
+        for field in ('observation_raw_state','model_state','actions_raw','actions'):
+            checks[field+'_equal']=np.array_equal(requests[0][field],requests[1][field])
+        checks['noise_equal']=np.array_equal(requests[0]['rtc_solver_inputs']['noise'],requests[1]['rtc_solver_inputs']['noise'])
+        cases.append(dict(suite=suite,task_id=tid,passed=all(checks.values()),checks=checks,
+            raw_max_abs=float(np.max(np.abs(np.asarray(requests[0]['actions_raw'])-np.asarray(requests[1]['actions_raw']))))))
+    return dict(passed=bool(cases) and all(c['passed'] for c in cases),cases=cases,
+        scope='Exact starting state/images/noise/actions only; real async timing and policy-dependent future inputs may diverge')
+
+
 def quality_run_purpose(label):
     # Keep the semantic episode/view label intact; only shorten the directory tag.
     short = {'pool2_agent_alternate': 'pool2_agent_alt'}.get(label, label)
@@ -456,6 +475,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m3_dvac_enabled']=view!='deadline_high'
                         if cfg.get('m3_trigger_comparison'):
                             trigger,_,device=view.partition('__device_')
+                            trigger,_,coverage=trigger.partition('__coverage_')
+                            if coverage:
+                                child_cfg['m3_event_coverage_mode']=coverage
                             strategy,_,repeat=trigger.partition('__repeat')
                             child_cfg['m3_trigger_strategy']=strategy
                             child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
@@ -554,6 +576,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
+            if cfg.get('m3_event_dedup_comparison'):
+                paired=audit_paired_bootstraps(record['episodes'])
+                _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
+                record['paired_bootstrap_audit']=paired
+                if not paired['passed']:
+                    raise RuntimeError('Resident pair bootstrap differs; do not attribute outcomes to event deduplication')
             record['status'] = 'completed'
             save()
     except BaseException as exc:

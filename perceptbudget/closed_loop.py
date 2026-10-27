@@ -28,6 +28,9 @@ def load_settings(path):
 
 
 def comparison_variants(config):
+    if config.get('m3_event_dedup_comparison'):
+        return ('events_and_variance__coverage_event_only',
+                'events_and_variance__coverage_shared_refresh')
     if config.get('m3_static_q') is not None:
         q=config['m3_static_q']
         if q not in (5,10,20,30,40):
@@ -88,6 +91,7 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg['m3_trigger_repeats']=settings.get('trigger_repeats',1)
         cfg['m3_device_comparison']=bool(settings.get('device_comparison'))
         cfg['m3_static_q']=settings.get('static_q')
+        cfg['m3_event_dedup_comparison']=bool(settings.get('event_dedup_comparison'))
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
@@ -98,6 +102,8 @@ def recording_session(config, settings, directory, cleanup_gate):
     result['mode'] = settings.get('mode','record_only')
     result['policy_changed'] = result['mode'] != 'record_only'
     result['clocks_changed'] = result['mode'] == 'deadline_dvfs'
+    if 'paired_bootstrap_audit' in record:
+        result['paired_bootstrap_audit']=record['paired_bootstrap_audit']
     if settings.get('dvac_paired'):
         result['comparison'] = list(comparison_variants(cfg))
     _write_json_atomically(Path(directory)/'summary.json', result)
@@ -118,6 +124,9 @@ class DeadlineRuntime:
         self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
         self.covered_events = []
+        self.event_coverage_mode=config.get('m3_event_coverage_mode','shared_refresh')
+        if self.event_coverage_mode not in ('event_only','shared_refresh'):
+            raise ValueError('Unknown action-event coverage policy')
         self.mode = config['m3_scheduler_mode']
         self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
         self.action_events_enabled = bool(config.get('m3_action_events_enabled',True))
@@ -159,7 +168,13 @@ class DeadlineRuntime:
             timing['actual_service_seconds'] = actual
             timing['arrival_lateness_seconds'] = max(0.,commit['commit_monotonic']-timing['deadline'])
             critical=timing.get('critical_step')
-            if (self.action_events_enabled and critical is not None
+            if self.event_coverage_mode=='event_only':
+                # Frozen pre-optimization policy, retained only for paired tests.
+                if (timing['reason']=='action_event' and not timing['arrival_lateness_seconds']
+                        and commit['commit_step'] <= timing['critical_step']):
+                    self.covered_events.extend(dict(kind=kind,target_step=timing['critical_step'])
+                        for kind in timing['candidate_event_kinds'])
+            elif (self.action_events_enabled and critical is not None
                     and origin <= commit['commit_step'] <= critical):
                 # A variance/buffer-triggered refresh can also cover an action
                 # event. Its own (earlier) deadline is not the event deadline.
@@ -225,6 +240,7 @@ class DeadlineRuntime:
                          inflight=inflight, path='low_continue_recovery' if recovery else 'high_frequency',
                          current_profile=self.clocks.profile if self.clocks else 'baseline',
                          covered_event_count=len(self.covered_events),
+                         event_coverage_mode=self.event_coverage_mode,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical}))
         self.plan.update(rtc_delay_steps=rtc_delay_steps,rtc_latest_submit_step=rtc_latest_submit,

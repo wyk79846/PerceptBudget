@@ -84,15 +84,16 @@ def test_runtime_reads_future_hints_and_counts_only_admitted_actions():
 
 
 @pytest.mark.parametrize('reason',['denoising_variance','buffer','action_event'])
+@pytest.mark.parametrize('coverage',['event_only','shared_refresh'])
 @pytest.mark.parametrize('target,new_kind,commit_step,suppressed',[
     (129,'gripper_close',126,1),
     (136,'gripper_close',126,0),  # A materially moved transition is new evidence.
     (129,'gripper_open',126,0),   # Opposite commands cannot cover each other.
     (132,'gripper_close',131,0),  # Arrival after the old event does not cover it.
 ])
-def test_fresh_prediction_covers_nearby_event_regardless_of_trigger(reason,target,new_kind,commit_step,suppressed):
+def test_fresh_prediction_covers_nearby_event_regardless_of_trigger(reason,coverage,target,new_kind,commit_step,suppressed):
     from perceptbudget.closed_loop import DeadlineRuntime
-    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,
+    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,m3_event_coverage_mode=coverage,
         m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
             maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
         m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},
@@ -109,6 +110,7 @@ def test_fresh_prediction_covers_nearby_event_regardless_of_trigger(reason,targe
     runtime.committed(request,dict(commit_step=commit_step,commit_monotonic=11.))
     queue={origin+i:(a,1,origin,i) for i,a in enumerate(actions)}
     plan=runtime.decide(now=11.,step=commit_step,queue=queue,rows=[],inflight=False)
+    if coverage=='event_only':suppressed=0  # Frozen legacy rule rejects this late deadline.
     assert plan['suppressed_event_count']==suppressed
     assert plan['critical_step']==(None if suppressed else target)
     assert request['m3_timing']['arrival_lateness_seconds']==pytest.approx(.1)
