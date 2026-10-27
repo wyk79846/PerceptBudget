@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 LIBERO-10 task0持续2/3步配对a917f5a6 completed且本次覆盖真实调度差异：a99041d6原2步success241/14.2712s/238.4784J/14pred；91bee0ce 3步success254/15.2000s/245.6077J/14pred。严格初始gate通过，前9份预测raw完全相同；origin161原预测减速190在3步下被过滤，179步提前刷新改为193步（夹爪204保留），执行动作187步才分叉。均0gap/系统审计通过/能量全覆盖/RESTORED。候选时间+6.51%、能量+2.99%、总预测未减少，不升级默认，保持2步；不能简单把短减速当无用信号。证据postrun_review.json。本次仅审核，无参数或生产默认修改。
+
 - 2026-10-27 Object6持续3步配对2a4b24e2 completed：05aa863d/b65f0bb7均成功154步/7pred/0gap，所有7份raw动作完全相同，origin同为0/38/48/58/96/129/139。原2步8.6888s/130.2218J，新3步8.6851s/130.0436J；仅-0.14%能量，不认定收益。严格bootstrap、系统审计、能量全覆盖、RESTORED均通过。事件刷新仅夹爪闭合/松开，没有减速实际主导刷新，逐份同输入也未产生2/3步过滤差异；M1q20选例未在动态轨迹重现，不再盲选同任务重复GPU。下一次须先从动态已存记录确认候选会改变最早调度边界，再做闭环。证据postrun_review.json，默认仍原2步，未改阈值。
 
 - 2026-10-27 用户明确移除错误中位数版并继续优化。已建archive/rejected-slowdown-median-20261027保存旧代码，主干移除slowdown_window_steps/slowdown3策略及其测试，无生产残留。新候选仅slowdown_confirm_steps=3（默认None继承2），原50%下降幅度/夹爪和转向连续2步/DVAC/50ms/默认event_only不变；独立减速循环与confirmed_offset正确记录3步。离线2882bc55核对342份已提交预测（12M3回合+M1三套30任务）：默认与bf37e8e精确一致，其他两信号相同，减速80→42，38处都是第三步已恢复而非尾段不足。幅度0.35会降至15、0.65增至198，先不同时改幅度。Object0最近真实动态轨迹被删54步信号晚于52步夹爪，不会改变最早触发，故改选M1减速3→1且成功的Object6作下一次针对性验证。新策略events_and_variance_hold3仅允许和原混合同模型配对/严格bootstrap；144相关tests通过，dryrun两回合1模型。尚未GPU执行，用户需sudo终端run_m3.py --mode trigger-comparison --trigger-suite libero_object --trigger-task-id 6 --strategies events_and_variance events_and_variance_hold3 --device-dvfs --no-age-limit。原始实验结果保留，不称过滤项已证明误报或已节能。
