@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 同模型去重配对636c3ce2 completed：严格bootstrap全相等，前5份预测raw全相等，执行动作135步才因126步刷新保留/抑制而分叉。旧event_only dba90909 success233/13.907s/196.813J/10pred；新shared_refresh 5b0f436b success244/14.519s/204.022J/10pred。均0gap/审核通过/RESTORED/功率全覆盖。去重减少事件触发4→2，却使去噪触发1→4，总预测仍10、耗时+4.41%、能量+3.66%，未证明净收益。126～129确实抑制同松爪事件；事件前二次观察可能有用，不能单凭同类事件判定刷新多余。证据postrun_review.json保存；本轮只读审核及文档，无生产默认切换，代码仍shared_refresh默认，旧event_only只作显式配对参考；不称新规则已成为最终有效优化。
+
 - 2026-10-27 用户要求机制一优化前后更一致的配对。已确认bba99fb2/79f7f3c6初始state和首份噪声完全相同，但raw bootstrap maxdiff0.0066508，首步动作即分叉；尚未定位计算差异根因。新增--compare-event-dedup（须trigger-comparison --device-dvfs）：同一次模型/graph/autotune中跑旧event_only和新shared_refresh各1，显式记录coverage策略；仅此诊断保留旧策略，不改默认shared_refresh。末尾paired_bootstrap_audit.json严格检查初始physics/frame/state哈希、raw/model state、noise、raw/decoded actions完全相等；不相等则会话invalid，不能作优化收益对照。此gate不保证策略分叉后轨迹或真实异步延迟相同。126相关tests通过，backup archive/pre-event-dedup-resident-pair-20261027；未GPU运行，用户命令run_m3.py --mode trigger-comparison --trigger-suite libero_10 --trigger-task-id 1 --strategies events_and_variance --device-dvfs --compare-event-dedup --no-age-limit。上次优化后79f7f3c6 success245/14.463s/211.864J/11pred/0gap，去重生效但新增2次slowdown触发，不能宣称整体改善。
 
 - 2026-10-27 机制一首轮优化：仅修复跨触发来源的事件去重，不调50ms余量/去噪阈值/事件门槛。Long task1混合bba99fb2 success233/13.809s/195.977J/0gap（仅去噪251/14.666s/187.346J，固定q20 244/13.877s/244.620J）；第117步variance刷新、126提交已覆盖130附近松爪，新预测129仍被126重复触发。现在任意触发来源只要提交不晚于原关键步且新预测存在同类±match_steps事件，就记已覆盖；方向改变/大位移/到达晚仍可重触发。原126步同记录离线before action_event/startTrue→after buffer/startFalse/suppressed1；证据在8f08fb93/mechanism1_dedup_replay.json。85相关tests通过，backup archive/pre-mechanism1-event-dedup-20261027。闭环收益未测，sudo凭据需用户密码；复测原task1 events_and_variance --device-dvfs --no-age-limit命令即可。FlashRT和默认配置未改。
