@@ -92,3 +92,16 @@ def test_paired_dry_run_declares_six_episodes_without_clock_changes(capsys):
     assert plan['episodes']==6 and plan['model_loads']==1
     assert plan['policy_changed'] and not plan['clocks_changed']
     launch.assert_not_called()
+
+
+def test_horizon_paired_plan_keeps_model_h50_and_changes_only_offset_candidate(capsys):
+    from scripts.run_m3 import main
+    with patch('sys.argv',['m3','--mode','dvac-horizon-paired','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==6 and plan['model_loads']==1
+    assert plan['H']==50 and plan['N']==5 and plan['state']
+    assert plan['action_offset_limits']==[20,50]
+    assert plan['maximum_observation_age_seconds']==2.
+    assert not plan['clocks_changed']
+    launch.assert_not_called()

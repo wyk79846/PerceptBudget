@@ -122,3 +122,14 @@ def test_variance_refresh_does_not_reject_otherwise_admitted_actions():
     baseline=DeadlineRuntime(config)
     baseline.committed(req,dict(commit_step=18,commit_monotonic=10.4))
     assert baseline.decide(now=10.4,step=18,queue=queue,rows=[],inflight=False)['dvac_step'] is None
+
+
+def test_h50_starts_before_end_and_earlier_limits_still_win():
+    args=dict(now=10.,step=0,buffer_end_step=50,period=.05,service_seconds=.5,margin_seconds=.05)
+    plan=timing_plan(**args)
+    assert plan.reason=='buffer'
+    assert plan.deadline==pytest.approx(12.5)
+    assert plan.latest_start==pytest.approx(11.95)
+    assert timing_plan(**args,critical_step=20).reason=='action_event'
+    assert timing_plan(**args,dvac_step=15).reason=='denoising_variance'
+    assert timing_plan(**args,observation_deadline=12.).reason=='observation_age'

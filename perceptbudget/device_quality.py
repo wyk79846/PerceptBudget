@@ -326,7 +326,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 if visual_comparison:
                     views=('full',visual_fast_mode+'_alternate')
                 if dvac_paired:
-                    views=('deadline_high','dvac_high')
+                    views=(('dvac_h20','dvac_h50') if cfg.get('m3_dvac_horizon_comparison')
+                           else ('deadline_high','dvac_high'))
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -450,7 +451,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
                     if dvac_paired:
-                        child_cfg['m3_dvac_enabled']=view=='dvac_high'
+                        child_cfg['m3_dvac_enabled']=view!='deadline_high'
+                        if cfg.get('m3_dvac_horizon_comparison'):
+                            child_cfg['m3_timing']['maximum_action_offset']=20 if view=='dvac_h20' else cfg['H']
                     if recompute_comparison:
                         child_cfg['m2_reuse_enabled']=view!='full'
                         child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
@@ -488,9 +491,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         result.update(episode_geometry(visual_fast_mode,view!='full'))
                     info = initial_info(active, episode)
                     review = None
-                    if dvac_paired and view=='dvac_high':
+                    if dvac_paired and view!=views[0]:
                         reference=next(r['initial'] for r in record['episodes']
-                            if r['suite']==suite and r['task_id']==tid and r['view']=='deadline_high')
+                            if r['suite']==suite and r['task_id']==tid and r['view']==views[0])
                         review=compare_initial(reference,info)
                     if kind == 'single':
                         full = json.loads((directory/'full_quality.json').read_text())

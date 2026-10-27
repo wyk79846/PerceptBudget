@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 按用户H50逻辑对照80fb474b completed：三suite task0×DVAC cap20/cap50共6，1model/1expert，初始physics/frame/state三对哈希精确一致；只改覆盖上限，两侧仍2s年龄/同事件/DVAC/50ms余量/高频。两组各3/3 success；H50均0underflow，H20 Object/Goal各15underflow（原始队列仍有动作，offset20/21被硬上限拒用，观测龄<1.10s；新chunk提交已过约11步，仅余9覆盖不了下次11）。能量Spatial125.217→108.862J(-13.06%)、Object212.399→146.860(-30.86%)、Goal185.292→156.611(-15.48%)，Goal耗时7.533→8.281s(+9.93%)。请求8→6/15→8/13→9；H50实际用到第30/37/39步，年龄/事件/波动均先于50终点触发，不称已验证连续50步质量；年龄2s为待校准初值。原始功率全覆盖独立复算、系统审计通过、图审计0差/无fallback；关键提示时限仍有迟到。原播报Object无断供已更正。入口dvac-horizon-paired仅实验，默认20未自动替换，备份archive/pre-dvac-horizon50-20261027；全量569passed/9skip/110subtests。报告/CSV/供给复算已保存，下一步少量扩样/校准年龄，再接低频；故障注入/正式长测待做。
+
 - 2026-10-27 DVAC提前刷新闭环d5144c8c completed：三suite task0各原deadline_high/DVAC配对共6，1model/1expert，seed7/init0三对初始physics/frame/state哈希精确一致。两组各3/3 success且0underflow；Spatial78→77步，Object144→144，Goal120→120；能量122.535→123.634/206.555→207.612/174.917→174.816J含收尾，原始积分全覆盖复算一致。DVAC请求原因Spatial0/Object2/Goal1次，Object/Goal各1提交时边界已过；只提前刷新不截队列、不放宽20步，warmup/历史按回合重置。无明确节能加速，不替换默认；现有开关仅dvac-paired启用，FlashRT未改。全量566passed/9skip/110subtests，后补dry-run定向检查。报告已追加，改前archive/pre-dvac-closed-loop-20261027；下一阶段需验证低波动放宽上限才可能减少请求，故障注入/长测仍未完成。
 
 - 2026-10-27 DVAC三任务验证7cece092 completed：Spatial/Object/Goal task0各5保存观测，1model/1expert，无新rollout或控制改动。90组记录开关动作差0；467对齐位置（非独立回合）在排除RTC已承诺前缀后，L5波动与后续预测修改Spearman .415/.782/.183，L3 .482/.753/.203；Object逐观测有负值不能以合并相关宣称普适。重放比旧保存raw有max .02186/.01891/.01206，改用保存对保存label复算L5 .416/.794/.186结论不变；非真实正确性标签，含采样差异。逐位置分组/关键命令/图及analysis_source.py保存在run，M3进展已更新。全量563passed/9skip/110subtests。仅记录，不启用DVAC控制；建议保持旧上限与事件提示，下一小测只尝试高波动收紧边界。改前archive/pre-dvac-validation-20261026。

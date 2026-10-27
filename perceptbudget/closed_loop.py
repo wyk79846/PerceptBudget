@@ -36,6 +36,7 @@ def recording_session(config, settings, directory, cleanup_gate):
                    m3_service_samples={k:list(v) for k,v in times.samples.items()})
     if settings.get('dvac_paired'):
         cfg['m3_dvac_comparison']=True
+        cfg['m3_dvac_horizon_comparison']=bool(settings.get('dvac_horizon_paired'))
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
@@ -47,7 +48,8 @@ def recording_session(config, settings, directory, cleanup_gate):
     result['policy_changed'] = result['mode'] != 'record_only'
     result['clocks_changed'] = result['mode'] == 'deadline_dvfs'
     if settings.get('dvac_paired'):
-        result['comparison'] = ['deadline_high','dvac_high']
+        result['comparison'] = (['dvac_h20','dvac_h50'] if settings.get('dvac_horizon_paired')
+                                else ['deadline_high','dvac_high'])
     _write_json_atomically(Path(directory)/'summary.json', result)
     return result
 
