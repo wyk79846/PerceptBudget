@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户提出机制一/DVAC改取后者，已接可选events_and_variance_latest。timing_plan.signal_policy默认earliest不变；latest在两信号存在时取较晚边界，仅一信号时仍用它，buffer/age仍取早，RTC离散提交上界/服务预算/50ms不变。同一chunk首次可用动作事件会锁存，经过后不被下一个事件替换以免不断后推；新预测提交后重置，允许latest中该已过事件与未来DVAC比较。所有决策/config记录policy，独立audit重算融合deadline/硬边界/减服务与余量一次，新增伪造deadline测试。179相关tests通过，200组默认与存档逐项精确相同，两份真实日志补policy后的独立审核1237/1395检查均通过。734ed0ad保存CPU重放，Long1首次计划差96步：原DVAC128→latest事件130；Long0 57步原立即刷→latest等待约1.61s。尚无闭环结果，sudo需用户密码。建议同模型Long1三组variance_only/events_and_variance/events_and_variance_latest各1、严格bootstrap，默认仍earliest。backup archive/pre-later-signal-comparison-20261027，FlashRT未改。
+
 - 2026-10-27 谷底候选Long1配对5defbac1 completed：严格bootstrap/初态通过，前3份预测raw完全相同。29fe4728原混合success233/13.7906s/196.7519J/10请求10提交；e9778e72谷底success239/14.0482s/215.6046J/12请求11提交，均0gap/系统审计/功率全覆盖/RESTORED。第58步谷底61确实触发额外刷新，另多一次松爪事件刷新；buffer4、DVAC1不变。候选末次234步请求任务239步结束前未提交，含收尾5.433J vs原1.225J。总能量+9.58%、时间+1.87%、多6步，没有改善，不推广谷底当前参数，默认继续原混合drop。postrun_review.json保存。此次只读审核无在线参数变更；单任务不据此否定PACE总体方法。
 
 - 2026-10-27 用户授权按结果导向继续，不要求照搬论文。已接PACE启发的单chunk谷底候选events_and_variance_valley：decoded XYZ指令幅度→3点中位数曲线→双侧低谷/平台中心→双侧较低肩峰>=0.1且谷底<=其50%→半径5/最小间隔5按显著性NMS。不是关节速度/真实末端速度或PACE严格复现；无训练、无额外VLA调用。只替换slowdown，夹爪/转向/DVAC/50ms/默认drop保持不变。29464c64离线342预测默认与archive精确相同、两信号不变；谷底181 vs原80，55份最早事件变化，不据此声称少推理。decision_replay.json按已知状态止于首个规划分歧，Long1旧15d在58步原等待1.49s而候选立即刷新，确有调度差异；选Long1两组闭环验证质量/耗时/总能量，非再测无区别样例。168相关tests通过，backup archive/pre-phase-valley-candidate-20261027。sudo仍需用户密码，尚未GPU运行；命令run_m3.py --mode trigger-comparison --trigger-suite libero_10 --trigger-task-id 1 --strategies events_and_variance events_and_variance_valley --device-dvfs --no-age-limit。1model/2episodes/严格bootstrap，FlashRT不改，不推广默认。

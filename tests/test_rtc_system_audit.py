@@ -45,6 +45,23 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_latest_signal_audit_recomputes_boundary_and_rejects_tampered_deadline(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_scheduler_mode='deadline_high',m3_signal_policy='latest',
+        m3_timing={'maximum_action_offset':25,'maximum_observation_age_seconds':None})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    decision=dict(step=5,start_now=True,inflight=False,deadline=50.5,latest_start=49.5,
+        service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='action_event',signal_policy='latest',
+        decision_monotonic=50.,estimated_control_period_seconds=.05,admitted_remaining_actions=20,
+        critical_step=15,dvac_step=10)
+    events.append(dict(event='m3_decision',**decision));requests[1]['m3_timing']=dict(decision);save()
+    assert audit(tmp_path)['passed']
+    for record in (events[-1],requests[1]['m3_timing']):record.update(deadline=51.,latest_start=50.,reason='buffer')
+    save()
+    assert 'm3_signal_deadline_and_hard_bounds' in [f['check'] for f in audit(tmp_path)['failures']]
+
+
 @pytest.mark.parametrize('recovery',[False,True])
 def test_dynamic_rtc_prefix_bound_and_copied_recovery_plan(tmp_path,recovery):
     requests,events,save=fixture(tmp_path)

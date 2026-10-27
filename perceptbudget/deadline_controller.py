@@ -63,7 +63,8 @@ class TimingPlan:
 
 
 def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
-                margin_seconds=.05, critical_step=None, observation_deadline=None, dvac_step=None):
+                margin_seconds=.05, critical_step=None, observation_deadline=None, dvac_step=None,
+                signal_policy='earliest'):
     """buffer_end_step is the caller's admitted exclusive end, not raw H.
 
     All deadlines use monotonic wall time. service_seconds already includes
@@ -75,15 +76,22 @@ def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
         raise ValueError('Invalid period, service time or margin')
     if any(type(v) is not int for v in (step, buffer_end_step)):
         raise ValueError('Control indices must be integers')
+    if signal_policy not in ('earliest','latest'):
+        raise ValueError('Signal policy must be earliest or latest')
     limits = [(now+(buffer_end_step-step)*period, 'buffer')]
+    signals=[]
     if dvac_step is not None:
         if type(dvac_step) is not int or dvac_step < 0:
             raise ValueError('DVAC boundary must be a nonnegative absolute action index')
-        limits.append((now+(dvac_step-step)*period,'denoising_variance'))
+        signals.append((now+(dvac_step-step)*period,'denoising_variance'))
     if critical_step is not None:
-        if type(critical_step) is not int or critical_step < step:
-            raise ValueError('Critical step must be a current or future integer index')
-        limits.append((now+(critical_step-step)*period, 'action_event'))
+        if type(critical_step) is not int or critical_step < 0 or (signal_policy=='earliest' and critical_step<step):
+            raise ValueError('Critical step must be nonnegative; earliest policy requires a current or future index')
+        signals.append((now+(critical_step-step)*period, 'action_event'))
+    if signals:
+        selected=(min if signal_policy=='earliest' else max)(t for t,_ in signals)
+        # Preserve the original tie break, including event-coverage bookkeeping.
+        limits.append(min(s for s in signals if s[0]==selected))
     if observation_deadline is not None:
         if not math.isfinite(observation_deadline):
             raise ValueError('Observation deadline must be finite')

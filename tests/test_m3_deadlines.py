@@ -135,6 +135,70 @@ def test_variance_only_tightens_existing_deadlines_and_overdue_boundary_starts_n
     assert overdue.start_now and overdue.deadline_already_unreachable
 
 
+@pytest.mark.parametrize('critical,dvac,target,reason',[
+    (16,12,16,'action_event'),(8,12,12,'denoising_variance'),
+    (None,12,12,'denoising_variance'),(8,None,8,'action_event'),
+    (None,None,50,'buffer'),(12,12,12,'action_event'),
+])
+def test_later_signal_selects_later_available_boundary(critical,dvac,target,reason):
+    plan=timing_plan(now=10.,step=0,buffer_end_step=50,period=.05,service_seconds=.3,
+        critical_step=critical,dvac_step=dvac,signal_policy='latest')
+    assert plan.deadline==pytest.approx(10+target*.05) and plan.reason==reason
+    assert plan.latest_start==pytest.approx(plan.deadline-.3-.05)
+
+
+def test_later_signal_never_overrides_buffer_age_or_tie_behavior():
+    args=dict(now=10.,step=0,period=.05,service_seconds=.3,critical_step=16,dvac_step=12,signal_policy='latest')
+    plan=timing_plan(**args,buffer_end_step=10)
+    assert plan.reason=='buffer' and plan.deadline==pytest.approx(10.5)
+    assert timing_plan(**args,buffer_end_step=50,observation_deadline=10.2).reason=='observation_age'
+    with pytest.raises(ValueError):timing_plan(**dict(args,signal_policy='unknown'),buffer_end_step=50)
+
+
+def test_later_signal_retains_discrete_rtc_submission_guard():
+    from types import SimpleNamespace
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_scheduler_mode='deadline_dvfs',m3_signal_policy='latest',m3_dvac_enabled=True,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.553]*20 for h in ('hot','short','long')},
+        m3_recovery_samples=[.634],rtc_initial_control_period_seconds=.064)
+    rt=DeadlineRuntime(cfg);rt.clocks=SimpleNamespace(profile='gpu_emc',pending=None)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    rt.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions,
+        dvac={'prefix_actions':50}),dict(commit_step=0,commit_monotonic=.5))
+    rt.events=[dict(kind='gripper_close',target_step=49)]
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    plan=rt.decide(now=38*.064,step=38,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert plan['signal_policy']=='latest' and plan['start_now']
+    assert plan['start_constraint']=='rtc_prefix' and plan['rtc_latest_submit_step']==40
+    assert plan['rtc_submit_guard_steps']==2
+
+
+def test_later_signal_remembers_passed_first_event_instead_of_chasing_next_event():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_signal_policy='latest',m3_dvac_enabled=True,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    rt=DeadlineRuntime(cfg)
+    actions=[[1.,0.,0.,0.,0.,0.,1. if 8<=i<45 else -1.] for i in range(50)]
+    rt.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions,
+        dvac={'prefix_actions':40}),dict(commit_step=0,commit_monotonic=.1))
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    first=rt.decide(now=0.,step=0,queue=queue,rows=[],inflight=False)
+    passed=rt.decide(now=.45,step=9,queue=queue,rows=[],inflight=False)
+    assert first['critical_step']==passed['critical_step']==8
+    assert first['deadline']==passed['deadline']==2.
+    assert passed['candidate_event_kinds']==['gripper_close']
+    fresh=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    rt.committed(dict(prediction_id=1,observation_step=10,observation_monotonic=.5,actions=fresh,
+        dvac={'prefix_actions':5}),dict(commit_step=20,commit_monotonic=1.))
+    new_queue={10+i:(a,1,10,i) for i,a in enumerate(fresh)}
+    plan=rt.decide(now=1.,step=20,queue=new_queue,rows=[],inflight=False)
+    assert plan['critical_step'] is None and plan['start_now']
+
+
 def test_variance_refresh_does_not_reject_otherwise_admitted_actions():
     from perceptbudget.closed_loop import DeadlineRuntime
     config=dict(m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,

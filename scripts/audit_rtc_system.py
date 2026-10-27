@@ -143,6 +143,30 @@ def audit(run):
                 check('m3_request_triggered_by_recorded_deadline',
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
+                policy=cfg.get('m3_signal_policy','earliest')
+                check('m3_signal_policy_matches_config',policy in ('earliest','latest')
+                      and d.get('signal_policy','earliest')==policy,pid)
+                if 'signal_policy' in d:
+                    required=('decision_monotonic','estimated_control_period_seconds','admitted_remaining_actions')
+                    complete=all(k in d for k in required)
+                    check('m3_signal_inputs_recorded',complete,pid)
+                    if complete and policy in ('earliest','latest'):
+                        originals=[e for e in events if e['event']=='m3_decision'
+                                   and e.get('decision_monotonic')==d['decision_monotonic']]
+                        original_step=min(e['step'] for e in originals)
+                        now=d['decision_monotonic'];period=d['estimated_control_period_seconds']
+                        limits=[(now+d['admitted_remaining_actions']*period,'buffer')]
+                        signals=[(now+(d[key]-original_step)*period,reason)
+                            for key,reason in (('critical_step','action_event'),('dvac_step','denoising_variance'))
+                            if d.get(key) is not None]
+                        if signals:
+                            boundary=(min if policy=='earliest' else max)(x[0] for x in signals)
+                            limits.append(min(x for x in signals if x[0]==boundary))
+                        if age_limit is not None:
+                            limits.append((old['observation_monotonic']+age_limit,'observation_age'))
+                        expected_deadline,expected_reason=min(limits)
+                        check('m3_signal_deadline_and_hard_bounds',
+                              abs(d['deadline']-expected_deadline)<1e-8 and d['reason']==expected_reason,pid)
                 expected_start=d['deadline']-d['service_seconds']-d['margin_seconds'] if d else float('nan')
                 if d.get('rtc_latest_submit_step') is not None:
                     # Recovery acknowledges HIGH on the following control tick;

@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -56,6 +56,11 @@ def comparison_variants(config):
                 tuple(variants)!=('events_and_variance','events_and_variance_valley')
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('Phase valleys require one baseline/candidate resident pair')
+        if 'events_and_variance_latest' in variants and (
+                tuple(variants) not in (('events_and_variance','events_and_variance_latest'),
+                    ('variance_only','events_and_variance','events_and_variance_latest'))
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('Latest-signal experiment requires the mixed pair, optionally preceded by variance_only')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
@@ -149,6 +154,10 @@ class DeadlineRuntime:
         if self.event_coverage_mode not in ('event_only','shared_refresh'):
             raise ValueError('Unknown action-event coverage policy')
         self.mode = config['m3_scheduler_mode']
+        self.signal_policy=config.get('m3_signal_policy','earliest')
+        self.latest_signal_event=None
+        if self.signal_policy not in ('earliest','latest'):
+            raise ValueError('Unknown signal combination policy')
         self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
         self.action_events_enabled = bool(config.get('m3_action_events_enabled',True))
         self.clocks = None
@@ -174,6 +183,7 @@ class DeadlineRuntime:
                 self.recovering_plan = None
 
     def committed(self, request, commit):
+        self.latest_signal_event=None
         pid, origin = request['prediction_id'], request['observation_step']
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
         signal=request.get('dvac',{})
@@ -242,13 +252,21 @@ class DeadlineRuntime:
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
         critical = min((e['target_step'] for e in candidates), default=None)
+        critical_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical})
+        if self.signal_policy=='latest':
+            if self.latest_signal_event is None and critical is not None:
+                self.latest_signal_event=dict(step=critical,kinds=critical_kinds)
+            if self.latest_signal_event is not None:
+                critical=self.latest_signal_event['step']
+                critical_kinds=self.latest_signal_event['kinds']
         recovery = self.clocks is not None and (self.clocks.profile!='baseline' or self.clocks.pending is not None)
         age_limit=self.settings['maximum_observation_age_seconds']
         plan = timing_plan(now=now,step=step,buffer_end_step=end,period=period,
             critical_step=critical,
             dvac_step=current.get('dvac_step') if current else None,
             observation_deadline=current['observation']+age_limit if current and age_limit is not None else None,
-            service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds)
+            service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds,
+            signal_policy=self.signal_policy)
         rtc_latest_submit=None
         rtc_guard_steps=None
         rtc_latest_start=None
@@ -270,9 +288,10 @@ class DeadlineRuntime:
                          current_profile=self.clocks.profile if self.clocks else 'baseline',
                          covered_event_count=len(self.covered_events),
                          event_coverage_mode=self.event_coverage_mode,
+                         signal_policy=self.signal_policy,
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
-                         candidate_event_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical}))
+                         candidate_event_kinds=critical_kinds)
         self.plan.update(rtc_delay_steps=rtc_delay_steps,rtc_latest_submit_step=rtc_latest_submit,
                          rtc_submit_guard_steps=rtc_guard_steps,start_constraint='service_deadline')
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
