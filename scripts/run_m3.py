@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--trigger-task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--static-q', type=int, choices=(5,10,20,30,40), help='Pair one fixed-q high-frequency baseline with variance-only DVFS')
     parser.add_argument('--compare-event-dedup', action='store_true', help='Resident before/after event deduplication pair with exact bootstrap audit')
-    parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge'))
+    parser.add_argument('--strategies', nargs='+', choices=('events_only','events_only_merge','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
     parser.add_argument('--no-age-limit', action='store_true', help='Disable the fixed observation-age cutoff for trigger-comparison')
@@ -107,7 +107,7 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
-            exact_bootstrap_pair=args.compare_event_dedup or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge')),
+            exact_bootstrap_pair=args.compare_event_dedup or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
@@ -116,7 +116,8 @@ def main():
             slowdown_confirmation=[2,3] if 'events_and_variance_hold3' in (args.strategies or []) else [settings['events'].get('slowdown_confirm_steps') or settings['events'].get('confirm_steps',2)],
             slowdown_detectors=['drop','valley'] if 'events_and_variance_valley' in (args.strategies or []) else [settings['events'].get('slowdown_detector','drop')],
             signal_policies=['earliest','latest'] if 'events_and_variance_latest' in (args.strategies or []) else ['earliest'],
-            merge_gap_steps=[None,8] if 'events_and_variance_merge' in (args.strategies or []) else [None],
+            merge_gap_steps=[None,8] if any(s in (args.strategies or []) for s in ('events_and_variance_merge','events_only_merge')) else [None],
+            denoising_triggers=[s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:

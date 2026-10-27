@@ -309,6 +309,33 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
 
 
+def test_events_only_merge_disables_variance_for_both_and_preserves_events(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import configure_trigger_signals,comparison_variants,DeadlineRuntime
+    strategies=['events_only','events_only_merge']
+    for strategy,gap in zip(strategies,(None,8)):
+        cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_trigger_variants=strategies,
+            m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+                maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+            m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+        configure_trigger_signals(cfg,strategy)
+        assert cfg['m3_action_events_enabled'] and not cfg['m3_dvac_enabled']
+        assert cfg['m3_merge_slowdown_steps']==gap
+        rt=DeadlineRuntime(cfg)
+        rt.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,
+            actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50,dvac={'prefix_actions':2}),
+            dict(commit_step=0,commit_monotonic=.1))
+        assert rt.chunks[0]['dvac_step'] is None
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10','--trigger-task-id','4',
+        '--strategies',*strategies,'--device-dvfs','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['denoising_triggers']==[False,False] and plan['merge_gap_steps']==[None,8]
+    with pytest.raises(ValueError):comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
+    launch.assert_not_called()
+
+
 def test_nearby_event_merge_is_online_two_episode_resident_pair(capsys):
     from scripts.run_m3 import main
     from perceptbudget.closed_loop import comparison_variants

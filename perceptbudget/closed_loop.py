@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge') for v in variants)
+                any(v not in ('events_only','events_only_merge','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -73,6 +73,10 @@ def comparison_variants(config):
                 tuple(variants)!=('events_and_variance','events_and_variance_merge')
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('Nearby-event merge requires one baseline/candidate resident pair')
+        if 'events_only_merge' in variants and (
+                tuple(variants)!=('events_only','events_only_merge')
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('Event-only merge requires one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
@@ -81,6 +85,14 @@ def comparison_variants(config):
     if config.get('m3_dvac_horizon_comparison'):
         return ('dvac_h20','dvac_h50')
     return ('deadline_high','dvac_high')
+
+
+def configure_trigger_signals(config, strategy):
+    """Keep denoising-trigger ablations consistent with their candidate labels."""
+    config['m3_dvac_enabled']=strategy not in ('events_only','events_only_merge')
+    config['m3_action_events_enabled']=strategy!='variance_only'
+    if any(s in (config.get('m3_trigger_variants') or []) for s in ('events_and_variance_merge','events_only_merge')):
+        config['m3_merge_slowdown_steps']=8 if strategy in ('events_and_variance_merge','events_only_merge') else None
 
 
 def configure_fixed_baseline(config, q):

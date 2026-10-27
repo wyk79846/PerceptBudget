@@ -483,8 +483,6 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             strategy,_,repeat=trigger.partition('__repeat')
                             child_cfg['m3_trigger_strategy']=strategy
                             child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
-                            if 'events_and_variance_merge' in (cfg.get('m3_trigger_variants') or []):
-                                child_cfg['m3_merge_slowdown_steps']=8 if strategy=='events_and_variance_merge' else None
                             if 'events_and_variance_no_turn' in (cfg.get('m3_trigger_variants') or []):
                                 child_cfg['m3_ignore_turn']=strategy=='events_and_variance_no_turn'
                             if 'events_and_variance_latest' in (cfg.get('m3_trigger_variants') or []):
@@ -515,8 +513,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                     print('quality_episode_skipped='+json.dumps(skipped),flush=True)
                                     continue
                                 _write_json_atomically(directory/'open_probe_plan.json',child_cfg['m3_open_probe_plan'])
-                            child_cfg['m3_dvac_enabled']=strategy!='events_only'
-                            child_cfg['m3_action_events_enabled']=strategy!='variance_only'
+                            from perceptbudget.closed_loop import configure_trigger_signals
+                            configure_trigger_signals(child_cfg,strategy)
                             if cfg.get('m3_device_comparison'):
                                 child_cfg['m3_scheduler_mode']='deadline_high' if device=='high' else 'deadline_dvfs'
                                 child_cfg['execution_mode']='m3_'+child_cfg['m3_scheduler_mode']+'_actual_async'
@@ -611,7 +609,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
-                    any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge'))):
+                    any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge'))):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
