@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户Long会话35462fef invalid已定位修复。高频9630a785是有效timeout520/0underflow，18pred/16有效DVAC判断/8波动触发；调频9ca871a6第327步d10 s41 H50只余9前缀触发保护，原326才升频、327才提交，非OOM或接入失败。预检/失败任务均RESTORED。DeadlineRuntime新增与submit同DelayQueue的离散最晚提交origin+H-d，低频留1控制tick确认+现有margin折算步数，与原启动取早；不缩d或H。原324步记录离线复放旧False/新rtc_prefix启动True、最晚submit326 guard2；无新GPU重测。75相关通过，全量590passed/9skip/110subtests，backup archive/pre-rtc-submit-bound-20261027。原命令可重跑；高频质量超时需另分析，不能称Long成功。报告与原run/failure_replay_review.json保存证据。
+
 - 2026-10-27 用户授权接LIBERO-Long后测一个。M3 --trigger-suite支持libero_10 task0，两物体alphabet soup/tomato sauce入篮；max_steps520取本地OpenPI/LeRobot/FlashRT一致设置。M2默认三suite与正式baseline范围不改。Long无M1轨迹，compiled_environments用固定20步小幅移动/夹爪序列做XML/cache一致性，旧suite仍历史回放。73相关tests通过；无主模型GPU环境预检80dc3f19 passed，physics/state/pixels全0差、model_loads0/无调频。完整Long VLA未跑，待用户命令run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_10 --compare-device --no-age-limit（单任务高频/DVFS各1共2、1model）。完成后除质量能量与恢复还核对DVAC阈值是否真正激活。备份archive/pre-libero-long-20261027，报告/任务书已补，FlashRT未改。
 
 - 2026-10-27 用户无age Spatial配对525ad217 completed：1model/1expert，高频a76c2cf7和DVFS c7ec3a8c均77step success/0underflow，初始物理/frame/state哈希精确一致。时间5.669/5.931s，整任务能量70.475/63.858J，低9.39%但时间高4.63%；原始积分全覆盖复算/系统审计通过，DVFS推理高频/低频采样及最终RESTORED通过。age确为null，最大实际年龄3.701/3.917s，用到第48/49动作；请求origin40/41、commit48/49，仅2次预测。关键归因：bootstrap未采去噪轨迹，首guided仅warmup，因此本次阈值激活0，只有buffer触发，不能宣称DVAC触发收益；验证的是长动作覆盖/RTC/调频。报告/CSV/复算已补；下一步较长Object/Goal无age对照检查信号参与，故障/正式长测仍待做。本次仅离线审核无新GPU/代码或默认变更。

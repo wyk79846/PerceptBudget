@@ -538,8 +538,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
             if scheduler is not None:
+                rtc_delay=delay_queue.estimate if delay_queue is not None else None
+                if config.get('rtc_fixed_delay_estimate') is not None:
+                    rtc_delay=config['rtc_fixed_delay_estimate']
                 decision = scheduler.decide(now=time.monotonic(),step=step,queue=queue,
-                                            rows=rows,inflight=future is not None)
+                                            rows=rows,inflight=future is not None,rtc_delay_steps=rtc_delay)
                 decision = scheduler.control_clocks(decision,inflight=future is not None)
                 due = decision['start_now'] and future is None and step-previous_request_step >= q
                 base._trace(stream, 'm3_decision', step=step, **decision)

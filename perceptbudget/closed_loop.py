@@ -2,6 +2,7 @@
 import json
 import hashlib
 import os
+import math
 from pathlib import Path
 from contextlib import contextmanager
 from unittest.mock import patch
@@ -98,6 +99,7 @@ class DeadlineRuntime:
             self.times.observe('recovery',seconds)
         self.margin = SafetyMargin(initial=self.settings['safety_margin_seconds'])
         self.initial_period = config['rtc_initial_control_period_seconds']
+        self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
         self.covered_events = []
         self.mode = config['m3_scheduler_mode']
@@ -157,7 +159,7 @@ class DeadlineRuntime:
         return (step < chunk['origin']+self.settings['maximum_action_offset'] and
                 (age_limit is None or now < chunk['observation']+age_limit))
 
-    def decide(self, *, now, step, queue, rows, inflight):
+    def decide(self, *, now, step, queue, rows, inflight, rtc_delay_steps=None):
         item = queue.get(step)
         intervals = [b['action_start_monotonic']-a['action_start_monotonic']
                      for a,b in zip(rows[-17:], rows[-16:])] if len(rows)>=17 else [
@@ -180,6 +182,18 @@ class DeadlineRuntime:
             dvac_step=current.get('dvac_step') if current else None,
             observation_deadline=current['observation']+age_limit if current and age_limit is not None else None,
             service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds)
+        rtc_latest_submit=None
+        rtc_guard_steps=None
+        rtc_latest_start=None
+        if not inflight and current is not None and rtc_delay_steps is not None:
+            if (type(rtc_delay_steps) is not int or self.horizon is None
+                    or not 0<=rtc_delay_steps<=self.horizon):
+                raise ValueError('Invalid RTC step delay or missing model horizon')
+            rtc_latest_submit=current['origin']+self.horizon-rtc_delay_steps
+            # A LOW->HIGH acknowledgement is consumed on a later control tick.
+            # This is a submission constraint, separate from result arrival.
+            rtc_guard_steps=(1 if recovery else 0)+math.ceil(self.margin.seconds/period-1e-9)
+            rtc_latest_start=now+(rtc_latest_submit-step-rtc_guard_steps)*period
         self.plan = dict(asdict(plan), admitted_remaining_actions=end-step,
                          decision_monotonic=now,
                          estimated_control_period_seconds=period, critical_step=critical,
@@ -190,6 +204,11 @@ class DeadlineRuntime:
                          covered_event_count=len(self.covered_events),
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical}))
+        self.plan.update(rtc_delay_steps=rtc_delay_steps,rtc_latest_submit_step=rtc_latest_submit,
+                         rtc_submit_guard_steps=rtc_guard_steps,start_constraint='service_deadline')
+        if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
+            self.plan.update(latest_start=rtc_latest_start,wait_seconds=max(0.,rtc_latest_start-now),
+                             start_now=rtc_latest_start<=now,start_constraint='rtc_prefix')
         return self.plan
 
     def control_clocks(self, decision, *, inflight):

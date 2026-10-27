@@ -193,3 +193,29 @@ def test_no_age_cutoff_allows_full_horizon_but_retains_buffer_and_variance_deadl
     assert plan['reason']=='buffer' and plan['start_now'] and plan['admitted_remaining_actions']==10
     rt.chunks[0]['dvac_step']=43
     assert rt.decide(now=2.5,step=40,queue=queue,rows=[],inflight=False)['reason']=='denoising_variance'
+
+
+@pytest.mark.parametrize('recovering,step,expect_start',[(False,38,False),(False,39,True),(True,37,False),(True,38,True)])
+def test_rtc_prefix_bound_starts_before_discrete_overlap_is_too_short(recovering,step,expect_start):
+    from types import SimpleNamespace
+    from perceptbudget.closed_loop import DeadlineRuntime
+    config=dict(H=50,m3_scheduler_mode='deadline_dvfs',m3_dvac_enabled=True,m3_action_events_enabled=False,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.553]*20 for h in ('hot','short','long')},
+        m3_recovery_samples=[.634],rtc_initial_control_period_seconds=.064)
+    rt=DeadlineRuntime(config)
+    if recovering:rt.clocks=SimpleNamespace(profile='gpu_emc',pending=None)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    rt.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions),
+        dict(commit_step=0,commit_monotonic=.5))
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    plan=rt.decide(now=step*.064,step=step,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert plan['rtc_latest_submit_step']==40
+    assert plan['rtc_submit_guard_steps']==(2 if recovering else 1)
+    assert plan['start_now']==expect_start
+    if expect_start:assert plan['start_constraint']=='rtc_prefix'
+    # With the later-tick HIGH acknowledgement, the next submission still
+    # has >=10 old target steps. d must stay10, never clipped to fit s41.
+    if recovering and expect_start:
+        assert 50-(step+1)>=plan['rtc_delay_steps']
