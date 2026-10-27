@@ -248,6 +248,29 @@ def select_open_refresh_probe(requests, commits):
     return dict(selected,scope='Retrospective single-event intervention selected from this resident baseline; not an online classifier')
 
 
+def select_slowdown_refresh_probe(requests, commits):
+    """Retrospectively remove one slowdown hint, not a deployable skip rule."""
+    byorigin={q['observation_step']:q for q in requests}
+    committed={c['prediction_id']:c for c in commits}
+    for refresh in requests:
+        timing=refresh.get('m3_timing') or {}
+        if timing.get('reason')!='action_event' or timing.get('candidate_event_kinds')!=['slowdown']:
+            continue
+        old=byorigin.get(refresh.get('rtc_guidance',{}).get('old_chunk_origin_step'))
+        if old is None or old['prediction_id'] not in committed:
+            continue
+        source_commit=committed[old['prediction_id']]
+        target=timing['critical_step']
+        if not any(e['kind']=='slowdown' and old['observation_step']+e['offset']==target
+                   for e in detect_events(old['actions'],start_offset=source_commit['commit_step']-old['observation_step'])):
+            continue
+        return dict(prediction_id=old['prediction_id'],observation_step=old['observation_step'],
+            commit_step=source_commit['commit_step'],target_step=target,kind='slowdown',
+            baseline_refresh_prediction_id=refresh['prediction_id'],
+            scope='Retrospective first slowdown-triggered refresh ablation; no claim of an online skip rule')
+    return None
+
+
 def audit_open_probe_prefix(reference_run, candidate_run, plan):
     """Reject timing/input divergence before the planned intervention."""
     import numpy as np
@@ -269,7 +292,7 @@ def audit_open_probe_prefix(reference_run, candidate_run, plan):
     applied=[e['diagnostic_open_probe'] for e in traces[1] if e['event']=='m3_decision' and e.get('diagnostic_open_probe')]
     checks['planned_event_applied']=bool(applied) and all(
         x['prediction_id']==pid and x['target_step']==plan['target_step'] and x['commit_step']==step
-        and x['kind']=='gripper_open' for x in applied)
+        and x['kind']==plan['kind'] for x in applied)
     return dict(passed=all(checks.values()),checks=checks,predictions_compared=len(prefix[0]),
         controls_compared=len(controls[0]),scope='Exact inputs/actions/states before one retrospective intervention; no claim of a learned or general skip policy')
 

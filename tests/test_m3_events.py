@@ -97,6 +97,33 @@ def test_open_probe_absent_target_is_not_an_execution_error():
     assert select_open_refresh_probe([old,new,following],commits) is None
 
 
+def test_single_slowdown_probe_selects_real_refresh_and_retains_other_signals():
+    from perceptbudget.action_events import select_slowdown_refresh_probe
+    from perceptbudget.closed_loop import DeadlineRuntime
+    actions=[[1. if i<8 else .1,0.,0.,0.,0.,0.,-1. if i<12 else 1.] for i in range(20)]
+    old=dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions,dvac={'prefix_actions':16})
+    refresh=dict(prediction_id=1,observation_step=3,rtc_guidance={'old_chunk_origin_step':0},
+        m3_timing=dict(reason='action_event',critical_step=8,candidate_event_kinds=['slowdown']))
+    plan=select_slowdown_refresh_probe([old,refresh],[dict(prediction_id=0,commit_step=0)])
+    assert plan['prediction_id']==0 and plan['kind']=='slowdown' and plan['target_step']==8
+    cfg=dict(H=20,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,m3_open_probe_plan=plan,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=20,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(cfg)
+    runtime.committed(old,dict(commit_step=0,commit_monotonic=.1))
+    assert [e['kind'] for e in runtime.events]==['gripper_close']
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    decision=runtime.decide(now=0.,step=0,queue=queue,rows=[],inflight=False)
+    assert decision['critical_step']==12 and decision['dvac_step']==16
+    assert decision['diagnostic_open_probe']['kind']=='slowdown'
+    fresh=dict(old,prediction_id=1,observation_step=3)
+    runtime.committed(fresh,dict(commit_step=3,commit_monotonic=.3))
+    assert 'slowdown' in [e['kind'] for e in runtime.events]  # Only one source hint is removed.
+    refresh['m3_timing']['reason']='denoising_variance'
+    assert select_slowdown_refresh_probe([old,refresh],[dict(prediction_id=0,commit_step=0)]) is None
+
+
 def test_open_probe_selects_one_repeated_event_and_preserves_variance_deadline():
     from perceptbudget.closed_loop import DeadlineRuntime
     old,new,plan=open_probe_fixture()

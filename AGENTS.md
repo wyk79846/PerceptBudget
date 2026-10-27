@@ -301,3 +301,5 @@
 - 本轮清理前：Git分支`archive/pre-single-baseline-20261021`。
 - SEAM/硬前缀清理前：`archive/pre-m2-cleanup-20261021`。
 - 完整历史协作说明与旧README已迁入M1报告归档，旧指令不覆盖当前基线。
+
+- 2026-10-27新增单次减速提示对照候选events_and_variance_slowdown_probe，仅LIBERO-10 task4 DVFS两回合/单模型；回看本轮基线选第一次单独slowdown触发的刷新，候选仅删除源chunk一条提示，去噪/夹爪/后续减速/RTC保护保留。复用open_probe_plan及前缀审核（现按plan.kind支持slowdown），无目标显式skip不当失败，干预前差异判invalid。默认取早未改；FlashRT未改，固定成功算法补丁仅外部提案未应用。离线8条取早成功记录（含重复task1/2/3/4）夹爪close15/open8、slowdown5/turn0，task0排除；报告任务产出/perceptbudget/M3/20261027-event-refresh-review/review.md。尚未运行新闭环，禁止声称节能有效。备份archive/pre-m3-single-slowdown-probe-20261027。

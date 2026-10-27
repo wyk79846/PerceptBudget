@@ -144,7 +144,8 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
 
 
 @pytest.mark.parametrize('reason',['no_comparable_open_event','unexplained_missing_episode'])
-def test_open_probe_no_target_completes_but_other_missing_episodes_fail(tmp_path,reason):
+@pytest.mark.parametrize('slowdown',[False,True])
+def test_open_probe_no_target_completes_but_other_missing_episodes_fail(tmp_path,reason,slowdown):
     import json
     from pathlib import Path
     from scripts.run_m3 import main
@@ -152,18 +153,22 @@ def test_open_probe_no_target_completes_but_other_missing_episodes_fail(tmp_path
     cfg=load_config(repo_root=Path(__file__).resolve().parents[1]);cfg['output_root']=str(tmp_path)
     run=tmp_path/'M3'/'probe';run.mkdir(parents=True)
     (run/'run.json').write_text(json.dumps({'status':'created'}))
+    strategy='events_and_variance_slowdown_probe' if slowdown else 'events_and_variance_open_probe'
+    accepted_reason='no_slowdown_refresh' if slowdown else 'no_comparable_open_event'
+    if reason=='no_comparable_open_event':reason=accepted_reason
     result=dict(status='completed',diagnostic_status='not_applicable',
         episodes=[dict(view='events_and_variance',audit_passed=True)],
-        skipped_episodes=[dict(view='events_and_variance_open_probe',reason_code=reason)])
+        skipped_episodes=[dict(view=strategy,reason_code=reason)])
     def worker(command,log):
         (run/'summary.json').write_text(json.dumps(result))
         return 0
-    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_object',
-        '--strategies','events_and_variance','events_and_variance_open_probe','--device-dvfs','--no-age-limit']), \
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10' if slowdown else 'libero_object',
+        '--trigger-task-id','4' if slowdown else '0',
+        '--strategies','events_and_variance',strategy,'--device-dvfs','--no-age-limit']), \
          patch('perceptbudget.experiment.load_config',return_value=cfg), \
          patch('perceptbudget.experiment.create_run',return_value=run), \
          patch('subprocess.run'),patch('perceptbudget.closed_loop.clock_preflight'), \
          patch('scripts.profile_clock_screen.monitored_worker',side_effect=worker):
-        if reason=='no_comparable_open_event':assert main()==0
+        if reason==accepted_reason:assert main()==0
         else:
             with pytest.raises(RuntimeError,match='Incomplete'):main()

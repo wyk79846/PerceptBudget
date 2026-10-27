@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--trigger-task-id', type=int, choices=range(10), default=0)
     parser.add_argument('--static-q', type=int, choices=(5,10,20,30,40), help='Pair one fixed-q high-frequency baseline with variance-only DVFS')
     parser.add_argument('--compare-event-dedup', action='store_true', help='Resident before/after event deduplication pair with exact bootstrap audit')
-    parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn'))
+    parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
     parser.add_argument('--no-age-limit', action='store_true', help='Disable the fixed observation-age cutoff for trigger-comparison')
@@ -35,6 +35,10 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if 'events_and_variance_slowdown_probe' in (args.strategies or []) and (
+            args.mode!='trigger-comparison' or args.trigger_suite!='libero_10' or args.trigger_task_id!=4
+            or not args.device_dvfs or args.compare_device or args.compare_event_dedup or args.static_q is not None):
+        parser.error('Single slowdown probe requires the LIBERO-10 task4 DVFS pair')
     if 'events_and_variance_open_probe' in (args.strategies or []) and (
             args.mode!='trigger-comparison' or args.trigger_suite!='libero_object' or args.trigger_task_id!=0
             or not args.device_dvfs or args.compare_device or args.compare_event_dedup or args.static_q is not None):
@@ -103,8 +107,8 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
-            exact_bootstrap_pair=args.compare_event_dedup or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn')),
-            exact_preintervention_prefix='events_and_variance_open_probe' in (args.strategies or []), H=50, N=5, state=True,
+            exact_bootstrap_pair=args.compare_event_dedup or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe')),
+            exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
@@ -176,12 +180,13 @@ def main():
                     raise RuntimeError(f'Recording worker exit{code}; {tail}')
                 result = json.loads((run/'summary.json').read_text())
                 skipped=result.get('skipped_episodes',[])
-                no_target_probe=(args.strategies==['events_and_variance','events_and_variance_open_probe']
+                probe_strategy=(args.strategies or [None])[-1]
+                no_target_probe=(args.strategies in (['events_and_variance','events_and_variance_open_probe'],['events_and_variance','events_and_variance_slowdown_probe'])
                     and result.get('diagnostic_status')=='not_applicable'
                     and len(result.get('episodes',[]))==1 and result['episodes'][0].get('view')=='events_and_variance'
                     and result['episodes'][0].get('audit_passed') is True
-                    and len(skipped)==1 and skipped[0].get('view')=='events_and_variance_open_probe'
-                    and skipped[0].get('reason_code')=='no_comparable_open_event')
+                    and len(skipped)==1 and skipped[0].get('view')==probe_strategy
+                    and skipped[0].get('reason_code')==('no_slowdown_refresh' if probe_strategy=='events_and_variance_slowdown_probe' else 'no_comparable_open_event'))
                 if result['status'] != 'completed' or (args.mode not in ('dvac-probe','dvac-validate') and
                         len(result.get('episodes', [])) != len(settings['calibration_tasks'])*variants_per_task and not no_target_probe):
                     raise RuntimeError('Incomplete M3 recording session')

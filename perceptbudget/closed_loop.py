@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -65,6 +65,10 @@ def comparison_variants(config):
                 tuple(variants)!=('events_and_variance','events_and_variance_no_turn')
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('No-turn experiment requires one baseline/candidate resident pair')
+        if 'events_and_variance_slowdown_probe' in variants and (
+                tuple(variants)!=('events_and_variance','events_and_variance_slowdown_probe')
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('Slowdown probe requires one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
@@ -200,8 +204,8 @@ class DeadlineRuntime:
                        if not (self.ignore_turn and e['kind']=='turn')] if self.action_events_enabled else []
         if self.open_probe is not None and pid==self.open_probe['prediction_id']:
             plan=self.open_probe
-            matches=[e for e in self.events if e['kind']=='gripper_open' and e['target_step']==plan['target_step']]
-            if (self.open_probe_applied is not None or plan['kind']!='gripper_open'
+            matches=[e for e in self.events if e['kind']==plan['kind'] and e['target_step']==plan['target_step']]
+            if (self.open_probe_applied is not None or plan['kind'] not in ('gripper_open','slowdown')
                     or origin!=plan['observation_step'] or commit['commit_step']!=plan['commit_step'] or len(matches)!=1):
                 raise RuntimeError('Open probe context changed before intervention; do not count as task failure')
             self.events=[e for e in self.events if e is not matches[0]]
