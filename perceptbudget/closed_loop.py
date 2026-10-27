@@ -41,7 +41,7 @@ def comparison_variants(config):
         variants=config.get('m3_trigger_variants') or ('events_only','variance_only','events_and_variance')
         repeats=config.get('m3_trigger_repeats',1)
         if (not variants or len(set(variants))!=len(variants) or
-                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest') for v in variants)
+                any(v not in ('events_only','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
         if 'events_and_variance_hold3' in variants and (
@@ -61,6 +61,10 @@ def comparison_variants(config):
                     ('variance_only','events_and_variance','events_and_variance_latest'))
                 or repeats!=1 or config.get('m3_device_comparison')):
             raise ValueError('Latest-signal experiment requires the mixed pair, optionally preceded by variance_only')
+        if 'events_and_variance_no_turn' in variants and (
+                tuple(variants)!=('events_and_variance','events_and_variance_no_turn')
+                or repeats!=1 or config.get('m3_device_comparison')):
+            raise ValueError('No-turn experiment requires one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
         if config.get('m3_device_comparison'):
@@ -160,6 +164,7 @@ class DeadlineRuntime:
             raise ValueError('Unknown signal combination policy')
         self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
         self.action_events_enabled = bool(config.get('m3_action_events_enabled',True))
+        self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.clocks = None
         self.recovering_plan = None
 
@@ -191,7 +196,8 @@ class DeadlineRuntime:
         self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
         self.events = [dict(e, target_step=origin+e['offset'], prediction_id=pid)
                        for e in detect_events(request['actions'], self.events_config,
-                           start_offset=max(0,commit['commit_step']-origin))] if self.action_events_enabled else []
+                           start_offset=max(0,commit['commit_step']-origin))
+                       if not (self.ignore_turn and e['kind']=='turn')] if self.action_events_enabled else []
         if self.open_probe is not None and pid==self.open_probe['prediction_id']:
             plan=self.open_probe
             matches=[e for e in self.events if e['kind']=='gripper_open' and e['target_step']==plan['target_step']]

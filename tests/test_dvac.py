@@ -307,3 +307,15 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
     launch.assert_not_called()
     with pytest.raises(ValueError):
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
+
+
+def test_no_turn_pair_runs_long_task_with_one_model(capsys):
+    from scripts.run_m3 import main
+    strategies=['events_and_variance','events_and_variance_no_turn']
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10','--trigger-task-id','2',
+        '--strategies',*strategies,'--device-dvfs','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['tasks']==[['libero_10',2]] and plan['signal_policies']==['earliest']
+    launch.assert_not_called()

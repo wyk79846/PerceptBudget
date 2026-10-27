@@ -175,6 +175,26 @@ def test_later_signal_retains_discrete_rtc_submission_guard():
     assert plan['rtc_submit_guard_steps']==2
 
 
+def test_no_turn_candidate_preserves_other_events_and_variance(monkeypatch):
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    monkeypatch.setattr('perceptbudget.closed_loop.detect_events',lambda *a,**kw: [
+        dict(kind='turn',offset=10),dict(kind='slowdown',offset=20),dict(kind='gripper_close',offset=30)])
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    req=dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions,dvac={'prefix_actions':25})
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    for ignore,expected in ((False,10),(True,20)):
+        rt=DeadlineRuntime(dict(cfg,m3_ignore_turn=ignore))
+        rt.committed(req,dict(commit_step=0,commit_monotonic=.1))
+        plan=rt.decide(now=0.,step=0,queue=queue,rows=[],inflight=False)
+        assert plan['critical_step']==expected and plan['dvac_step']==25
+        assert plan['signal_policy']=='earliest'
+        assert 'gripper_close' in [e['kind'] for e in rt.events]
+
+
 def test_later_signal_remembers_passed_first_event_instead_of_chasing_next_event():
     from perceptbudget.closed_loop import DeadlineRuntime
     cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_signal_policy='latest',m3_dvac_enabled=True,
