@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 三组消融c5e80dd5 completed：同模型1次加载，两个bootstrap比较全部精确相同，机制一/去噪启用状态核对正确，均成功/0gap/审计通过/功率全覆盖/RESTORED。旧混合15d4935e 233步/13.795s/196.439J/10pred；去重混合ef29682d 239步/14.098s/196.839J/10pred；仅去噪70d924ab 253步/14.979s/188.476J/8pred。旧混合较仅去噪快7.90%、能量高4.22%；去重未减少总预测，较旧混合能量+0.20%、时间+2.19%，未显示净收益。原始对照postrun_review.json。仅task1各1回合，不能外推总体成功率；本次未改默认代码或参数。
+
 - 2026-10-27 用户要求加仅去噪消融。现有--compare-event-dedup接受--strategies events_and_variance variance_only，生成旧混合event_only/新混合shared_refresh/variance_only三回合同task1、1model/1expert；第三组禁用机制一，保留去噪与相同调频/50ms余量。bootstrap gate扩展逐组对参考严格检查，第三组差异也会判invalid；134相关tests通过，dryrun3episodes。backup archive/pre-variance-only-ablation-20261027。尚未GPU执行，需用户终端sudo；不能直接拼接上次另一模型加载的仅去噪结果冒充同内核消融。
 
 - 2026-10-27 同模型去重配对636c3ce2 completed：严格bootstrap全相等，前5份预测raw全相等，执行动作135步才因126步刷新保留/抑制而分叉。旧event_only dba90909 success233/13.907s/196.813J/10pred；新shared_refresh 5b0f436b success244/14.519s/204.022J/10pred。均0gap/审核通过/RESTORED/功率全覆盖。去重减少事件触发4→2，却使去噪触发1→4，总预测仍10、耗时+4.41%、能量+3.66%，未证明净收益。126～129确实抑制同松爪事件；事件前二次观察可能有用，不能单凭同类事件判定刷新多余。证据postrun_review.json保存；本轮只读审核及文档，无生产默认切换，代码仍shared_refresh默认，旧event_only只作显式配对参考；不称新规则已成为最终有效优化。
