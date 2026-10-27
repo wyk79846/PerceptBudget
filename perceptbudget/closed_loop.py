@@ -1,4 +1,4 @@
-"""M3 session orchestration; stage one only records the existing Full policy."""
+"""M3 recording and Full/Continue refresh scheduling."""
 import json
 import hashlib
 import os
@@ -26,6 +26,14 @@ def load_settings(path):
     return settings
 
 
+def comparison_variants(config):
+    if config.get('m3_trigger_comparison'):
+        return ('events_only','variance_only','events_and_variance')
+    if config.get('m3_dvac_horizon_comparison'):
+        return ('dvac_h20','dvac_h50')
+    return ('deadline_high','dvac_high')
+
+
 def recording_session(config, settings, directory, cleanup_gate):
     from perceptbudget.device_quality import resident_quality
     cfg = dict(config, m3_events=settings['events'])
@@ -37,6 +45,7 @@ def recording_session(config, settings, directory, cleanup_gate):
     if settings.get('dvac_paired'):
         cfg['m3_dvac_comparison']=True
         cfg['m3_dvac_horizon_comparison']=bool(settings.get('dvac_horizon_paired'))
+        cfg['m3_trigger_comparison']=bool(settings.get('trigger_comparison'))
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
@@ -48,14 +57,13 @@ def recording_session(config, settings, directory, cleanup_gate):
     result['policy_changed'] = result['mode'] != 'record_only'
     result['clocks_changed'] = result['mode'] == 'deadline_dvfs'
     if settings.get('dvac_paired'):
-        result['comparison'] = (['dvac_h20','dvac_h50'] if settings.get('dvac_horizon_paired')
-                                else ['deadline_high','dvac_high'])
+        result['comparison'] = list(comparison_variants(cfg))
     _write_json_atomically(Path(directory)/'summary.json', result)
     return result
 
 
 class DeadlineRuntime:
-    """High-frequency first loop: task hints select time, RTC selects alignment."""
+    """Action hints and denoising variance select time; RTC owns alignment."""
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.events_config = EventConfig(**config['m3_events'])
@@ -67,6 +75,7 @@ class DeadlineRuntime:
         self.covered_events = []
         self.mode = config['m3_scheduler_mode']
         self.dvac_enabled = bool(config.get('m3_dvac_enabled'))
+        self.action_events_enabled = bool(config.get('m3_action_events_enabled',True))
         self.clocks = None
         self.recovering_plan = None
 
@@ -97,7 +106,7 @@ class DeadlineRuntime:
         self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
         self.events = [dict(e, target_step=origin+e['offset'], prediction_id=pid)
                        for e in detect_events(request['actions'], self.events_config,
-                           start_offset=max(0,commit['commit_step']-origin))]
+                           start_offset=max(0,commit['commit_step']-origin))] if self.action_events_enabled else []
         timing = request.get('m3_timing')
         if timing:
             service_start = timing.get('service_start_monotonic',request['observation_monotonic'])
@@ -146,6 +155,7 @@ class DeadlineRuntime:
                          decision_monotonic=now,
                          estimated_control_period_seconds=period, critical_step=critical,
                          dvac_step=current.get('dvac_step') if current else None,
+                         action_events_enabled=self.action_events_enabled, dvac_enabled=self.dvac_enabled,
                          inflight=inflight, path='low_continue_recovery' if recovery else 'high_frequency',
                          current_profile=self.clocks.profile if self.clocks else 'baseline',
                          covered_event_count=len(self.covered_events),

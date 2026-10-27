@@ -326,8 +326,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 if visual_comparison:
                     views=('full',visual_fast_mode+'_alternate')
                 if dvac_paired:
-                    views=(('dvac_h20','dvac_h50') if cfg.get('m3_dvac_horizon_comparison')
-                           else ('deadline_high','dvac_high'))
+                    from perceptbudget.closed_loop import comparison_variants
+                    views=comparison_variants(cfg)
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -452,6 +452,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg['m2_view'] = current_view
                     if dvac_paired:
                         child_cfg['m3_dvac_enabled']=view!='deadline_high'
+                        if cfg.get('m3_trigger_comparison'):
+                            child_cfg['m3_dvac_enabled']=view!='events_only'
+                            child_cfg['m3_action_events_enabled']=view!='variance_only'
                         if cfg.get('m3_dvac_horizon_comparison'):
                             child_cfg['m3_timing']['maximum_action_offset']=20 if view=='dvac_h20' else cfg['H']
                     if recompute_comparison:

@@ -133,3 +133,28 @@ def test_h50_starts_before_end_and_earlier_limits_still_win():
     assert timing_plan(**args,critical_step=20).reason=='action_event'
     assert timing_plan(**args,dvac_step=15).reason=='denoising_variance'
     assert timing_plan(**args,observation_deadline=12.).reason=='observation_age'
+
+
+@pytest.mark.parametrize('events,dvac,event_step,expected_reason,expected_target',[
+    (True,False,16,'action_event',16),
+    (False,True,16,'denoising_variance',12),
+    (True,True,16,'denoising_variance',12),
+    (True,True,8,'action_event',8),
+])
+def test_three_trigger_strategies_select_enabled_earliest_boundary(events,dvac,event_step,expected_reason,expected_target):
+    from perceptbudget.closed_loop import DeadlineRuntime
+    config=dict(m3_scheduler_mode='deadline_high',m3_dvac_enabled=dvac,m3_action_events_enabled=events,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=2.,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(config)
+    actions=[[1.,0.,0.,0.,0.,0.,-1. if i<event_step else 1.] for i in range(50)]
+    req=dict(prediction_id=0,observation_step=0,observation_monotonic=10.,actions=actions,
+        dvac=dict(prefix_actions=12))
+    runtime.committed(req,dict(commit_step=0,commit_monotonic=10.))
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    plan=runtime.decide(now=10.,step=0,queue=queue,rows=[],inflight=False)
+    assert plan['reason']==expected_reason
+    assert plan['deadline']==pytest.approx(10.+expected_target*.05)
+    assert plan['action_events_enabled']==events and plan['dvac_enabled']==dvac
+    assert plan['admitted_remaining_actions']==50

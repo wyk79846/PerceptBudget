@@ -17,7 +17,7 @@ def main():
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'analyze'), default='record-only')
+    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'analyze'), default='record-only')
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
@@ -32,6 +32,10 @@ def main():
     if args.mode in ('dvac-paired','dvac-horizon-paired'):
         settings=dict(settings,mode='deadline_high',dvac_paired=True,
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
+    if args.mode=='trigger-comparison':
+        settings=dict(settings,mode='deadline_high',dvac_paired=True,trigger_comparison=True,
+            timing=dict(settings['timing'],maximum_action_offset=50))
+    variants_per_task=3 if settings.get('trigger_comparison') else 2 if settings.get('dvac_paired') else 1
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
     if args.mode == 'analyze' and (not args.source_run or args.worker):
@@ -52,8 +56,8 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, H=50, N=5, state=True,
-            episodes=len(settings['calibration_tasks'])*(2 if settings.get('dvac_paired') else 1),
-            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired'), clocks_changed=args.mode=='deadline-dvfs',
+            episodes=len(settings['calibration_tasks'])*variants_per_task,
+            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=args.mode=='deadline-dvfs',
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
             maximum_observation_age_seconds=settings['timing']['maximum_observation_age_seconds'],
             event_thresholds=settings['events']), ensure_ascii=False))
@@ -103,7 +107,7 @@ def main():
                     raise RuntimeError(f'Recording worker exit{code}; {tail}')
                 result = json.loads((run/'summary.json').read_text())
                 if result['status'] != 'completed' or (args.mode not in ('dvac-probe','dvac-validate') and
-                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])*(2 if settings.get('dvac_paired') else 1)):
+                        len(result.get('episodes', [])) != len(settings['calibration_tasks'])*variants_per_task):
                     raise RuntimeError('Incomplete M3 recording session')
     except BaseException as exc:
         result = dict(status='invalid', mode=args.mode, error=f'{type(exc).__name__}: {exc}')

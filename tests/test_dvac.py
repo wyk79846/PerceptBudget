@@ -105,3 +105,16 @@ def test_horizon_paired_plan_keeps_model_h50_and_changes_only_offset_candidate(c
     assert plan['maximum_observation_age_seconds']==2.
     assert not plan['clocks_changed']
     launch.assert_not_called()
+
+
+def test_three_strategy_plan_declares_nine_episodes_h50_and_one_model(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    assert comparison_variants({'m3_trigger_comparison':True})==('events_only','variance_only','events_and_variance')
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==9 and plan['model_loads']==1
+    assert plan['H']==50 and plan['N']==5 and plan['state']
+    assert plan['action_offset_limits']==[50] and not plan['clocks_changed']
+    launch.assert_not_called()
