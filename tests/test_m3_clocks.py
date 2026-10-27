@@ -120,7 +120,7 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
         order.append('worker');commands.append(command)
         (run/'summary.json').write_text(json.dumps({'status':'completed','episodes':[{}, {}, {}]}))
         return 0
-    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only','--device-dvfs']), \
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only','--device-dvfs','--no-age-limit']), \
          patch('perceptbudget.experiment.load_config',return_value=cfg), \
          patch('perceptbudget.experiment.create_run',return_value=run), \
          patch('subprocess.run') as sudo, \
@@ -130,6 +130,6 @@ def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path
     sudo.assert_called_once_with(['sudo','-v'],check=True)
     assert order==['preflight','worker']
     command=commands[0]
-    assert command[0]==cfg['python_executable'] and '--device-dvfs' in command
+    assert command[0]==cfg['python_executable'] and '--device-dvfs' in command and '--no-age-limit' in command
     assert command[command.index('--strategies')+1]=='variance_only'
     assert not any('guarded_run.py' in part for part in command)

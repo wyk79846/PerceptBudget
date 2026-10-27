@@ -137,3 +137,15 @@ def test_system_audit_rejects_injected_mistakes(tmp_path,change,expected):
     report=audit(tmp_path)
     assert not report['passed']
     assert expected in [x['check'] for x in report['failures']]
+
+
+def test_dynamic_audit_accepts_disabled_age_cutoff_with_finite_chunk_limit(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_scheduler_mode='deadline_high',
+        m3_timing={'maximum_action_offset':25,'maximum_observation_age_seconds':None})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    decision=dict(step=5,start_now=True,inflight=False,deadline=51.,latest_start=50.,
+                  service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='buffer')
+    events.append(dict(event='m3_decision',**decision));requests[1]['m3_timing']=dict(decision);save()
+    assert audit(tmp_path)['passed']

@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
+    parser.add_argument('--no-age-limit', action='store_true', help='Disable the fixed observation-age cutoff for trigger-comparison')
     parser.add_argument('--source-run', type=Path, nargs='+')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -32,6 +33,8 @@ def main():
     args = parser.parse_args()
     if args.device_dvfs and args.mode!='trigger-comparison':
         parser.error('--device-dvfs requires --mode trigger-comparison')
+    if args.no_age_limit and args.mode!='trigger-comparison':
+        parser.error('--no-age-limit requires --mode trigger-comparison')
     settings = load_settings(args.settings)
     if args.mode in ('deadline-high','deadline-dvfs'):
         settings = dict(settings, mode=args.mode.replace('-','_'), calibration_tasks=[[args.suite,0]])
@@ -44,6 +47,8 @@ def main():
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
             settings['calibration_tasks']=[[args.trigger_suite,0]]
+        if args.no_age_limit:
+            settings['timing']['maximum_observation_age_seconds']=None
         from perceptbudget.closed_loop import comparison_variants
         try:
             variants_per_task=len(comparison_variants(dict(m3_trigger_comparison=True,
@@ -117,6 +122,8 @@ def main():
                     command += ['--repeats',str(args.repeats)]
                     if args.device_dvfs:
                         command += ['--device-dvfs']
+                    if args.no_age_limit:
+                        command += ['--no-age-limit']
                     if args.trigger_suite:
                         command += ['--trigger-suite',args.trigger_suite]
                     if args.strategies:

@@ -149,8 +149,9 @@ class DeadlineRuntime:
         if item is None:
             return False
         chunk = self.chunks[item[1]]
+        age_limit=self.settings['maximum_observation_age_seconds']
         return (step < chunk['origin']+self.settings['maximum_action_offset'] and
-                now < chunk['observation']+self.settings['maximum_observation_age_seconds'])
+                (age_limit is None or now < chunk['observation']+age_limit))
 
     def decide(self, *, now, step, queue, rows, inflight):
         item = queue.get(step)
@@ -169,10 +170,11 @@ class DeadlineRuntime:
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
         critical = min((e['target_step'] for e in candidates), default=None)
         recovery = self.clocks is not None and (self.clocks.profile!='baseline' or self.clocks.pending is not None)
+        age_limit=self.settings['maximum_observation_age_seconds']
         plan = timing_plan(now=now,step=step,buffer_end_step=end,period=period,
             critical_step=critical,
             dvac_step=current.get('dvac_step') if current else None,
-            observation_deadline=current['observation']+self.settings['maximum_observation_age_seconds'] if current else None,
+            observation_deadline=current['observation']+age_limit if current and age_limit is not None else None,
             service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds)
         self.plan = dict(asdict(plan), admitted_remaining_actions=end-step,
                          decision_monotonic=now,

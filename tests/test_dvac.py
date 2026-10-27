@@ -134,3 +134,13 @@ def test_goal_two_strategy_repeats_are_six_distinct_resident_episodes(capsys):
     assert plan['episodes']==6 and plan['tasks']==[['libero_goal',0]]
     assert plan['model_loads']==1 and plan['action_offset_limits']==[50]
     launch.assert_not_called()
+
+
+def test_no_age_limit_dry_run_is_explicit_and_does_not_change_default(capsys):
+    from scripts.run_m3 import main
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only',
+                           '--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['maximum_observation_age_seconds'] is None and plan['action_offset_limits']==[50]
+    launch.assert_not_called()

@@ -174,3 +174,22 @@ def test_measured_recovery_history_is_available_before_first_live_request():
         service_seconds=runtime.times.estimate('recovery'),margin_seconds=.05)
     assert old.latest_start-calibrated.latest_start==pytest.approx(.081)
     assert runtime.margin.seconds==.05
+
+
+def test_no_age_cutoff_allows_full_horizon_but_retains_buffer_and_variance_deadlines():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    config=dict(m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,m3_action_events_enabled=False,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    rt=DeadlineRuntime(config)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    req=dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions,dvac={'prefix_actions':50})
+    rt.committed(req,dict(commit_step=0,commit_monotonic=0.5))
+    queue={i:(a,0,0,i) for i,a in enumerate(actions)}
+    assert rt.admitted(queue[49],49,3.)
+    assert not rt.admitted((actions[0],0,0,50),50,3.)
+    plan=rt.decide(now=2.5,step=40,queue=queue,rows=[],inflight=False)
+    assert plan['reason']=='buffer' and plan['start_now'] and plan['admitted_remaining_actions']==10
+    rt.chunks[0]['dvac_step']=43
+    assert rt.decide(now=2.5,step=40,queue=queue,rows=[],inflight=False)['reason']=='denoising_variance'

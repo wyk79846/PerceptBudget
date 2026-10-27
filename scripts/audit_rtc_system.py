@@ -37,6 +37,7 @@ def audit(run):
     controls=[r for r in events if r['event']=='control_step']
     commits=[r for r in events if r['event']=='prediction_committed']
     m3=cfg.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs')
+    age_limit=cfg['m3_timing']['maximum_observation_age_seconds'] if m3 else None
     decisions={r['step']:r for r in events if r['event']=='m3_decision'}
     by_step={r['step']:r for r in controls}
     by_id={r['prediction_id']:r for r in requests}
@@ -185,8 +186,8 @@ def audit(run):
                 source=by_step[step]['source']
                 old=by_id[previous['prediction_id']]
                 limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
-                exhausted=(step>=old['observation_step']+limit or (m3 and
-                    by_step[step]['action_start_monotonic']>=old['observation_monotonic']+cfg['m3_timing']['maximum_observation_age_seconds']))
+                exhausted=(step>=old['observation_step']+limit or (age_limit is not None and
+                    by_step[step]['action_start_monotonic']>=old['observation_monotonic']+age_limit))
                 check('old_actions_during_inference',source is None if exhausted else
                       source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
@@ -206,8 +207,8 @@ def audit(run):
             check('sequential_action_timestamps',by_step[step-1]['action_end_monotonic']<=row['tick_monotonic'],step)
         check('commit_before_action',active['commit_monotonic']<=row['action_start_monotonic'],step)
         limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
-        if offset>=limit or (m3 and row['action_start_monotonic']>=
-                request['observation_monotonic']+cfg['m3_timing']['maximum_observation_age_seconds']):
+        if offset>=limit or (age_limit is not None and row['action_start_monotonic']>=
+                request['observation_monotonic']+age_limit):
             underflows.append(step)
             check('exhausted_chunk_zero_underflow',row['source'] is None
                   and eq(row['action'],np.zeros(7)) and row['applied_arm_gain']==1
