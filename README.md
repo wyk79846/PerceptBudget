@@ -111,3 +111,5 @@ H50范围的新实验使用`--no-age-limit`关闭未标定的2秒硬截断；H50
 无2秒限制的Spatial配对复测入口已准备：`run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_spatial --compare-device --no-age-limit`。两侧同H50、仅去噪、age=null，先高频后动态调频，共2回合/1model，需用户终端sudo。相关检查通过，尚未实际运行；结果将继续归入外部M3目录。
 
 无age Spatial同模型配对525ad217已审核：高频/DVFS均77步成功、0欠载，能量70.475/63.858J（低9.39%），时间5.669/5.931秒（高4.63%）。实际用到第48/49步、观测年龄超过3秒，硬截断确已关闭。该短回合仅两次预测，去噪阈值尚未激活；不能将收益归因于DVAC触发。原始功率/频率/恢复检查通过，详细结果在外部M3/20261027T052255.735779Z-trigger-comparison-525ad217。
+
+LIBERO-Long已接入M3可选校准：`--trigger-suite libero_10`选择task0（两个物体依次入篮），520步上限与本地OpenPI/FlashRT一致。原三集合默认范围不变，73项相关检查和无主模型环境/图像预检通过；完整模型测试尚未运行。将上面的无年龄高频/DVFS配对命令的suite替换为libero_10即可，两回合共用一次模型；需检查去噪阈值实际激活情况。

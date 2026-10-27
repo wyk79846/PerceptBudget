@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
-    parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal'))
+    parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal','libero_10'))
     parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')

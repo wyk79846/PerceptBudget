@@ -158,3 +158,16 @@ def test_no_age_high_and_dvfs_pair_shares_one_model(capsys):
     assert plan['episodes']==2 and plan['model_loads']==1 and plan['clocks_changed']
     assert plan['tasks']==[['libero_spatial',0]] and plan['maximum_observation_age_seconds'] is None
     launch.assert_not_called()
+
+
+def test_long_task0_device_pair_plan_retains_default_three_suites(capsys):
+    from scripts.run_m3 import main
+    from scripts.eval_q import SUITE_MAX_STEPS
+    assert SUITE_MAX_STEPS['libero_10']==520
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only',
+        '--trigger-suite','libero_10','--compare-device','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['tasks']==[['libero_10',0]] and plan['episodes']==2 and plan['model_loads']==1
+    assert plan['maximum_observation_age_seconds'] is None and plan['H']==50
+    launch.assert_not_called()

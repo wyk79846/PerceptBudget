@@ -117,3 +117,13 @@ def test_dvfs_session_loads_measured_recovery_samples_before_resident_model(tmp_
     assert cfg['m3_recovery_calibration']['initial_estimate_seconds']==.634
     assert len(cfg['m3_recovery_calibration']['sha256'])==64
     assert result['clocks_changed'] and cfg['m3_service_samples']['hot']==[.553]*20
+
+
+def test_long_environment_parity_uses_fixed_controls_without_m1_quality_dependency():
+    from perceptbudget.closed_loop import environment_replay
+    actions,source=environment_replay('libero_10',0,{'cells':{}})
+    assert len(actions)==20 and all(len(a)==7 for a in actions)
+    assert max(abs(x) for a in actions for x in a[:6])==.02
+    assert {a[6] for a in actions}=={-1.,1.}
+    assert source=='fixed20-small-motion-cache-parity'
+    with pytest.raises(ValueError):environment_replay('libero_spatial',0,{'cells':{}})

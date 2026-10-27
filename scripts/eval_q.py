@@ -31,7 +31,8 @@ from perceptbudget.power import PowerMonitor
 
 CONTROL_FREQ_HZ = 20
 MAX_STEPS = 220
-SUITE_MAX_STEPS = {"libero_spatial": 220, "libero_object": 280, "libero_goal": 300}
+SUITE_MAX_STEPS = {"libero_spatial": 220, "libero_object": 280, "libero_goal": 300,
+                   "libero_10": 520}  # Matches local OpenPI and FlashRT LIBERO evaluators.
 SETTLE_STEPS = 10
 RENDER_GPU_DEVICE_ID = -1
 INIT_STATE_INDEX = 0

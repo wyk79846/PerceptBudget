@@ -18,7 +18,7 @@ def load_settings(path):
     if settings['mode'] not in ('record_only','deadline_high','deadline_dvfs') or settings['q'] != 5:
         raise ValueError('Stage one records the unchanged q5 Full policy')
     tasks = settings['calibration_tasks']
-    allowed = {'libero_spatial', 'libero_object', 'libero_goal'}
+    allowed = {'libero_spatial', 'libero_object', 'libero_goal', 'libero_10'}
     if not tasks or len({tuple(t) for t in tasks}) != len(tasks) or any(
             len(t) != 2 or t[0] not in allowed or t[1] != 0 for t in tasks):
         raise ValueError('Use distinct suite/task0 calibration tasks')
@@ -316,6 +316,29 @@ def clock_preflight(directory):
     return result
 
 
+def environment_replay(suite, tid, index):
+    """Fixed controls for XML/cache parity only; never used as policy actions."""
+    entry=index['cells'].get(f'{suite}_task{tid:02d}_q5_actual_history')
+    if entry is None:
+        if suite!='libero_10':
+            raise ValueError('Missing historical preflight source for '+suite)
+        actions=[[x,y,0.,0.,0.,0.,-1. if block<2 else 1.]
+                 for block,(x,y) in enumerate(((.02,0.),(0.,.02),(-.02,0.),(0.,-.02)))
+                 for _ in range(5)]
+        return actions,'fixed20-small-motion-cache-parity'
+    source=Path(entry['result']['run'])/'rtc/trace.jsonl'
+    actions=[]
+    with source.open() as stream:
+        for line in stream:
+            row=json.loads(line)
+            if row.get('event')=='control_step':
+                actions.append(row['action'])
+                if len(actions)==20:break
+    if len(actions)!=20:
+        raise ValueError('Incomplete environment preflight controls')
+    return actions,str(source)
+
+
 @contextmanager
 def compiled_environments(directory, tasks, config):
     """Compile and verify identical MuJoCo models before loading VLA weights.
@@ -369,15 +392,7 @@ def compiled_environments(directory, tasks, config):
         for suite, tid in tasks:
             task = base._load_tasks([tid], [suite])[0]
             captures = []
-            source = Path(index['cells'][f'{suite}_task{tid:02d}_q5_actual_history']['result']['run'])
-            replay = []
-            with (source/'rtc/trace.jsonl').open() as stream:
-                for line in stream:
-                    row = json.loads(line)
-                    if row.get('event') == 'control_step':
-                        replay.append(row['action'])
-                        if len(replay) == 20:
-                            break
+            replay,replay_source=environment_replay(suite,tid,index)
             for repeat in range(2):
                 base._seed_process(7, np, torch)
                 env = base._make_env(cls, task)
@@ -402,7 +417,8 @@ def compiled_environments(directory, tasks, config):
             physical = max(float(np.max(np.abs(a[0]-b[0]))) for a,b in zip(*captures))
             state = max(float(np.max(np.abs(a[1]-b[1]))) for a,b in zip(*captures))
             pixels = [np.abs(a[2].astype(np.int16)-b[2].astype(np.int16)) for a,b in zip(*captures)]
-            case = dict(suite=suite, task_id=tid, physical_max_abs=physical, state_max_abs=state,
+            case = dict(suite=suite, task_id=tid, replay_source=replay_source,
+                replay_actions=replay,physical_max_abs=physical, state_max_abs=state,
                 pixel_max_abs=max(int(x.max()) for x in pixels),
                 max_changed_pixels=max(int(np.any(x!=0,axis=-1).sum()) for x in pixels),
                 success_equal=all(a[3]==b[3] for a,b in zip(*captures)))

@@ -203,8 +203,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         config.get('m2_vision_pool_factor',1)!=1):
         raise ValueError('Expert recompute comparison requires Full geometry and explicit new tasks')
     if task_plan is not None:
+        allowed_suites=set(SUITES)|({'libero_10'} if record_only else set())
         if kind != 'full' or resume or not task_plan or len(set(task_plan)) != len(task_plan) or any(
-                s not in SUITES or type(t) is not int or not 0<=t<10 for s,t in task_plan):
+                s not in allowed_suites or type(t) is not int or not 0<=t<10 for s,t in task_plan):
             raise ValueError('Custom quality plan requires unique Full-view tasks and a new run')
     directory = Path(directory)
     cfg = copy.deepcopy(config)
