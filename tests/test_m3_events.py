@@ -15,8 +15,10 @@ def action(x=1., y=0., grip=-1.):
 
 def window_requests(new_target=7):
     old=dict(prediction_id=0,observation_step=0,
+             observation_monotonic=0.,
              actions=[action(x=1+i*.1,grip=-1 if i<7 else 1) for i in range(12)])
     new=dict(prediction_id=1,observation_step=3,
+             observation_monotonic=.5,
              actions=[action(x=1+(i+3)*.1,grip=-1 if i+3<new_target else 1) for i in range(12)],
              rtc_guidance={'delay_estimate_steps':6})
     return old,new
@@ -69,6 +71,67 @@ def test_gripper_window_rejects_future_observation_and_invalid_radius():
     old,new=window_requests()
     with pytest.raises(ValueError):compare_gripper_windows(old,new,2)
     with pytest.raises(ValueError):compare_gripper_windows(old,new,5,radius=-1)
+
+
+def open_probe_fixture():
+    from perceptbudget.action_events import select_open_refresh_probe
+    old,new=window_requests()
+    for q in (old,new):
+        for a in q['actions']:a[6]*=-1
+    following=dict(prediction_id=2,observation_step=5,
+        m3_timing=dict(reason='action_event',critical_step=7,candidate_event_kinds=['gripper_open']))
+    commits=[dict(prediction_id=0,observation_step=0,commit_step=0),
+             dict(prediction_id=1,observation_step=3,commit_step=5)]
+    plan=select_open_refresh_probe([old,new,following],commits)
+    return old,new,plan
+
+
+def test_open_probe_selects_one_repeated_event_and_preserves_variance_deadline():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    old,new,plan=open_probe_fixture()
+    assert plan['prediction_id']==1 and plan['target_step']==7 and plan['kind']=='gripper_open'
+    cfg=dict(H=50,m3_scheduler_mode='deadline_high',m3_dvac_enabled=True,m3_open_probe_plan=plan,
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05,maximum_action_offset=50,
+            maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
+        m3_service_samples={h:[.3]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(cfg)
+    runtime.committed(old,dict(commit_step=0,commit_monotonic=.1))
+    new['dvac']={'prefix_actions':5}
+    runtime.committed(new,dict(commit_step=5,commit_monotonic=1.))
+    queue={new['observation_step']+i:(a,1,3,i) for i,a in enumerate(new['actions'])}
+    decision=runtime.decide(now=1.,step=5,queue=queue,rows=[],inflight=False)
+    assert decision['critical_step'] is None and decision['reason']=='denoising_variance'
+    assert decision['start_now'] and decision['margin_seconds']==.05
+    assert decision['diagnostic_open_probe']['target_step']==7
+    unchanged=DeadlineRuntime(dict(cfg,m3_open_probe_plan=None))
+    unchanged.committed(new,dict(commit_step=5,commit_monotonic=1.))
+    assert unchanged.decide(now=1.,step=5,queue=queue,rows=[],inflight=False)['reason']=='action_event'
+    with pytest.raises(RuntimeError,match='context changed'):
+        DeadlineRuntime(cfg).committed(new,dict(commit_step=6,commit_monotonic=1.))
+
+
+@pytest.mark.parametrize('changed',[None,'noise','control','marker'])
+def test_open_probe_prefix_audit_rejects_preintervention_differences(tmp_path,changed):
+    import copy
+    from perceptbudget.action_events import audit_open_probe_prefix
+    old,new,plan=open_probe_fixture()
+    for q in (old,new):
+        q.update(observation_raw_state=[0.]*8,model_state=[0.]*8,
+            actions_raw=[[0.]*32 for _ in range(12)],rtc_solver_inputs={'noise':[[0.]*32 for _ in range(12)]})
+    paths=[]
+    for i in range(2):
+        p=tmp_path/str(i);(p/'rtc').mkdir(parents=True);paths.append(p)
+        qs=copy.deepcopy([old,new]);trace=[dict(event='control_step',step=s,
+            action=list(old['actions'][s]),before={'raw_state':[0.]*8}) for s in range(5)]
+        if i:
+            trace.append(dict(event='m3_decision',step=5,diagnostic_open_probe={
+                k:plan[k] for k in ('prediction_id','commit_step','target_step','kind')}))
+            if changed=='noise':qs[1]['rtc_solver_inputs']['noise'][0][0]=1e-7
+            if changed=='control':trace[2]['action'][0]+=1e-7
+            if changed=='marker':trace.pop()
+        (p/'rtc/q5_requests.json').write_text(json.dumps(qs))
+        (p/'rtc/trace.jsonl').write_text('\n'.join(json.dumps(x) for x in trace))
+    assert audit_open_probe_prefix(*paths,plan)['passed']==(changed is None)
 
 
 def test_offline_episode_attaches_aligned_window_metrics_without_modifying_records(tmp_path):

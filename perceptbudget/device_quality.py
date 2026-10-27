@@ -486,6 +486,15 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             if 'events_and_variance_hold3' in (cfg.get('m3_trigger_variants') or []):
                                 child_cfg['m3_events']['slowdown_confirm_steps']=(
                                     3 if strategy=='events_and_variance_hold3' else 2)
+                            if strategy=='events_and_variance_open_probe':
+                                from perceptbudget.action_events import select_open_refresh_probe
+                                reference=next(e for e in record['episodes'] if e['suite']==suite and e['task_id']==tid
+                                               and e['view']=='events_and_variance')
+                                reference_run=Path(reference['run'])
+                                reference_requests=json.loads((reference_run/'rtc/q5_requests.json').read_text())
+                                reference_episode=json.loads((reference_run/'summary.json').read_text())['episode']
+                                child_cfg['m3_open_probe_plan']=select_open_refresh_probe(reference_requests,reference_episode['commits'])
+                                _write_json_atomically(directory/'open_probe_plan.json',child_cfg['m3_open_probe_plan'])
                             child_cfg['m3_dvac_enabled']=strategy!='events_only'
                             child_cfg['m3_action_events_enabled']=strategy!='variance_only'
                             if cfg.get('m3_device_comparison'):
@@ -582,12 +591,20 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
             if (cfg.get('m3_event_dedup_comparison') or
-                    'events_and_variance_hold3' in (cfg.get('m3_trigger_variants') or [])):
+                    any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe'))):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 if not paired['passed']:
-                    raise RuntimeError('Resident pair bootstrap differs; do not attribute outcomes to event deduplication')
+                    raise RuntimeError('Resident comparison bootstrap differs; do not attribute outcomes to the policy change')
+            if 'events_and_variance_open_probe' in (cfg.get('m3_trigger_variants') or []):
+                from perceptbudget.action_events import audit_open_probe_prefix
+                prefix=audit_open_probe_prefix(record['episodes'][0]['run'],record['episodes'][1]['run'],
+                    json.loads((directory/'open_probe_plan.json').read_text()))
+                _write_json_atomically(directory/'open_probe_prefix_audit.json',prefix)
+                record['open_probe_prefix_audit']=prefix
+                if not prefix['passed']:
+                    raise RuntimeError('Open-probe pre-intervention prefix differs; comparison is invalid')
             record['status'] = 'completed'
             save()
     except BaseException as exc:

@@ -264,3 +264,16 @@ def test_sustained_slowdown_pair_is_one_model_two_exact_start_episodes(capsys):
     launch.assert_not_called()
     with pytest.raises(ValueError):
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
+
+
+def test_open_event_probe_is_object0_single_resident_pair(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    strategies=['events_and_variance','events_and_variance_open_probe']
+    assert comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies))==tuple(strategies)
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_object',
+        '--strategies',*strategies,'--device-dvfs','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_preintervention_prefix']
+    launch.assert_not_called()

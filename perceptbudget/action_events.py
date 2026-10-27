@@ -185,6 +185,56 @@ def compare_gripper_windows(previous, current, commit_step, config=None, *, radi
     return result
 
 
+def select_open_refresh_probe(requests, commits):
+    """Select one retrospective intervention, never a deployable skip rule."""
+    byid={q['prediction_id']:q for q in requests}
+    candidates=[]
+    for old_commit,current_commit in zip(commits,commits[1:]):
+        current=byid[current_commit['prediction_id']]
+        following=next((q for q in requests if q['prediction_id']>current['prediction_id']),None)
+        if following is None:continue
+        timing=following.get('m3_timing',{})
+        for event in compare_gripper_windows(byid[old_commit['prediction_id']],current,current_commit['commit_step']):
+            if (event['status']=='matched' and event['kind']=='gripper_open'
+                    and timing.get('reason')=='action_event'
+                    and timing.get('critical_step')==event['new_target_step']
+                    and 'gripper_open' in timing.get('candidate_event_kinds',[])):
+                candidates.append(dict(prediction_id=current['prediction_id'],
+                    observation_step=current['observation_step'],commit_step=current_commit['commit_step'],
+                    target_step=event['new_target_step'],kind='gripper_open',available_features=event))
+    if not candidates:
+        raise ValueError('Baseline has no matched repeated open-event refresh to probe')
+    selected=min(candidates,key=lambda x:x['available_features']['local_window']['mean_direction_degrees']
+                 if x['available_features']['local_window']['mean_direction_degrees'] is not None else float('inf'))
+    return dict(selected,scope='Retrospective single-event intervention selected from this resident baseline; not an online classifier')
+
+
+def audit_open_probe_prefix(reference_run, candidate_run, plan):
+    """Reject timing/input divergence before the planned intervention."""
+    import numpy as np
+    runs=[Path(reference_run),Path(candidate_run)]
+    requests=[json.loads((p/'rtc/q5_requests.json').read_text()) for p in runs]
+    pid=plan['prediction_id'];step=plan['commit_step']
+    prefix=[[r for r in q if r['prediction_id']<=pid] for q in requests]
+    checks={'same_prefix_length':len(prefix[0])==len(prefix[1])==pid+1}
+    for field in ('prediction_id','observation_step','observation_raw_state','model_state','actions_raw','actions'):
+        checks[field+'_equal']=len(prefix[0])==len(prefix[1]) and all(
+            np.array_equal(a[field],b[field]) for a,b in zip(*prefix))
+    checks['noise_equal']=len(prefix[0])==len(prefix[1]) and all(
+        np.array_equal(a['rtc_solver_inputs']['noise'],b['rtc_solver_inputs']['noise']) for a,b in zip(*prefix))
+    traces=[[json.loads(line) for line in (p/'rtc/trace.jsonl').open()] for p in runs]
+    controls=[[e for e in trace if e['event']=='control_step' and e['step']<step] for trace in traces]
+    checks['same_control_prefix']=len(controls[0])==len(controls[1])==step and all(
+        a['step']==b['step'] and np.array_equal(a['action'],b['action'])
+        and np.array_equal(a['before']['raw_state'],b['before']['raw_state']) for a,b in zip(*controls))
+    applied=[e['diagnostic_open_probe'] for e in traces[1] if e['event']=='m3_decision' and e.get('diagnostic_open_probe')]
+    checks['planned_event_applied']=bool(applied) and all(
+        x['prediction_id']==pid and x['target_step']==plan['target_step'] and x['commit_step']==step
+        and x['kind']=='gripper_open' for x in applied)
+    return dict(passed=all(checks.values()),checks=checks,predictions_compared=len(prefix[0]),
+        controls_compared=len(controls[0]),scope='Exact inputs/actions/states before one retrospective intervention; no claim of a learned or general skip policy')
+
+
 def analyze_episode(run, config=None):
     """Read an existing episode without changing it; use only past ticks for ETA."""
     config = config or EventConfig()

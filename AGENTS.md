@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户授权尝试Object0候选，已准备单事件诊断events_and_variance_open_probe，与原混合同模型配对，仅限CLI Object0/DVFS。同次基线完成后select_open_refresh_probe选取已知前后动作可配对且实际导致再刷新的一个松爪事件，按局部方向变化最小定位；选择借助完整基线，是定点干预而非上线判别器。回放7112f494定位pid5/origin121/commit131/open138。候选仅从该预测的事件列表删除这一条，保留DVAC/缓冲/RTC最晚提交/50ms/其他事件；每次新预测仍正常检测。上下文origin/commit/target不符则invalid不计任务失败。严格bootstrap外，open_probe_prefix_audit检查干预前所有预测/输入state/noise/raw动作与执行动作/状态相同、干预确实执行，否则不报告有效收益。156相关tests通过，backup archive/pre-single-open-refresh-probe-20261027；未改默认、FlashRT/模型。sudo-n需密码，尚未GPU运行。用户命令run_m3.py --mode trigger-comparison --trigger-suite libero_object --strategies events_and_variance events_and_variance_open_probe --device-dvfs --no-age-limit，2回合1模型；run中保存open_probe_plan.json/open_probe_prefix_audit.json。
+
 - 2026-10-27 已完成关键动作逐例与后一次刷新比较，87c82f66（summary.json/comparison.md/review.py）。筛出当前原混合2步、H50/无age/已审核的5次运行4任务，21处未来夹爪预测中5处可配对（Long1重复运行2例，非5独立任务），15处共同覆盖不足、1处旧预测无对应事件。当前可用局部特征与后续结果严格分栏，因果时间核对通过；未改在线策略/门槛、未GPU。Long1松爪附近方向差36.5°，随后事件刷新交接后7步相对XYZ改动31.7%；Object0方向差2.75°，后续6步改动7.72%，优先验证但不能拿未来7.72%做在线输入；Object6方向差35.4°、后续5步改动23.0%，先保留。Long0下一次由DVAC触发，单屏蔽事件不会少算，且后续只有2步不足比较。所有匹配案例都为松爪，后次刷新均在松爪后才交接，必须考虑后续动作，不能只看开合瞬间或把RTC一致性当可靠。尚无已证实可安全跳过的新案例；默认继续原混合。
 
 - 2026-10-27 用户认可关键动作比较方向。新增action_events.compare_gripper_windows及离线报告字段，不改在线调度或门槛：只比较已提交的相邻两份预测，按绝对控制步对齐，排除已执行区间，分别报告估计delay前缀之外的指标。记录事件位移、局部XYZ/旋转指令差、方向/幅度与累计指令差；这些不是预测物理位姿。多候选标ambiguous，旧覆盖不足/新出现事件不当作相似。93df9332离线5个M3回合共22处未来夹爪预测，仅5处可匹配（4处完整局部窗），15处共同未来不足、2处旧预测无同类事件。task1在126提交时old130/new129，局部xyz_rmse0.0630/max_l2指令差0.1510，不能凭±1步判重复。比较只能用于提交后的下一次刷新判断，不能拿未完成新预测来决定是否启动它；RTC本身引导一致，因此相似不等于可靠。150相关tests通过，backup archive/pre-action-window-review-20261027，报告含源SHA，未GPU重测或启用跳过规则。
