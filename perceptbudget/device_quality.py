@@ -609,6 +609,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
+                    tuple(cfg.get('m3_trigger_variants') or [])==('events_only','events_and_variance') or
                     any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge'))):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)

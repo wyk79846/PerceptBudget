@@ -107,7 +107,7 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
-            exact_bootstrap_pair=args.compare_event_dedup or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
+            exact_bootstrap_pair=args.compare_event_dedup or args.strategies==['events_only','events_and_variance'] or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,

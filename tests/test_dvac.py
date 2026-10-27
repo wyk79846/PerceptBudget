@@ -309,6 +309,21 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
 
 
+def test_events_vs_mixed_task8_pair_checks_bootstrap_and_only_switches_variance(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import configure_trigger_signals
+    for strategy,enabled in [('events_only',False),('events_and_variance',True)]:
+        cfg={}
+        configure_trigger_signals(cfg,strategy)
+        assert cfg==dict(m3_dvac_enabled=enabled,m3_action_events_enabled=True)
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10','--trigger-task-id','8',
+        '--strategies','events_only','events_and_variance','--device-dvfs','--no-age-limit','--dry-run']):
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['denoising_triggers']==[False,True] and plan['merge_gap_steps']==[None]
+
+
 def test_events_only_merge_disables_variance_for_both_and_preserves_events(capsys):
     from scripts.run_m3 import main
     from perceptbudget.closed_loop import configure_trigger_signals,comparison_variants,DeadlineRuntime
