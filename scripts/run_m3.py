@@ -21,6 +21,9 @@ def main():
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
+    parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal'))
+    parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
+    parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--source-run', type=Path, nargs='+')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -34,8 +37,20 @@ def main():
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
     if args.mode=='trigger-comparison':
         settings=dict(settings,mode='deadline_high',dvac_paired=True,trigger_comparison=True,
+            trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
-    variants_per_task=3 if settings.get('trigger_comparison') else 2 if settings.get('dvac_paired') else 1
+        if args.trigger_suite:
+            settings['calibration_tasks']=[[args.trigger_suite,0]]
+        from perceptbudget.closed_loop import comparison_variants
+        try:
+            variants_per_task=len(comparison_variants(dict(m3_trigger_comparison=True,
+                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats)))
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        if args.trigger_suite or args.strategies or args.repeats!=1:
+            parser.error('Trigger selection and repeats require --mode trigger-comparison')
+        variants_per_task=2 if settings.get('dvac_paired') else 1
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
     if args.mode == 'analyze' and (not args.source_run or args.worker):
@@ -94,6 +109,12 @@ def main():
                            '--mode',args.mode,'--suite',args.suite]
                 if args.source_run:
                     command += ['--source-run',*[str(p.resolve()) for p in args.source_run]]
+                if args.mode=='trigger-comparison':
+                    command += ['--repeats',str(args.repeats)]
+                    if args.trigger_suite:
+                        command += ['--trigger-suite',args.trigger_suite]
+                    if args.strategies:
+                        command += ['--strategies',*args.strategies]
                 if args.mode!='deadline-dvfs':
                     command = [cfg['python_executable'],str(ROOT/'scripts/guarded_run.py'),'--',*command]
                 with (run/'worker.log').open('w') as log:

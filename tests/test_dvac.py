@@ -118,3 +118,19 @@ def test_three_strategy_plan_declares_nine_episodes_h50_and_one_model(capsys):
     assert plan['H']==50 and plan['N']==5 and plan['state']
     assert plan['action_offset_limits']==[50] and not plan['clocks_changed']
     launch.assert_not_called()
+
+
+def test_goal_two_strategy_repeats_are_six_distinct_resident_episodes(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    labels=comparison_variants(dict(m3_trigger_comparison=True,
+        m3_trigger_variants=['variance_only','events_and_variance'],m3_trigger_repeats=3))
+    assert len(labels)==len(set(labels))==6
+    assert labels[:2]==('variance_only__repeat1','events_and_variance__repeat1')
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_goal',
+        '--strategies','variance_only','events_and_variance','--repeats','3','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==6 and plan['tasks']==[['libero_goal',0]]
+    assert plan['model_loads']==1 and plan['action_offset_limits']==[50]
+    launch.assert_not_called()

@@ -453,8 +453,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if dvac_paired:
                         child_cfg['m3_dvac_enabled']=view!='deadline_high'
                         if cfg.get('m3_trigger_comparison'):
-                            child_cfg['m3_dvac_enabled']=view!='events_only'
-                            child_cfg['m3_action_events_enabled']=view!='variance_only'
+                            strategy,_,repeat=view.partition('__repeat')
+                            child_cfg['m3_trigger_strategy']=strategy
+                            child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
+                            child_cfg['m3_dvac_enabled']=strategy!='events_only'
+                            child_cfg['m3_action_events_enabled']=strategy!='variance_only'
                         if cfg.get('m3_dvac_horizon_comparison'):
                             child_cfg['m3_timing']['maximum_action_offset']=20 if view=='dvac_h20' else cfg['H']
                     if recompute_comparison:

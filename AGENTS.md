@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户自行执行Goal稳定性复测：run_m3.py --mode trigger-comparison --trigger-suite libero_goal --strategies variance_only events_and_variance --repeats 3。已补子集/重复选择与worker参数转发，同模型6回合交替var/融合，H50、seed7/init0、每回合历史清空，repeat标签唯一并写配置；此轮助手只做入口准备、定向测试和dry-run，未启动GPU复测。改前archive/pre-goal-trigger-repeat-20261027；待用户完成后核对6回合结果及最早轨迹分叉。
+
 - 2026-10-27 三触发策略对照4d8a91d8 completed：3suite task0×events_only/variance_only/events_and_variance共9，H50cap/N5/state/beta5/2s年龄/50ms余量/高频一致，1model/1expert，6对initial物理/frame/state哈希精确一致，开关审计/系统记录/原始功率积分复算全通过，0underflow。两单独组各3/3成功，融合2/3，Goal300步timeout保留308.725J。Spatial能量104.844/96.718/105.133J(均77步)；Object138.212/135.955/151.322J(145/144/143步)；Goal242.880/169.334/308.725J(280/155/300步)。Goal融合无action_event主导请求，前4预测0/13/41/66动作和noise与varonly完全一致；下一观测81vs80，边界92/同服务.5530195s、周期50.3512vs50.2218ms，第90步来源切换分叉，不能把timeout归因于融合逻辑本身。仅去噪本轮较好，不默认替换；建议小范围重复Goal稳定性再改合并规则。全量574passed/9skip/110subtests，backup archive/pre-trigger-comparison-20261027；M3进展追加九行表/触发原因/数值时序。入口run_m3.py --mode trigger-comparison，仅新增可选开关，FlashRT/内核未改。
 
 - 2026-10-27 按用户H50逻辑对照80fb474b completed：三suite task0×DVAC cap20/cap50共6，1model/1expert，初始physics/frame/state三对哈希精确一致；只改覆盖上限，两侧仍2s年龄/同事件/DVAC/50ms余量/高频。两组各3/3 success；H50均0underflow，H20 Object/Goal各15underflow（原始队列仍有动作，offset20/21被硬上限拒用，观测龄<1.10s；新chunk提交已过约11步，仅余9覆盖不了下次11）。能量Spatial125.217→108.862J(-13.06%)、Object212.399→146.860(-30.86%)、Goal185.292→156.611(-15.48%)，Goal耗时7.533→8.281s(+9.93%)。请求8→6/15→8/13→9；H50实际用到第30/37/39步，年龄/事件/波动均先于50终点触发，不称已验证连续50步质量；年龄2s为待校准初值。原始功率全覆盖独立复算、系统审计通过、图审计0差/无fallback；关键提示时限仍有迟到。原播报Object无断供已更正。入口dvac-horizon-paired仅实验，默认20未自动替换，备份archive/pre-dvac-horizon50-20261027；全量569passed/9skip/110subtests。报告/CSV/供给复算已保存，下一步少量扩样/校准年龄，再接低频；故障注入/正式长测待做。
