@@ -24,11 +24,14 @@ def main():
     parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal'))
     parser.add_argument('--strategies', nargs='+', choices=('events_only','variance_only','events_and_variance'))
     parser.add_argument('--repeats', type=int, default=1)
+    parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
     parser.add_argument('--source-run', type=Path, nargs='+')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.device_dvfs and args.mode!='trigger-comparison':
+        parser.error('--device-dvfs requires --mode trigger-comparison')
     settings = load_settings(args.settings)
     if args.mode in ('deadline-high','deadline-dvfs'):
         settings = dict(settings, mode=args.mode.replace('-','_'), calibration_tasks=[[args.suite,0]])
@@ -36,7 +39,7 @@ def main():
         settings=dict(settings,mode='deadline_high',dvac_paired=True,
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
     if args.mode=='trigger-comparison':
-        settings=dict(settings,mode='deadline_high',dvac_paired=True,trigger_comparison=True,
+        settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs else 'deadline_high',dvac_paired=True,trigger_comparison=True,
             trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
@@ -51,6 +54,7 @@ def main():
         if args.trigger_suite or args.strategies or args.repeats!=1:
             parser.error('Trigger selection and repeats require --mode trigger-comparison')
         variants_per_task=2 if settings.get('dvac_paired') else 1
+    uses_dvfs=settings.get('mode')=='deadline_dvfs'
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
     if args.mode == 'analyze' and (not args.source_run or args.worker):
@@ -72,7 +76,7 @@ def main():
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
-            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=args.mode=='deadline-dvfs',
+            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
             maximum_observation_age_seconds=settings['timing']['maximum_observation_age_seconds'],
             event_thresholds=settings['events']), ensure_ascii=False))
@@ -80,7 +84,7 @@ def main():
     if args.worker:
         if args.run_dir is None or args.run_dir.resolve().parent != (Path(cfg['output_root'])/'M3').resolve():
             parser.error('Worker requires an M3 directory')
-        if args.mode=='deadline-dvfs':
+        if uses_dvfs:
             subprocess.run(['sudo','-n','true'],check=True)
         if args.mode in ('dvac-probe','dvac-validate'):
             from perceptbudget.device_profile import fixed_view_probe
@@ -89,7 +93,7 @@ def main():
         else:
             recording_session(cfg, settings, args.run_dir, CLEANUP_GATE)
         return 0
-    if args.mode=='deadline-dvfs':
+    if uses_dvfs:
         subprocess.run(['sudo','-v'],check=True)
     cfg = dict(cfg, m3_settings=settings)
     run = create_run(cfg, 'M3', 'action-review' if args.mode=='analyze' else args.mode if args.mode in ('dvac-probe','dvac-validate') else args.mode if settings.get('dvac_paired') else 'record-session', repo_root=ROOT)
@@ -101,7 +105,7 @@ def main():
         else:
             with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                if args.mode=='deadline-dvfs':
+                if uses_dvfs:
                     from perceptbudget.closed_loop import clock_preflight
                     clock_preflight(run)
                 command = [cfg['python_executable'], '-u', str(Path(__file__).resolve()),
@@ -111,14 +115,16 @@ def main():
                     command += ['--source-run',*[str(p.resolve()) for p in args.source_run]]
                 if args.mode=='trigger-comparison':
                     command += ['--repeats',str(args.repeats)]
+                    if args.device_dvfs:
+                        command += ['--device-dvfs']
                     if args.trigger_suite:
                         command += ['--trigger-suite',args.trigger_suite]
                     if args.strategies:
                         command += ['--strategies',*args.strategies]
-                if args.mode!='deadline-dvfs':
+                if not uses_dvfs:
                     command = [cfg['python_executable'],str(ROOT/'scripts/guarded_run.py'),'--',*command]
                 with (run/'worker.log').open('w') as log:
-                    if args.mode=='deadline-dvfs':
+                    if uses_dvfs:
                         from scripts.profile_clock_screen import monitored_worker
                         code = monitored_worker(command, log)
                     else:

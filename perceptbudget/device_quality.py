@@ -186,8 +186,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         or config.get('m2_vision_pool_factor', 1) != 1):
         raise ValueError('M3 recording requires new explicit Full-view tasks without perception changes')
     dvac_paired=bool(config.get('m3_dvac_comparison'))
-    if dvac_paired and (not record_only or config.get('m3_scheduler_mode')!='deadline_high'):
-        raise ValueError('DVAC comparison requires paired high-frequency M3 recording')
+    if dvac_paired and (not record_only or config.get('m3_scheduler_mode') not in ('deadline_high','deadline_dvfs')):
+        raise ValueError('DVAC comparison requires scheduled M3 recording')
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')

@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户授权当前去噪主线进入M3调频。已接入run_m3.py --mode trigger-comparison --strategies variance_only --device-dvfs：三suite task0×1，H50/N5/state/beta5，机制一只记录；1model常驻，Full高频/低频Continue/提前恢复复用旧runtime。按settings实际mode统一父进程sudo-v、无模型LOW/HIGH/STOP预检、同TTY监控及worker参数/凭据检查，避免新模式走普通guard。49定向通过，全量577passed/9skip/110subtests/3既有warnings。M3任务书已同步当前5.3计划、机制一后续接入及B/C/D同去噪触发；备份archive/pre-variance-dvfs-20261027。实际新DVFS三任务未执行：sudo-n true确认助手会话无凭据，需用户普通终端输入密码；未改频率或加载GPU。旧单任务DVFS已验证不能当新去噪三任务结果。待用户完成后审核能量/供给/Full高频覆盖/LOW驻留/最终RESTORED，再做三类故障与正式对照。
+
 - 2026-10-27 用户Goal复测053b6539 completed：var/fusion各3，同模型/专家各1，三对初始physics/frame/state哈希精确一致。两组本次均3/3 success/0underflow；步数var155/137/143、融合155/137/142；均时间8.243/8.209s，均整任务能量150.532/152.989J，原始积分全覆盖复算通过。两组均15波动+8年龄触发，融合仅额外1关键动作请求，第一轮154步触发但155步成功结束、未提交，增加收尾计算。前次融合Goal timeout本次未复现，不作融合必然更差结论；本次无额外收益、仅去噪更简洁作为候选，默认未改。审核/CSV/脚本及M3进展已补，本轮无新GPU或代码改动。
 
 - 2026-10-27 用户自行执行Goal稳定性复测：run_m3.py --mode trigger-comparison --trigger-suite libero_goal --strategies variance_only events_and_variance --repeats 3。已补子集/重复选择与worker参数转发，同模型6回合交替var/融合，H50、seed7/init0、每回合历史清空，repeat标签唯一并写配置；此轮助手只做入口准备、定向测试和dry-run，未启动GPU复测。改前archive/pre-goal-trigger-repeat-20261027；待用户完成后核对6回合结果及最早轨迹分叉。

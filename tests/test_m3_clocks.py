@@ -89,3 +89,47 @@ def test_clock_preflight_restores_before_model_load_even_on_failure(tmp_path,fai
         else:assert clock_preflight(tmp_path)['status']=='completed'
     d=json.loads((tmp_path/'clock_preflight.json').read_text())
     assert d['restored'] and not d['model_loaded'] and closed==[True]
+
+
+def test_variance_dvfs_plan_is_three_h50_tasks_without_sudo_or_model_load(capsys):
+    import json
+    from scripts.run_m3 import main
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only',
+                           '--device-dvfs','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==3 and plan['model_loads']==1
+    assert {t[0] for t in plan['tasks']}=={'libero_spatial','libero_object','libero_goal'}
+    assert plan['clocks_changed'] and plan['action_offset_limits']==[50]
+    launch.assert_not_called()
+
+
+def test_variance_dvfs_preflights_before_worker_and_forwards_clock_flag(tmp_path):
+    import json
+    from pathlib import Path
+    from scripts.run_m3 import main
+    from perceptbudget.experiment import load_config
+    cfg=load_config(repo_root=Path(__file__).resolve().parents[1]);cfg['output_root']=str(tmp_path)
+    run=tmp_path/'M3'/'fake';run.mkdir(parents=True)
+    (run/'run.json').write_text(json.dumps({'status':'created'}))
+    order=[];commands=[]
+    def preflight(directory):
+        assert directory==run
+        order.append('preflight')
+    def worker(command,log):
+        order.append('worker');commands.append(command)
+        (run/'summary.json').write_text(json.dumps({'status':'completed','episodes':[{}, {}, {}]}))
+        return 0
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only','--device-dvfs']), \
+         patch('perceptbudget.experiment.load_config',return_value=cfg), \
+         patch('perceptbudget.experiment.create_run',return_value=run), \
+         patch('subprocess.run') as sudo, \
+         patch('perceptbudget.closed_loop.clock_preflight',side_effect=preflight), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=worker):
+        assert main()==0
+    sudo.assert_called_once_with(['sudo','-v'],check=True)
+    assert order==['preflight','worker']
+    command=commands[0]
+    assert command[0]==cfg['python_executable'] and '--device-dvfs' in command
+    assert command[command.index('--strategies')+1]=='variance_only'
+    assert not any('guarded_run.py' in part for part in command)

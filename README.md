@@ -89,3 +89,13 @@ H50覆盖上限对照已完成：`run_m3.py --mode dvac-horizon-paired`在一次
 三种触发策略对照已完成：`run_m3.py --mode trigger-comparison`统一H50上限，在一次模型加载中跑三任务×仅关键动作/仅去噪/取更早融合，共9回合。两单独组各3/3成功，融合2/3，均无断供；仅去噪本轮能量较低。Goal融合超时，但无关键动作主导请求，核对显示与仅去噪从相邻一步观测时机开始分叉，不能单次判定融合必然更差。默认未替换。数据与CSV：外部M3/20261027T031611.450358Z-trigger-comparison-4d8a91d8，完整结果见M3进展报告。
 
 Goal复测（053b6539）已审核：仅去噪/融合各3次均成功、0断供，平均时间8.243/8.209秒、整任务能量150.532/152.989J。融合仅多一个任务结束前未提交的关键动作请求，未见额外收益；前次超时未复现。原始结果在外部M3/20261027T042208.090844Z-trigger-comparison-053b6539，进展报告已更新。
+
+
+当前M3下一步：仅去噪＋H50接回调频，三集合各task0一次，模型只加载一次。入口和检查已准备，真实小测待用户终端执行（内部sudo提示只用于调频助手）：
+
+```bash
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py \
+  --mode trigger-comparison --strategies variance_only --device-dvfs
+```
+
+`--dry-run`只显示3回合计划，无sudo/模型/频率修改。实际运行先无模型预检，退出核对RESTORED；必要时用既有`sudo /usr/bin/python3 scripts/control_device_clocks.py restore`恢复。机制一只记录，正式基线与FlashRT未改；全量577项检查通过。M3任务书已同步最新范围。
