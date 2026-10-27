@@ -29,8 +29,9 @@ def load_settings(path):
 
 def comparison_variants(config):
     if config.get('m3_event_dedup_comparison'):
-        return ('events_and_variance__coverage_event_only',
+        labels=('events_and_variance__coverage_event_only',
                 'events_and_variance__coverage_shared_refresh')
+        return labels+('variance_only',) if 'variance_only' in (config.get('m3_trigger_variants') or ()) else labels
     if config.get('m3_static_q') is not None:
         q=config['m3_static_q']
         if q not in (5,10,20,30,40):

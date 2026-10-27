@@ -16,15 +16,17 @@ def audit_paired_bootstraps(episodes):
     cases=[]
     for suite,tid in sorted({(e['suite'],e['task_id']) for e in episodes}):
         pair=[e for e in episodes if e['suite']==suite and e['task_id']==tid]
-        if len(pair)!=2:
-            raise ValueError('Require exactly two resident episodes per task')
+        if len(pair) not in (2,3):
+            raise ValueError('Require two or three resident episodes per task')
         requests=[json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())[0] for e in pair]
-        checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[1]['initial']['initial_hashes']}
-        for field in ('observation_raw_state','model_state','actions_raw','actions'):
-            checks[field+'_equal']=np.array_equal(requests[0][field],requests[1][field])
-        checks['noise_equal']=np.array_equal(requests[0]['rtc_solver_inputs']['noise'],requests[1]['rtc_solver_inputs']['noise'])
-        cases.append(dict(suite=suite,task_id=tid,passed=all(checks.values()),checks=checks,
-            raw_max_abs=float(np.max(np.abs(np.asarray(requests[0]['actions_raw'])-np.asarray(requests[1]['actions_raw']))))))
+        for i in range(1,len(pair)):
+            checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[i]['initial']['initial_hashes']}
+            for field in ('observation_raw_state','model_state','actions_raw','actions'):
+                checks[field+'_equal']=np.array_equal(requests[0][field],requests[i][field])
+            checks['noise_equal']=np.array_equal(requests[0]['rtc_solver_inputs']['noise'],requests[i]['rtc_solver_inputs']['noise'])
+            cases.append(dict(suite=suite,task_id=tid,reference_run=pair[0]['run'],candidate_run=pair[i]['run'],
+                passed=all(checks.values()),checks=checks,
+                raw_max_abs=float(np.max(np.abs(np.asarray(requests[0]['actions_raw'])-np.asarray(requests[i]['actions_raw']))))))
     return dict(passed=bool(cases) and all(c['passed'] for c in cases),cases=cases,
         scope='Exact starting state/images/noise/actions only; real async timing and policy-dependent future inputs may diverge')
 

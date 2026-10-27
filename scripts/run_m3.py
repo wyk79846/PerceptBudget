@@ -37,8 +37,8 @@ def main():
     args = parser.parse_args()
     if args.compare_event_dedup and (args.mode!='trigger-comparison' or not args.device_dvfs
             or args.compare_device or args.static_q is not None or args.repeats!=1
-            or args.strategies not in (None,['events_and_variance'])):
-        parser.error('Event dedup pair requires trigger-comparison --device-dvfs, one repeat, and events_and_variance')
+            or args.strategies not in (None,['events_and_variance'],['events_and_variance','variance_only'])):
+        parser.error('Event dedup pair requires trigger-comparison --device-dvfs, one repeat, and events_and_variance; optionally append variance_only')
     if (args.static_q is not None or args.trigger_task_id) and args.mode!='trigger-comparison':
         parser.error('Task selection and static baseline require trigger-comparison')
     if args.static_q is not None and (args.compare_device or args.device_dvfs or args.repeats!=1 or args.strategies not in (None,['variance_only'])):

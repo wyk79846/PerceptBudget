@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户要求加仅去噪消融。现有--compare-event-dedup接受--strategies events_and_variance variance_only，生成旧混合event_only/新混合shared_refresh/variance_only三回合同task1、1model/1expert；第三组禁用机制一，保留去噪与相同调频/50ms余量。bootstrap gate扩展逐组对参考严格检查，第三组差异也会判invalid；134相关tests通过，dryrun3episodes。backup archive/pre-variance-only-ablation-20261027。尚未GPU执行，需用户终端sudo；不能直接拼接上次另一模型加载的仅去噪结果冒充同内核消融。
+
 - 2026-10-27 同模型去重配对636c3ce2 completed：严格bootstrap全相等，前5份预测raw全相等，执行动作135步才因126步刷新保留/抑制而分叉。旧event_only dba90909 success233/13.907s/196.813J/10pred；新shared_refresh 5b0f436b success244/14.519s/204.022J/10pred。均0gap/审核通过/RESTORED/功率全覆盖。去重减少事件触发4→2，却使去噪触发1→4，总预测仍10、耗时+4.41%、能量+3.66%，未证明净收益。126～129确实抑制同松爪事件；事件前二次观察可能有用，不能单凭同类事件判定刷新多余。证据postrun_review.json保存；本轮只读审核及文档，无生产默认切换，代码仍shared_refresh默认，旧event_only只作显式配对参考；不称新规则已成为最终有效优化。
 
 - 2026-10-27 用户要求机制一优化前后更一致的配对。已确认bba99fb2/79f7f3c6初始state和首份噪声完全相同，但raw bootstrap maxdiff0.0066508，首步动作即分叉；尚未定位计算差异根因。新增--compare-event-dedup（须trigger-comparison --device-dvfs）：同一次模型/graph/autotune中跑旧event_only和新shared_refresh各1，显式记录coverage策略；仅此诊断保留旧策略，不改默认shared_refresh。末尾paired_bootstrap_audit.json严格检查初始physics/frame/state哈希、raw/model state、noise、raw/decoded actions完全相等；不相等则会话invalid，不能作优化收益对照。此gate不保证策略分叉后轨迹或真实异步延迟相同。126相关tests通过，backup archive/pre-event-dedup-resident-pair-20261027；未GPU运行，用户命令run_m3.py --mode trigger-comparison --trigger-suite libero_10 --trigger-task-id 1 --strategies events_and_variance --device-dvfs --compare-event-dedup --no-age-limit。上次优化后79f7f3c6 success245/14.463s/211.864J/11pred/0gap，去重生效但新增2次slowdown触发，不能宣称整体改善。

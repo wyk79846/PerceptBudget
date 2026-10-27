@@ -208,31 +208,37 @@ def test_fixed_baseline_disables_dynamic_scheduler_and_preserves_rtc(q):
     assert cfg['H']==50 and cfg['rtc_paper_schedule'] and cfg['state_in_prompt']
 
 
-def test_resident_dedup_pair_has_two_coverage_policies_and_one_model(capsys):
+@pytest.mark.parametrize('ablation',[False,True])
+def test_resident_dedup_pair_has_two_coverage_policies_and_one_model(capsys,ablation):
     from scripts.run_m3 import main
     from perceptbudget.closed_loop import comparison_variants
     assert comparison_variants({'m3_event_dedup_comparison':True})==(
         'events_and_variance__coverage_event_only','events_and_variance__coverage_shared_refresh')
+    strategies=['--strategies','events_and_variance','variance_only'] if ablation else []
+    if ablation:
+        assert comparison_variants(dict(m3_event_dedup_comparison=True,
+            m3_trigger_variants=['events_and_variance','variance_only']))[-1]=='variance_only'
     with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10',
-        '--trigger-task-id','1','--device-dvfs','--compare-event-dedup','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        '--trigger-task-id','1','--device-dvfs','--compare-event-dedup','--no-age-limit','--dry-run',*strategies]),patch('subprocess.run') as launch:
         assert main()==0
     plan=json.loads(capsys.readouterr().out)
-    assert plan['episodes']==2 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['episodes']==(3 if ablation else 2) and plan['model_loads']==1 and plan['exact_bootstrap_pair']
     assert plan['clocks_changed'] and plan['tasks']==[['libero_10',1]]
     launch.assert_not_called()
 
 
 @pytest.mark.parametrize('changed',[None,'noise','actions_raw','actions','model_state','observation_raw_state','initial'])
-def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path,changed):
+@pytest.mark.parametrize('count',[2,3])
+def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path,changed,count):
     import copy
     from perceptbudget.device_quality import audit_paired_bootstraps
     episodes=[]
     request=dict(actions_raw=[[0.]*32]*2,actions=[[0.]*7]*2,model_state=[0.]*8,
         observation_raw_state=[0.]*8,rtc_solver_inputs={'noise':[[0.]*32]*2})
-    for i in range(2):
+    for i in range(count):
         run=tmp_path/str(i);(run/'rtc').mkdir(parents=True)
         q=copy.deepcopy(request);hashes={'initial_sim_state_sha256':'physics','initial_frames_sha256':'pixels','initial_raw_state_sha256':'state'}
-        if i and changed:
+        if i==count-1 and changed:
             if changed=='initial':hashes['initial_sim_state_sha256']='different'
             elif changed=='noise':q['rtc_solver_inputs']['noise'][0][0]=1e-7
             elif changed in ('actions_raw','actions'):q[changed][0][0]=1e-7
@@ -241,3 +247,4 @@ def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path
         episodes.append(dict(suite='libero_10',task_id=1,run=str(run),initial={'initial_hashes':hashes}))
     result=audit_paired_bootstraps(episodes)
     assert result['passed']==(changed is None)
+    assert len(result['cases'])==count-1
