@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户Spatial校准复测387688e3 completed，709017cb成功80步/6.312s/102.937J/0underflow，1model/1expert，初始物理/frame/state与高频参考精确一致。12条恢复样本SHA匹配，首轮用634.373ms、实636.909ms，计划晚8.602ms但消费前提交；后续582/581/626ms无迟到。预检和任务最终RESTORED、推理高频采样、低频采样、原始功率完整积分复算/系统审计均通过，低频驻留2.915s。前次调频90.978J但有1欠载；本次比预先高频96.718J高6.43%，请求6vs5、步数80vs77，不称已有稳定净节能。Spatial单次供给复测通过，下一步故障验证/统一配置正式对照，M3未交付。报告/CSV/校准审核更新，本轮仅离线审核，无GPU或代码改动。
+
 - 2026-10-27 用户要求复测Spatial，已完成首次恢复预算校准，尚未GPU复测。c4b1faa3/recovery_calibration.json保存12条已提交真实恢复服务样本、原始请求SHA；m3.json新增该来源，启动加载并传至DeadlineRuntime初始recovery_samples，P95从553→634.373ms，热路径/50ms余量/2s年龄/H50/N5/state/RTC不改。相关51 tests通过，loader/初值/时钟预检与转发均覆盖，backup archive/pre-recovery-calibration-20261027。sudo-n true仍需用户密码；待用户执行run_m3.py --mode trigger-comparison --strategies variance_only --device-dvfs --trigger-suite libero_spatial，只有1回合1model；完成后核对首轮service预算/提交/欠载/能量/RESTORED。文档已同步，未声称已消除欠载。
 
 - 2026-10-27 用户仅去噪H50 DVFS三任务c4b1faa3 completed，1model/1expert，3/3success。Spatial78步6.043s90.978J/1underflow；Object143步8.413s122.331J/0；Goal144步8.277s141.577J/0。原始功率积分全覆盖复算、Full全部高频采样匹配、低频采样匹配、预检与三任务最终RESTORED通过。匹配031611 varonly单回合能量-5.93/-10.02/-16.39%，Goal155→144步有轨迹差异；较新Goal高频3次均150.532J，本次低5.95%。Spatial第19步旧观测2.0196s超2s，队列仍31、offset19未耗H50；新结果第20步到达。首恢复预算553ms+50margin，启动晚46.3ms，完整服务634.4ms，截止晚77.7ms；硬件切换约18ms正常。后续在线更新无新缺口；下一步用实测异步恢复样本校准首次预算并单测Spatial，再故障/正式比较。5.3未以零缺口通过，不称M3完成。Goal初始图片仅1像素1级差通过既有渲染LSB门，物理/state精确；报告/CSV/频率和缺口审核已保存。本轮仅离线审核，未改推理代码或开新GPU。
