@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--device-dvfs', action='store_true', help='Use low-frequency Continue and early recovery in trigger-comparison')
     parser.add_argument('--no-age-limit', action='store_true', help='Disable the fixed observation-age cutoff for trigger-comparison')
+    parser.add_argument('--compare-device', action='store_true', help='Pair high and DVFS episodes in the same resident model')
     parser.add_argument('--source-run', type=Path, nargs='+')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -35,6 +36,8 @@ def main():
         parser.error('--device-dvfs requires --mode trigger-comparison')
     if args.no_age_limit and args.mode!='trigger-comparison':
         parser.error('--no-age-limit requires --mode trigger-comparison')
+    if args.compare_device and (args.mode!='trigger-comparison' or args.device_dvfs):
+        parser.error('--compare-device requires trigger-comparison without --device-dvfs')
     settings = load_settings(args.settings)
     if args.mode in ('deadline-high','deadline-dvfs'):
         settings = dict(settings, mode=args.mode.replace('-','_'), calibration_tasks=[[args.suite,0]])
@@ -42,7 +45,8 @@ def main():
         settings=dict(settings,mode='deadline_high',dvac_paired=True,
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
     if args.mode=='trigger-comparison':
-        settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs else 'deadline_high',dvac_paired=True,trigger_comparison=True,
+        settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs or args.compare_device else 'deadline_high',dvac_paired=True,trigger_comparison=True,
+            device_comparison=args.compare_device,
             trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
@@ -52,7 +56,7 @@ def main():
         from perceptbudget.closed_loop import comparison_variants
         try:
             variants_per_task=len(comparison_variants(dict(m3_trigger_comparison=True,
-                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats)))
+                m3_trigger_variants=args.strategies,m3_trigger_repeats=args.repeats,m3_device_comparison=args.compare_device)))
         except ValueError as exc:
             parser.error(str(exc))
     else:
@@ -124,6 +128,8 @@ def main():
                         command += ['--device-dvfs']
                     if args.no_age_limit:
                         command += ['--no-age-limit']
+                    if args.compare_device:
+                        command += ['--compare-device']
                     if args.trigger_suite:
                         command += ['--trigger-suite',args.trigger_suite]
                     if args.strategies:

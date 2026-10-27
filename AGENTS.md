@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户授权无2s限制重测，已准备Spatial同模型高频/DVFS配对：run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_spatial --compare-device --no-age-limit。新增device标签和子回合scheduler_mode切换，两侧均age=null/H50，先高频再DVFS，只一次模型/图准备，重置初始条件和信号历史。67相关tests及补充12项clock/forward检查通过，backup archive/pre-no-age-device-pair-20261027。sudo-n true仍需用户密码，未启动GPU或改频率；待用户终端执行后审核双回合能量/供给/范围/原因/RESTORED，不能称无age版已验证。报告已记录命令。
+
 - 2026-10-27 用户指出2s硬截断抵消H50范围，已增加trigger-comparison --no-age-limit：运行配置年龄null，DeadlineRuntime准入/截止及audit_rtc_system一致跳过年龄检查，保留H50耗尽和DVAC提前刷新，不改历史默认2s。66相关tests通过，追加worker转发检查通过；backup archive/pre-optional-age-limit-20261027。只完成实现/检查，未GPU重测；前面最大30～39步不能当连续50步已验证。后续新实验及高低频对照均显式加此开关，任务书/报告同步，不能将去掉年龄限制收益直接算调频收益。
 
 - 2026-10-27 用户Spatial校准复测387688e3 completed，709017cb成功80步/6.312s/102.937J/0underflow，1model/1expert，初始物理/frame/state与高频参考精确一致。12条恢复样本SHA匹配，首轮用634.373ms、实636.909ms，计划晚8.602ms但消费前提交；后续582/581/626ms无迟到。预检和任务最终RESTORED、推理高频采样、低频采样、原始功率完整积分复算/系统审计均通过，低频驻留2.915s。前次调频90.978J但有1欠载；本次比预先高频96.718J高6.43%，请求6vs5、步数80vs77，不称已有稳定净节能。Spatial单次供给复测通过，下一步故障验证/统一配置正式对照，M3未交付。报告/CSV/校准审核更新，本轮仅离线审核，无GPU或代码改动。

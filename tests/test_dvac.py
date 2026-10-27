@@ -144,3 +144,17 @@ def test_no_age_limit_dry_run_is_explicit_and_does_not_change_default(capsys):
     plan=json.loads(capsys.readouterr().out)
     assert plan['maximum_observation_age_seconds'] is None and plan['action_offset_limits']==[50]
     launch.assert_not_called()
+
+
+def test_no_age_high_and_dvfs_pair_shares_one_model(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants
+    assert comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=['variance_only'],
+        m3_device_comparison=True))==('variance_only__device_high','variance_only__device_dvfs')
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--strategies','variance_only',
+        '--trigger-suite','libero_spatial','--compare-device','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['clocks_changed']
+    assert plan['tasks']==[['libero_spatial',0]] and plan['maximum_observation_age_seconds'] is None
+    launch.assert_not_called()

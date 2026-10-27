@@ -107,3 +107,5 @@ Spatial复测前已校准首次恢复预算：m3.json引用c4b1faa3/recovery_cal
 Spatial恢复预算校准后复测387688e3已完成：80步成功、0欠载、6.312秒、102.937J，校准来源与首次634ms预算生效、时钟恢复及功率积分均核对通过。相较预先高频参考96.718J，本次能量高6.43%，没有体现净节能；当前只确认单次供给复测通过。后续为故障测试和统一配置正式配对，原始审核位于外部M3/20261027T050657.212708Z-trigger-comparison-387688e3。
 
 H50范围的新实验使用`--no-age-limit`关闭未标定的2秒硬截断；H50步数耗尽和去噪提前刷新保留，旧默认2秒用于复现。高频/调频对照均须采用相同开关。关闭后尚未GPU重测，66项相关检查及worker转发已通过。
+
+无2秒限制的Spatial配对复测入口已准备：`run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_spatial --compare-device --no-age-limit`。两侧同H50、仅去噪、age=null，先高频后动态调频，共2回合/1model，需用户终端sudo。相关检查通过，尚未实际运行；结果将继续归入外部M3目录。

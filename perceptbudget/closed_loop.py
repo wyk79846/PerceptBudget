@@ -34,8 +34,11 @@ def comparison_variants(config):
                 any(v not in ('events_only','variance_only','events_and_variance') for v in variants)
                 or type(repeats) is not int or repeats<1):
             raise ValueError('Use distinct trigger strategies and positive repeats')
-        return tuple(v if repeats==1 else f'{v}__repeat{r}'
+        labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
+        if config.get('m3_device_comparison'):
+            return tuple(f'{v}__device_{device}' for v in labels for device in ('high','dvfs'))
+        return labels
     if config.get('m3_dvac_horizon_comparison'):
         return ('dvac_h20','dvac_h50')
     return ('deadline_high','dvac_high')
@@ -67,6 +70,7 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg['m3_trigger_comparison']=bool(settings.get('trigger_comparison'))
         cfg['m3_trigger_variants']=settings.get('trigger_variants')
         cfg['m3_trigger_repeats']=settings.get('trigger_repeats',1)
+        cfg['m3_device_comparison']=bool(settings.get('device_comparison'))
     with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
