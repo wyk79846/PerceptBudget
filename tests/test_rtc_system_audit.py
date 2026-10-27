@@ -45,6 +45,37 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+@pytest.mark.parametrize('recovery',[False,True])
+def test_dynamic_rtc_prefix_bound_and_copied_recovery_plan(tmp_path,recovery):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_scheduler_mode='deadline_dvfs' if recovery else 'deadline_high',
+        controlled_delay_steps=20,m3_timing={'maximum_action_offset':25,'maximum_observation_age_seconds':None})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    requests[1]['rtc_solver_inputs']['delay']=20
+    requests[1]['rtc_guidance']['delay_estimate_steps']=20
+    step=4 if recovery else 5
+    guard=3 if recovery else 2
+    decision=dict(step=step,start_now=True,inflight=False,deadline=100.,
+        latest_start=50.+(5-step-guard)*.05,service_seconds=.9,margin_seconds=.1,
+        wait_seconds=0.,reason='buffer',decision_monotonic=50.,
+        estimated_control_period_seconds=.05,rtc_delay_steps=20,rtc_latest_submit_step=5,
+        rtc_submit_guard_steps=guard,path='low_continue_recovery' if recovery else 'high_frequency',
+        start_constraint='rtc_prefix')
+    events.append(dict(event='m3_decision',**decision))
+    if recovery:events.append(dict(event='m3_decision',**dict(decision,step=5)))
+    requests[1]['m3_timing']=dict(decision)
+    save()
+    assert audit(tmp_path)['passed']
+    events[-1]['latest_start']=99.
+    save()
+    assert not audit(tmp_path)['passed']
+    events[-1]['latest_start']=decision['latest_start']
+    events[-1]['rtc_submit_guard_steps']=0
+    save()
+    assert 'm3_rtc_prefix_bound_inputs' in [f['check'] for f in audit(tmp_path)['failures']]
+
+
 def test_dynamic_refresh_requires_recorded_deadline_instead_of_fixed_counter(tmp_path):
     requests,events,save=fixture(tmp_path)
     meta=json.loads((tmp_path/'run.json').read_text())

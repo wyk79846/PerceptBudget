@@ -1,6 +1,7 @@
 """Independent saved-record system audit; does not call production queue/history helpers."""
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -142,8 +143,26 @@ def audit(run):
                 check('m3_request_triggered_by_recorded_deadline',
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
+                expected_start=d['deadline']-d['service_seconds']-d['margin_seconds'] if d else float('nan')
+                if d.get('rtc_latest_submit_step') is not None:
+                    # Recovery acknowledges HIGH on the following control tick;
+                    # the copied plan still belongs to the original decision.
+                    originals=[e for e in events if e['event']=='m3_decision'
+                               and e.get('decision_monotonic')==d.get('decision_monotonic')]
+                    decision_step=min(e['step'] for e in originals)
+                    period=d['estimated_control_period_seconds']
+                    delay=g['delay_estimate_steps']
+                    latest_submit=old['observation_step']+cfg['H']-delay
+                    guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
+                    prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
+                    check('m3_rtc_prefix_bound_inputs',d['rtc_delay_steps']==delay
+                          and d['rtc_latest_submit_step']==latest_submit
+                          and d['rtc_submit_guard_steps']==guard,pid)
+                    check('m3_start_constraint',d['start_constraint']==(
+                          'rtc_prefix' if prefix_start<expected_start else 'service_deadline'),pid)
+                    expected_start=min(expected_start,prefix_start)
                 check('m3_service_and_margin_subtracted_once',bool(d)
-                      and abs(d['latest_start']-(d['deadline']-d['service_seconds']-d['margin_seconds']))<1e-8,pid)
+                      and abs(d['latest_start']-expected_start)<1e-8,pid)
                 check('m3_nonnegative_wait_and_due',d.get('wait_seconds')==0
                       and d.get('service_seconds',0)>0 and d.get('margin_seconds',-1)>=0,pid)
                 # The source step and normalized state checks above independently
