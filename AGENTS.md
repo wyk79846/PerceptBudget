@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户无age Spatial配对525ad217 completed：1model/1expert，高频a76c2cf7和DVFS c7ec3a8c均77step success/0underflow，初始物理/frame/state哈希精确一致。时间5.669/5.931s，整任务能量70.475/63.858J，低9.39%但时间高4.63%；原始积分全覆盖复算/系统审计通过，DVFS推理高频/低频采样及最终RESTORED通过。age确为null，最大实际年龄3.701/3.917s，用到第48/49动作；请求origin40/41、commit48/49，仅2次预测。关键归因：bootstrap未采去噪轨迹，首guided仅warmup，因此本次阈值激活0，只有buffer触发，不能宣称DVAC触发收益；验证的是长动作覆盖/RTC/调频。报告/CSV/复算已补；下一步较长Object/Goal无age对照检查信号参与，故障/正式长测仍待做。本次仅离线审核无新GPU/代码或默认变更。
+
 - 2026-10-27 用户授权无2s限制重测，已准备Spatial同模型高频/DVFS配对：run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_spatial --compare-device --no-age-limit。新增device标签和子回合scheduler_mode切换，两侧均age=null/H50，先高频再DVFS，只一次模型/图准备，重置初始条件和信号历史。67相关tests及补充12项clock/forward检查通过，backup archive/pre-no-age-device-pair-20261027。sudo-n true仍需用户密码，未启动GPU或改频率；待用户终端执行后审核双回合能量/供给/范围/原因/RESTORED，不能称无age版已验证。报告已记录命令。
 
 - 2026-10-27 用户指出2s硬截断抵消H50范围，已增加trigger-comparison --no-age-limit：运行配置年龄null，DeadlineRuntime准入/截止及audit_rtc_system一致跳过年龄检查，保留H50耗尽和DVAC提前刷新，不改历史默认2s。66相关tests通过，追加worker转发检查通过；backup archive/pre-optional-age-limit-20261027。只完成实现/检查，未GPU重测；前面最大30～39步不能当连续50步已验证。后续新实验及高低频对照均显式加此开关，任务书/报告同步，不能将去掉年龄限制收益直接算调频收益。

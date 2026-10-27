@@ -109,3 +109,5 @@ Spatial恢复预算校准后复测387688e3已完成：80步成功、0欠载、6.
 H50范围的新实验使用`--no-age-limit`关闭未标定的2秒硬截断；H50步数耗尽和去噪提前刷新保留，旧默认2秒用于复现。高频/调频对照均须采用相同开关。关闭后尚未GPU重测，66项相关检查及worker转发已通过。
 
 无2秒限制的Spatial配对复测入口已准备：`run_m3.py --mode trigger-comparison --strategies variance_only --trigger-suite libero_spatial --compare-device --no-age-limit`。两侧同H50、仅去噪、age=null，先高频后动态调频，共2回合/1model，需用户终端sudo。相关检查通过，尚未实际运行；结果将继续归入外部M3目录。
+
+无age Spatial同模型配对525ad217已审核：高频/DVFS均77步成功、0欠载，能量70.475/63.858J（低9.39%），时间5.669/5.931秒（高4.63%）。实际用到第48/49步、观测年龄超过3秒，硬截断确已关闭。该短回合仅两次预测，去噪阈值尚未激活；不能将收益归因于DVAC触发。原始功率/频率/恢复检查通过，详细结果在外部M3/20261027T052255.735779Z-trigger-comparison-525ad217。
