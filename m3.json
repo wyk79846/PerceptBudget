@@ -19,6 +19,7 @@
     "maximum_observation_age_seconds": 2.0,
     "minimum_request_steps": 5,
     "margin_updates": false,
+    "recovery_calibration_source": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M3/20261027T045030.921015Z-trigger-comparison-c4b1faa3/recovery_calibration.json",
     "scope": "Calibration start: offset20 from existing task0 q20 successes; event and age limits can trigger earlier"
   },
   "threshold_status": "initial command-unit thresholds; record first, calibrate before scheduling"

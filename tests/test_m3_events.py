@@ -94,3 +94,26 @@ def test_recording_dry_run_never_spawns_worker(capsys):
     assert len(d['tasks'])==3 and d['model_loads']==1
     assert not d['policy_changed'] and not d['clocks_changed']
     launch.assert_not_called()
+
+
+def test_dvfs_session_loads_measured_recovery_samples_before_resident_model(tmp_path):
+    from perceptbudget.closed_loop import recording_session
+    from perceptbudget.deadline_controller import FullServiceTimes
+    calibration=tmp_path/'calibration.json'
+    calibration.write_text(json.dumps(dict(status='completed',samples_seconds=[.634,.581,.604])))
+    event_path=tmp_path/'events.json'
+    event_path.write_text(json.dumps(dict(run='episode',suite='libero_spatial',task_id=0,q=5,
+        control_steps=5,mode='deadline_dvfs',summary=dict(committed_chunks=1,forecast_counts={}))))
+    record=dict(episodes=[dict(action_events=str(event_path))],model_loads=1,suffix_loads=1)
+    settings=dict(mode='deadline_dvfs',calibration_tasks=[['libero_spatial',0]],events={},
+        timing=dict(source_summary='mock-m2',service_quantile=.95,recovery_calibration_source=str(calibration)))
+    measured=FullServiceTimes({h:[.553]*20 for h in ('hot','short','long')})
+    with patch('perceptbudget.closed_loop.FullServiceTimes.from_m2_summary',return_value=measured), \
+         patch('perceptbudget.device_quality.resident_quality',return_value=record) as runner, \
+         patch('perceptbudget.closed_loop.compiled_environments',return_value=nullcontext({})):
+        result=recording_session({},settings,tmp_path,Path('gate'))
+    cfg=runner.call_args.args[0]
+    assert cfg['m3_recovery_samples']==[.634,.581,.604]
+    assert cfg['m3_recovery_calibration']['initial_estimate_seconds']==.634
+    assert len(cfg['m3_recovery_calibration']['sha256'])==64
+    assert result['clocks_changed'] and cfg['m3_service_samples']['hot']==[.553]*20

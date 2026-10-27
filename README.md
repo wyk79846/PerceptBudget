@@ -101,3 +101,5 @@ Goal复测（053b6539）已审核：仅去噪/融合各3次均成功、0断供�
 `--dry-run`只显示3回合计划，无sudo/模型/频率修改。实际运行先无模型预检，退出核对RESTORED；必要时用既有`sudo /usr/bin/python3 scripts/control_device_clocks.py restore`恢复。机制一只记录，正式基线与FlashRT未改；全量577项检查通过。M3任务书已同步最新范围。
 
 仅去噪H50调频三任务c4b1faa3已审核：3/3成功，能量90.978/122.331/141.577J；Full高频采样匹配、任务退出恢复、原始能量积分均通过。Spatial有1步观测年龄超过2秒而拒用，首轮完整恢复服务实测634ms高于初始553ms预算，需校准后复测；Object/Goal零欠载。不可将当前小测标为M3验收完成。完整审核与CSV在外部M3/20261027T045030.921015Z-trigger-comparison-c4b1faa3，阶段报告已更新。
+
+Spatial复测前已校准首次恢复预算：m3.json引用c4b1faa3/recovery_calibration.json的12条已提交恢复样本，初始P95为634.373ms，热路径与50ms余量不变。单任务复测入口在上述调频命令后加`--trigger-suite libero_spatial`，等待用户终端sudo启动；尚无复测结果。51项相关测试通过，原始标定结果作为运行依赖保留。

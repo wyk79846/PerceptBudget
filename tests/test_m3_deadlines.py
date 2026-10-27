@@ -158,3 +158,19 @@ def test_three_trigger_strategies_select_enabled_earliest_boundary(events,dvac,e
     assert plan['deadline']==pytest.approx(10.+expected_target*.05)
     assert plan['action_events_enabled']==events and plan['dvac_enabled']==dvac
     assert plan['admitted_remaining_actions']==50
+
+
+def test_measured_recovery_history_is_available_before_first_live_request():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    config=dict(m3_scheduler_mode='deadline_dvfs',m3_timing=dict(service_quantile=.95,safety_margin_seconds=.05),
+        m3_events={},m3_service_samples={h:[.553]*20 for h in ('hot','short','long')},
+        m3_recovery_samples=[.634,.581,.604],rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(config)
+    assert runtime.times.estimate('hot')==.553
+    assert runtime.times.estimate('recovery')==.634
+    old=timing_plan(now=0.,step=0,buffer_end_step=50,period=.05,observation_deadline=2.,
+        service_seconds=.553,margin_seconds=.05)
+    calibrated=timing_plan(now=0.,step=0,buffer_end_step=50,period=.05,observation_deadline=2.,
+        service_seconds=runtime.times.estimate('recovery'),margin_seconds=.05)
+    assert old.latest_start-calibrated.latest_start==pytest.approx(.081)
+    assert runtime.margin.seconds==.05

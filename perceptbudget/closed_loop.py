@@ -47,8 +47,20 @@ def recording_session(config, settings, directory, cleanup_gate):
     if settings.get('mode','record_only') in ('deadline_high','deadline_dvfs'):
         times = FullServiceTimes.from_m2_summary(settings['timing']['source_summary'],
             probability=settings['timing']['service_quantile'])
+        recovery_source=settings['timing'].get('recovery_calibration_source')
+        if settings['mode']=='deadline_dvfs' and recovery_source:
+            source=Path(recovery_source)
+            calibrated=json.loads(source.read_text())
+            if calibrated.get('status')!='completed' or not calibrated.get('samples_seconds'):
+                raise ValueError('Require completed measured recovery calibration')
+            for seconds in calibrated['samples_seconds']:
+                times.observe('recovery',seconds)
+            cfg['m3_recovery_calibration']=dict(source=str(source),
+                sha256=hashlib.sha256(source.read_bytes()).hexdigest(),samples=len(times.recovery_samples),
+                initial_estimate_seconds=times.estimate('recovery'))
         cfg.update(m3_scheduler_mode=settings['mode'], m3_timing=settings['timing'],
-                   m3_service_samples={k:list(v) for k,v in times.samples.items()})
+                   m3_service_samples={k:list(v) for k,v in times.samples.items()},
+                   m3_recovery_samples=list(times.recovery_samples))
     if settings.get('dvac_paired'):
         cfg['m3_dvac_comparison']=True
         cfg['m3_dvac_horizon_comparison']=bool(settings.get('dvac_horizon_paired'))
@@ -78,6 +90,8 @@ class DeadlineRuntime:
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
+        for seconds in config.get('m3_recovery_samples',[]):
+            self.times.observe('recovery',seconds)
         self.margin = SafetyMargin(initial=self.settings['safety_margin_seconds'])
         self.initial_period = config['rtc_initial_control_period_seconds']
         self.events, self.chunks, self.plan = [], {}, None
