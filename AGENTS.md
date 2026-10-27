@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-27 用户Goal复测053b6539 completed：var/fusion各3，同模型/专家各1，三对初始physics/frame/state哈希精确一致。两组本次均3/3 success/0underflow；步数var155/137/143、融合155/137/142；均时间8.243/8.209s，均整任务能量150.532/152.989J，原始积分全覆盖复算通过。两组均15波动+8年龄触发，融合仅额外1关键动作请求，第一轮154步触发但155步成功结束、未提交，增加收尾计算。前次融合Goal timeout本次未复现，不作融合必然更差结论；本次无额外收益、仅去噪更简洁作为候选，默认未改。审核/CSV/脚本及M3进展已补，本轮无新GPU或代码改动。
+
 - 2026-10-27 用户自行执行Goal稳定性复测：run_m3.py --mode trigger-comparison --trigger-suite libero_goal --strategies variance_only events_and_variance --repeats 3。已补子集/重复选择与worker参数转发，同模型6回合交替var/融合，H50、seed7/init0、每回合历史清空，repeat标签唯一并写配置；此轮助手只做入口准备、定向测试和dry-run，未启动GPU复测。改前archive/pre-goal-trigger-repeat-20261027；待用户完成后核对6回合结果及最早轨迹分叉。
 
 - 2026-10-27 三触发策略对照4d8a91d8 completed：3suite task0×events_only/variance_only/events_and_variance共9，H50cap/N5/state/beta5/2s年龄/50ms余量/高频一致，1model/1expert，6对initial物理/frame/state哈希精确一致，开关审计/系统记录/原始功率积分复算全通过，0underflow。两单独组各3/3成功，融合2/3，Goal300步timeout保留308.725J。Spatial能量104.844/96.718/105.133J(均77步)；Object138.212/135.955/151.322J(145/144/143步)；Goal242.880/169.334/308.725J(280/155/300步)。Goal融合无action_event主导请求，前4预测0/13/41/66动作和noise与varonly完全一致；下一观测81vs80，边界92/同服务.5530195s、周期50.3512vs50.2218ms，第90步来源切换分叉，不能把timeout归因于融合逻辑本身。仅去噪本轮较好，不默认替换；建议小范围重复Goal稳定性再改合并规则。全量574passed/9skip/110subtests，backup archive/pre-trigger-comparison-20261027；M3进展追加九行表/触发原因/数值时序。入口run_m3.py --mode trigger-comparison，仅新增可选开关，FlashRT/内核未改。
