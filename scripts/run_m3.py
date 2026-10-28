@@ -18,6 +18,7 @@ def main():
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'watchdog', 'comparison', 'analyze'), default='record-only')
+    parser.add_argument('--resume-comparison', type=Path, help='Retain audited completed episodes and run missing comparison cells')
     parser.add_argument('--comparison-screen',action='store_true',help='Four formal groups on Spatial task0 before the36-episode comparison')
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
@@ -38,6 +39,8 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.resume_comparison and (args.mode!='comparison' or args.comparison_screen):
+        parser.error('--resume-comparison requires a full comparison')
     if args.comparison_screen and args.mode!='comparison':
         parser.error('--comparison-screen requires --mode comparison')
     if args.trigger_task_ids and (not args.trigger_suite or args.trigger_task_id!=0
@@ -106,6 +109,9 @@ def main():
     uses_dvfs=settings.get('mode')=='deadline_dvfs'
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
+    if args.resume_comparison:
+        from perceptbudget.m3_comparison import resume_plan
+        cfg['m3_resume_plan']=resume_plan(args.resume_comparison,settings,cfg)
     if args.mode == 'analyze' and (not args.source_run or args.worker):
         parser.error('Offline review requires --source-run, without worker')
     if args.mode == 'dvac-probe' and (not args.source_run or len(args.source_run)!=1):
@@ -127,6 +133,8 @@ def main():
             exact_bootstrap_pair=bool(settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies in (['events_only','events_and_variance'],['events_only','variance_only']) or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
+            reused_episodes=len(cfg.get('m3_resume_plan',{}).get('episodes',[])),
+            new_episodes=cfg.get('m3_resume_plan',{}).get('remaining_episodes',len(settings['calibration_tasks'])*variants_per_task),
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog','comparison'), clocks_changed=uses_dvfs,
             formal_groups=['A_fixed_q5','B_high','C_independent','D_joint'] if settings.get('formal_comparison') else [],
             formal_trigger_strategy=settings['formal']['trigger_strategy'] if settings.get('formal_comparison') else None,
@@ -174,6 +182,8 @@ def main():
                            '--mode',args.mode,'--suite',args.suite]
                 if args.source_run:
                     command += ['--source-run',*[str(p.resolve()) for p in args.source_run]]
+                if args.resume_comparison:
+                    command += ['--resume-comparison',str(args.resume_comparison.resolve())]
                 if args.comparison_screen:
                     command += ['--comparison-screen']
                 if args.mode=='trigger-comparison':

@@ -137,3 +137,34 @@ def summarize_comparison(directory, record, *, screen):
     lines+=['',f"初始输入和首次预测严格一致的任务：{sum(eligibility.values())}/{len(eligibility)}。",'',result['scope']]
     (directory/'comparison.md').write_text('\n'.join(lines)+'\n')
     return result
+
+
+def resume_plan(source, settings, config):
+    """Audit immutable completed episodes; retain failures and run only missing cells."""
+    source=Path(source).resolve()
+    if settings.get('comparison_screen'):
+        raise ValueError('Resume requires the full comparison')
+    if json.loads((source/'comparison_plan.json').read_text())!=settings:
+        raise ValueError('Resume comparison plan changed')
+    original=json.loads((source/'run.json').read_text())['config_snapshot']
+    if {k:v for k,v in original.items() if k not in ('m3_settings','m3_resume_plan')}!=config:
+        raise ValueError('Resume model or execution configuration changed')
+    record=json.loads((source/'recording.json').read_text())
+    from scripts.audit_rtc_system import audit
+    allowed={(s,t,g) for s,t in settings['calibration_tasks'] for g in GROUPS}
+    seen=set()
+    episodes=record['episodes']
+    for row in episodes:
+        key=(row['suite'],row['task_id'],row['view'])
+        if key not in allowed or key in seen:
+            raise ValueError('Duplicate or unexpected resume episode')
+        if not audit(Path(row['run']))['passed'] or not audit_group_clocks(row['run'],row['view'])['passed']:
+            raise ValueError('Completed episode failed resume audit: '+row['run'])
+        seen.add(key)
+    remaining=[task for task in settings['calibration_tasks']
+        if any((task[0],task[1],g) not in seen for g in GROUPS)]
+    if not remaining:
+        raise ValueError('Comparison already complete')
+    return dict(source=str(source),episodes=copy.deepcopy(episodes),remaining_tasks=remaining,
+        remaining_episodes=len(allowed)-len(seen),
+        previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])

@@ -152,12 +152,17 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg['m3_device_comparison']=bool(settings.get('device_comparison'))
         cfg['m3_static_q']=settings.get('static_q')
         cfg['m3_event_dedup_comparison']=bool(settings.get('event_dedup_comparison'))
-    with compiled_environments(directory, settings['calibration_tasks'], config) as cache:
+    resume=cfg.get('m3_resume_plan')
+    preflight_tasks=resume['remaining_tasks'] if resume else settings['calibration_tasks']
+    with compiled_environments(directory, preflight_tasks, config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
     reports = [json.loads(Path(e['action_events']).read_text()) for e in record['episodes']]
     result = summarize(directory, reports, model_loads=record['model_loads'],
                        suffix_loads=record['suffix_loads'], episodes=record['episodes'])
+    if resume:
+        result.update(resume_source=resume['source'],reused_episodes=len(resume['episodes']),
+            total_model_loads=resume['previous_model_loads']+record['model_loads'])
     result['environment_cache'] = cache
     result['mode'] = settings.get('mode','record_only')
     result['policy_changed'] = result['mode'] != 'record_only'

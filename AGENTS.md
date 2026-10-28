@@ -333,3 +333,6 @@
 - 2026-10-27单次slowdown探针d5172a96 task4成功229→225步，12.878→12.556s，197.068→175.039J（−11.18%），11→9请求，初预测与0..27控制一致，0underflow/restore。新增在线候选events_and_variance_merge：当前已确认事件内，独立slowdown紧接下一个gripper且间隔≤8步才合并；转向/中间减速/同位置事件阻止，去噪与RTC硬限保留。初始8步仅来自开发单例，非通用结论；默认仍原取早。183项相关检查通过，task4/task2各配对尚未运行；FlashRT未改。离线报告任务产出/perceptbudget/M3/20261027-event-refresh-review/review.md，备份archive/pre-m3-nearby-event-merge-20261027。
 
 - 2026-10-27用户要求隔离机制一：新增events_only/events_only_merge严格配对，两组m3_dvac_enabled均False，候选仅8步邻近减速/夹爪合并；共用configure_trigger_signals用于真实worker及测试，保留事件/缓冲/RTC/调频。默认混合取早不变。184项相关测试通过；task4/task2各配对未运行。之前在线混合merge task4总能量+5.24%、task2−0.83%，不采纳为默认；不再声称单次11%收益可推广。备份archive/pre-m3-events-only-merge-20261027。
+
+### 2026-10-28 M3 comparison RAM interruption
+Formal comparison 20261028T014645.474204Z-comparison-0f04f20e stopped after19 audited episodes (16 successes,3 Object task3 timeouts). Preserve ALL outcomes. See M3_RESUME.md; --resume-comparison audits the frozen plan/config and existing episodes, then runs missing17 with one resident model and records cross-session provenance. Do not restart all36 or lower RAM thresholds. Stable model memory plus newly started VS Code processes suggests external pressure; no unique failing allocation proven. FlashRT unchanged.

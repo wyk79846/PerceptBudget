@@ -256,6 +256,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         graph_audits=[], memory=[], q=5, selection=None,
         scope='task0 calibration; task3 holdout; seed7/init0; no clock changes',
         holdout_policy='Full task3 collected early to avoid reloading, never used to select a camera')
+    if cfg.get('m3_resume_plan'):
+        continuation=cfg.pop('m3_resume_plan')
+        record.update(episodes=copy.deepcopy(continuation['episodes']),resume_source=continuation['source'],
+            previous_model_loads=continuation['previous_model_loads'])
     if cfg.get('m3_formal_comparison'):
         record['formal_trigger_strategy']=cfg['m3_formal_signal']
     if resume and path.exists():
@@ -547,6 +551,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M3' if record_only else 'M2',
                                         'record-full' if record_only else quality_run_purpose(label))
+                    record.update(active_run=str(active),active_group=view)
+                    save()
                     trace_dir = active/'rtc'
                     trace_dir.mkdir()
                     _write_json_atomically(active/'control_period_calibration.json', calibration)
@@ -614,6 +620,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     del episode, requests, result
                     checked = None
                     active = None
+                    record.update(active_run=None,active_group=None)
                     mem('episode_released')
                 env.close()
                 env = None

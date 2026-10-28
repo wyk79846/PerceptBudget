@@ -125,3 +125,31 @@ def test_formal_measurements_reject_wrong_clocks_or_missing_energy(tmp_path,brok
     (tmp_path/'summary.json').write_text(json.dumps(dict(episode=dict(including_drain_power=dict(
         total_energy_mj=10000,coverage_fraction=.9 if broken=='missing_power' else 1.,missing_count=0)))))
     assert audit_group_clocks(tmp_path,'B_high')['passed']==(broken is None)
+
+
+def test_resume_retains_timeouts_and_only_schedules_missing_cells(tmp_path):
+    from perceptbudget.m3_comparison import resume_plan
+    settings=comparison_settings(settings_fixture(tmp_path))
+    config={'checkpoint':'frozen','H':50}
+    (tmp_path/'comparison_plan.json').write_text(json.dumps(settings))
+    (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':dict(config,m3_settings=settings)}))
+    rows=[]
+    for index,(suite,tid) in enumerate(settings['calibration_tasks']):
+        for group in group_order(index):
+            if len(rows)==19:break
+            rows.append(dict(suite=suite,task_id=tid,view=group,run=str(tmp_path/'episode'),
+                outcome='timeout' if index==4 else 'success'))
+        if len(rows)==19:break
+    (tmp_path/'recording.json').write_text(json.dumps(dict(episodes=rows,model_loads=1)))
+    with patch('scripts.audit_rtc_system.audit',return_value={'passed':True}), \
+         patch('perceptbudget.m3_comparison.audit_group_clocks',return_value={'passed':True}):
+        plan=resume_plan(tmp_path,settings,config)
+        assert plan['episodes']==rows
+        assert sum(r['outcome']=='timeout' for r in plan['episodes'])==3
+        assert plan['remaining_episodes']==17 and len(plan['remaining_tasks'])==5
+        assert plan['previous_model_loads']==1
+        with pytest.raises(ValueError,match='configuration changed'):
+            resume_plan(tmp_path,settings,dict(config,H=20))
+    with patch('scripts.audit_rtc_system.audit',return_value={'passed':False}):
+        with pytest.raises(ValueError,match='failed resume audit'):
+            resume_plan(tmp_path,settings,config)
