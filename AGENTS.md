@@ -2,11 +2,15 @@
 
 ## 唯一有效基线
 
+- M3正式动态刷新采用原版机制一，见m3.json formal.trigger_strategy=events_only及run_m3 --mode comparison；A组仍保留下面的原始固定q5基线作比较。
+
 - 以`config.json`及`perceptbudget/baseline.py`为准：新LeRobot LIBERO H50权重、N5、BF16、state启用/容量200、完整VJP RTC真实异步、beta5、source-step图/条件缓存/Flash注意力/融合norm/autotune。
 - 正式入口`scripts/run_baseline.py`，默认q5；扫描q5/10/20/30/40。不要恢复旧模型、运动减半、硬前缀或SEAM为默认。
 - 参考run和gate路径见配置，现有诊断内部仍读取这些证据。不要删除原始结果；若要解除历史run依赖，作为独立实现变更审核。
 
 ## 已完成与待推进
+
+- 2026-10-28用户已明确选原版机制一并授权切换。m3.json formal.trigger_strategy=events_only；B/C/D启用原夹爪/减速/转向，关闭去噪触发及合并，A固定q5。正式配置/报告记录m3_formal_signal与formal_trigger_strategy，独立audit核对配置及运行中的实际开关；历史缺字段按variance_only解释，84241059四条原记录重审仍全通过，不改旧raw。737pass/9skip/110subtests，FlashRT/权重/RTC/精度/state/调频/看门狗未改。新机制一四组设备短测尚未执行，下一步run_m3 --mode comparison --comparison-screen（4回合1model）；通过后才36。README与任务书规范部分已同步，进一步机制一优化和触发器选择实验停止，纯去噪/混合保留消融。备份archive/pre-formal-events-only-20261028。
 
 - 2026-10-28 83a5e389纯机制一vs混合取早6回合完成，3对严格bootstrap/全成功/0欠载/audit/RESTORED，1model/1expert，功率重积分差0。task1机制239步14.284s198.682J10请求，混233步13.796s197.230J10；task4机制229/12.972/197.177/11，混229/12.945/198.409/11；task7机制244/13.026/201.057/11，混236/12.670/216.042/13。混合总J+2.47%、时间−2.16%、请求34vs32，两组均3/3；能效优先更倾向原机制一作为正式候选，但formal默认尚未修改、36未启动。上一轮event/variance在不同会话，不得拼成同模型三组实验。CSV/postrun_review/阶段进展已保存。
 

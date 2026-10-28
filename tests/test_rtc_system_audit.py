@@ -45,6 +45,37 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_formal_event_only_audit_checks_config_and_runtime_switches(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    cfg=meta['config_snapshot']
+    cfg.update(H=50,N=5,precision='bfloat16',state_enabled=True,m3_scheduler_mode='deadline_high',
+        m3_formal_group='B_high',m3_formal_signal='events_only',m3_dvac_enabled=False,
+        m3_action_events_enabled=True,m3_merge_slowdown_steps=None,m3_request_timeout_seconds=3.,
+        m3_watchdog_path=str(tmp_path/'watchdog.json'),
+        m3_timing=dict(maximum_action_offset=50,maximum_observation_age_seconds=None))
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    for request in requests:
+        request['actions_raw']+=request['actions_raw'][:25]
+        request['actions']+=request['actions'][:25]
+        request['rtc_solver_inputs']['noise']=[[0.]*32 for _ in range(50)]
+    requests[1]['rtc_solver_inputs']['previous_raw']=[[0.]*32 for _ in range(45)]
+    for event in events:
+        if event['event']=='prediction_committed':event['new_prediction_remaining_actions']+=25
+    decision=dict(event='m3_decision',step=5,start_now=True,inflight=False,deadline=50.5,latest_start=49.5,
+        service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='action_event',signal_policy='earliest',
+        decision_monotonic=50.,estimated_control_period_seconds=.05,admitted_remaining_actions=45,
+        critical_step=15,dvac_step=None,action_events_enabled=True,dvac_enabled=False,
+        dvfs_policy='joint',service_budget_history='hot',path='high_frequency')
+    events.append(decision);requests[1]['m3_timing']=dict(decision);save()
+    assert audit(tmp_path)['passed']
+    cfg['m3_dvac_enabled']=True;(tmp_path/'run.json').write_text(json.dumps(meta))
+    assert 'formal_signal_switches' in [f['check'] for f in audit(tmp_path)['failures']]
+    cfg['m3_dvac_enabled']=False;(tmp_path/'run.json').write_text(json.dumps(meta))
+    decision['dvac_enabled']=True;save()
+    assert 'formal_runtime_signal_switches' in [f['check'] for f in audit(tmp_path)['failures']]
+
+
 def test_latest_signal_audit_recomputes_boundary_and_rejects_tampered_deadline(tmp_path):
     requests,events,save=fixture(tmp_path)
     meta=json.loads((tmp_path/'run.json').read_text())

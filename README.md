@@ -22,7 +22,7 @@
 
 - **M1**：[统一交付报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1阶段交付报告_新模型H50_20261021.md)。[历史报告目录](../任务指导与相关参考/PerceptBudget归档/M1相关报告/)。
 - **M2**：[统一交付报告（含27项小表）](../任务指导与相关参考/PerceptBudget归档/M2相关报告/PerceptBudget_M2阶段交付报告_20261025.md)。[归档索引](../任务指导与相关参考/PerceptBudget归档/M2相关报告/归档索引.md)。操作接口和恢复见[调频说明](docs/M2_CLOCK_CONTROL.md)。
-- **M3进行中（以此条为当前范围）**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。当前用Full＋Continue、去噪触发与剩余缓冲，结合完整服务耗时和余量计算启动时刻；机制一优化后置、只记录。最小闭环和看门狗已验证，接下来统一四组比较。动态Fast和完整联合搜索留待后续。
+- **M3进行中（以此条为当前范围）**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。当前用Full＋Continue、原版机制一与剩余缓冲，结合完整服务耗时和余量计算启动时刻；机制一进一步优化后置，去噪及混合保留对照。最小闭环和看门狗已验证，接下来统一四组比较。动态Fast和完整联合搜索留待后续。
 
 M2已有27格成本覆盖，重点9格各60次，其余Full/Fast每格20次、高频/均衡Continue每格5窗。刷新能量是相对静态等待的平均增量，Continue能量是执行窗绝对能量，两者不能直接混算；这些不是整任务节能结果。200ms/1s是空闲标定点，不是运行时固定等待指令或已证实的GPU断电状态。
 
@@ -40,42 +40,18 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 
 ## M3当前入口
 
-最新纯机制一/混合对照83a5e389已完成：两组3/3，混合能量+2.47%、时间−2.16%。节能优先暂倾向原机制一，正式配置尚未改、36回合待定。以下为复现入口：LIBERO-10 task1/4/7，纯机制一对混合取早，两组无事件合并，同一joint调频/模型/RTC、交替组序、6回合/一次模型加载。入口：
+用户已确认采用原版机制一。`m3.json`的`formal.trigger_strategy=events_only`集中控制正式选择：B/C/D用夹爪、减速、转向提示刷新，关闭去噪触发和事件合并。模型仍执行5步去噪生成动作；模型、RTC、精度、state及看门狗保持原值。
 
-```bash
-cd /home/wyk/workspace/PerceptBudget
-/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode trigger-comparison \
-  --trigger-suite libero_10 --trigger-task-ids 1 4 7 \
-  --strategies events_only events_and_variance --device-dvfs --no-age-limit
-```
-
-
-[阶段进展](../任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md)包含已完成结果和待测问题。`m3.json`集中存放校准参数。
-
-纯机制一与纯去噪首轮已完成（e2ce8cab）：机制一3/3成功，去噪1/3；尚不推广总体结论，正式36回合继续暂缓。以下为该轮复现入口：LIBERO-10 task1/4/7，各两种策略，共6回合、一次模型加载，任务间交替组序。调频/模型/RTC等一致，不开事件合并；逐任务核对初始输入和首次预测。
-
-```bash
-cd /home/wyk/workspace/PerceptBudget
-/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode trigger-comparison \
-  --trigger-suite libero_10 --trigger-task-ids 1 4 7 \
-  --strategies events_only variance_only --device-dvfs --no-age-limit
-```
-
-四组入口短测84241059已通过。正式36回合暂不启动，等两种触发器的直接对照后确定正式需求规则。已保留的四组入口如下：
+先复核机制一四组入口，四回合、一次模型加载：
 
 ```bash
 cd /home/wyk/workspace/PerceptBudget
 /home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode comparison --comparison-screen
 ```
 
-Spatial task0四回合、一次模型加载：A固定q5高频，B去噪触发高频，C相同触发但到高频计划时刻才恢复，D结合恢复服务预算提前准备。全部完整感知/state/H50/N5/BF16/RTC，机制一只记录，均有已验证的3秒请求超时及外层清理。四组短测审核后，再去掉`--comparison-screen`执行正式9任务×4组=36回合，一次模型加载、任务间轮换组顺序。先不要把未运行的正式计划写成已完成结果。
+A固定q5高频；B机制一高频；C机制一独立降频；D机制一联合设备准备。新配置短测通过后，去掉`--comparison-screen`跑三集合各task1/3/6，共36回合、一次加载并轮换组序。旧84241059四组短测是单去噪，不作为新配置已经验证的证据。
 
-各回合检查完整功率覆盖、Full高频和最终恢复；保存`comparison.csv`、`comparison_summary.json`、`comparison.md`。初始图像/噪声/首次动作不严格相同的任务会标记，不能直接归因其能量差。所有失败尝试能量计入每成功任务能量。
-
-历史只记录/高频/触发器诊断入口仍保留用于复现；后文旧实验状态以其日期及阶段进展为准。
-
-
-模型前预编译环境并核对回放，连续任务沿用一次加载的模型；M3运行结果统一写入外部`M3/`目录。
+全部检查初始配对、源索引、Full高频、完整任务功率和频率恢复，生成`comparison.csv`、`comparison_summary.json`、`comparison.md`。任务总能量包含失败尝试与收尾计算；初始不严格一致的任务单独标记。[任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)与[阶段进展](../任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md)保留历次对照及复现入口，历史状态以其日期为准。
 
 ## 检查和运行
 

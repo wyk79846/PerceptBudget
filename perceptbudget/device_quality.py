@@ -256,6 +256,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         graph_audits=[], memory=[], q=5, selection=None,
         scope='task0 calibration; task3 holdout; seed7/init0; no clock changes',
         holdout_policy='Full task3 collected early to avoid reloading, never used to select a camera')
+    if cfg.get('m3_formal_comparison'):
+        record['formal_trigger_strategy']=cfg['m3_formal_signal']
     if resume and path.exists():
         record = json.loads(path.read_text())
         for row in record['episodes']:

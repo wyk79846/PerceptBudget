@@ -14,6 +14,8 @@ GROUPS=('A_fixed_q5','B_high','C_independent','D_joint')
 def comparison_settings(settings, *, screen=False):
     result=copy.deepcopy(settings)
     formal=result['formal']
+    if formal['trigger_strategy'] not in ('events_only','variance_only','events_and_variance'):
+        raise ValueError('Unknown formal trigger strategy')
     if formal['request_timeout_seconds']!=3. or formal['cleanup_grace_seconds']!=3.:
         raise ValueError('Formal watchdog settings must match the validated3s request and3s cleanup')
     proof=Path(formal['watchdog_reference'])
@@ -43,8 +45,12 @@ def configure_group(config, group):
     if group not in GROUPS:
         raise ValueError('Unknown formal comparison group')
     from perceptbudget.closed_loop import configure_fixed_baseline
-    config.update(m3_formal_group=group,m3_dvac_enabled=group!='A_fixed_q5',
-        m3_action_events_enabled=False,m3_merge_slowdown_steps=None,m3_ignore_turn=False,
+    strategy=config['m3_formal_signal']
+    if strategy not in ('events_only','variance_only','events_and_variance'):
+        raise ValueError('Unknown formal trigger strategy')
+    active=group!='A_fixed_q5'
+    config.update(m3_formal_group=group,m3_dvac_enabled=active and strategy!='events_only',
+        m3_action_events_enabled=active and strategy!='variance_only',m3_merge_slowdown_steps=None,m3_ignore_turn=False,
         m3_signal_policy='earliest',m3_event_coverage_mode='event_only',
         m3_dvfs_policy='independent' if group=='C_independent' else 'joint',
         m3_open_probe_plan=None,m3_watchdog_case=None,
@@ -116,13 +122,14 @@ def summarize_comparison(directory, record, *, screen):
                 exact_initial_pair=eligibility[(suite,tid)],both_success=a['outcome']==b['outcome']=='success',
                 attempt_energy_difference_j=b['total_energy_j']-a['total_energy_j'],
                 task_time_difference_seconds=b['task_seconds']-a['task_seconds']))
-    result=dict(status='completed',screen=screen,groups=groups,rows=rows,pairs=pairs,
+    strategy=record.get('formal_trigger_strategy','variance_only')
+    result=dict(status='completed',screen=screen,trigger_strategy=strategy,groups=groups,rows=rows,pairs=pairs,
         exact_pair_tasks=sum(eligibility.values()),total_tasks=len(eligibility),
         scope='Same-task attempts; total energy includes failed attempts and drain. Do not attribute inexact-initial pairs or failed-task energy differences to efficiency gains.')
     _write_json_atomically(directory/'comparison_summary.json',result)
     with (directory/'comparison.csv').open('w',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
-    lines=['# M3四组'+('入口短测' if screen else '正式比较'),'','|组别|成功/尝试|平均尝试能量J|每成功任务能量J（含失败）|成功任务平均秒|欠载步|','|---|---:|---:|---:|---:|---:|']
+    lines=['# M3四组'+('入口短测' if screen else '正式比较'),'',f'B/C/D统一刷新信号：{strategy}；A固定q5。','','|组别|成功/尝试|平均尝试能量J|每成功任务能量J（含失败）|成功任务平均秒|欠载步|','|---|---:|---:|---:|---:|---:|']
     for g in groups:
         energy='—' if g['energy_per_success_j'] is None else '%.3f'%g['energy_per_success_j']
         seconds='—' if g['mean_success_task_seconds'] is None else '%.3f'%g['mean_success_task_seconds']

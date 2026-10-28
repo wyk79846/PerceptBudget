@@ -120,7 +120,9 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg.update(m3_watchdog_checks=True,m3_action_events_enabled=False,
             m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),m3_request_timeout_seconds=3.)
     if settings.get('formal_comparison'):
-        cfg.update(m3_formal_comparison=True,m3_action_events_enabled=False,
+        cfg.update(m3_formal_comparison=True,m3_formal_signal=settings['formal']['trigger_strategy'],
+            m3_action_events_enabled=settings['formal']['trigger_strategy']!='variance_only',
+            m3_dvac_enabled=settings['formal']['trigger_strategy']!='events_only',
             m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),
             m3_request_timeout_seconds=settings['formal']['request_timeout_seconds'])
         _write_json_atomically(Path(directory)/'comparison_plan.json',settings)

@@ -129,6 +129,7 @@ def main():
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog','comparison'), clocks_changed=uses_dvfs,
             formal_groups=['A_fixed_q5','B_high','C_independent','D_joint'] if settings.get('formal_comparison') else [],
+            formal_trigger_strategy=settings['formal']['trigger_strategy'] if settings.get('formal_comparison') else None,
             fault_checks=['late','underflow','hang'] if settings.get('watchdog_checks') else [],
             request_timeout_seconds=settings['formal']['request_timeout_seconds'] if settings.get('formal_comparison') else 3. if settings.get('watchdog_checks') else None,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
@@ -137,7 +138,8 @@ def main():
             slowdown_detectors=['drop','valley'] if 'events_and_variance_valley' in (args.strategies or []) else [settings['events'].get('slowdown_detector','drop')],
             signal_policies=['earliest','latest'] if 'events_and_variance_latest' in (args.strategies or []) else ['earliest'],
             merge_gap_steps=[None,8] if any(s in (args.strategies or []) for s in ('events_and_variance_merge','events_only_merge')) else [None],
-            denoising_triggers=[False,True,True,True] if settings.get('formal_comparison') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
+            denoising_triggers=([False]+[settings['formal']['trigger_strategy']!='events_only']*3) if settings.get('formal_comparison') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
+            action_event_triggers=([False]+[settings['formal']['trigger_strategy']!='variance_only']*3) if settings.get('formal_comparison') else [False]*3 if settings.get('watchdog_checks') else [s!='variance_only' for s in (args.strategies or [])],
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:

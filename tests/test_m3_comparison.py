@@ -13,7 +13,7 @@ def settings_fixture(tmp_path):
     proof.write_text(json.dumps(dict(status='completed',checks={'passed':True},
         cases=[{'resumed_execution_step':51},{'resumed_execution_step':62},{'case':'hang'}])))
     return dict(timing=dict(maximum_action_offset=20,maximum_observation_age_seconds=2.),
-        formal=dict(suites=['libero_spatial','libero_object','libero_goal'],task_ids=[1,3,6],
+        formal=dict(trigger_strategy='events_only',suites=['libero_spatial','libero_object','libero_goal'],task_ids=[1,3,6],
             request_timeout_seconds=3.,cleanup_grace_seconds=3.,watchdog_reference=str(proof)))
 
 
@@ -36,17 +36,19 @@ def test_formal_plan_rejects_unverified_recovery_and_changed_timeout(tmp_path):
     with pytest.raises(ValueError,match='recovered'):comparison_settings(s)
 
 
-def test_group_configuration_only_changes_declared_refresh_and_device_policy():
-    original=dict(H=50,N=5,state_enabled=True,precision='bfloat16',m3_scheduler_mode='deadline_dvfs')
+@pytest.mark.parametrize('strategy',['events_only','variance_only','events_and_variance'])
+def test_group_configuration_only_changes_declared_refresh_and_device_policy(strategy):
+    original=dict(H=50,N=5,state_enabled=True,precision='bfloat16',m3_scheduler_mode='deadline_dvfs',m3_formal_signal=strategy)
     configs=[]
     for group in GROUPS:
         cfg=copy.deepcopy(original)
         assert configure_group(cfg,group)==5
         assert all(cfg[k]==original[k] for k in ('H','N','state_enabled','precision'))
-        assert cfg['m3_action_events_enabled'] is False and cfg['m3_merge_slowdown_steps'] is None
+        assert cfg['m3_merge_slowdown_steps'] is None and cfg['m3_open_probe_plan'] is None
         configs.append(cfg)
     assert [c['m3_scheduler_mode'] for c in configs]==['record_only','deadline_high','deadline_dvfs','deadline_dvfs']
-    assert [c['m3_dvac_enabled'] for c in configs]==[False,True,True,True]
+    assert [c['m3_dvac_enabled'] for c in configs]==[False]+[strategy!='events_only']*3
+    assert [c['m3_action_events_enabled'] for c in configs]==[False]+[strategy!='variance_only']*3
     assert [c['m3_hold_high_clocks'] for c in configs]==[True,True,False,False]
     assert configs[2]['m3_dvfs_policy']=='independent' and configs[3]['m3_dvfs_policy']=='joint'
 
@@ -84,7 +86,8 @@ def test_formal_cli_screen_and_full_grid_do_not_load_models(capsys):
             assert main()==0
         plan=json.loads(capsys.readouterr().out)
         assert plan['episodes']==episodes and len(plan['tasks'])==tasks and plan['model_loads']==1
-        assert plan['formal_groups']==list(GROUPS) and plan['denoising_triggers']==[False,True,True,True]
+        assert plan['formal_groups']==list(GROUPS) and plan['denoising_triggers']==[False]*4
+        assert plan['action_event_triggers']==[False,True,True,True] and plan['formal_trigger_strategy']=='events_only'
         assert plan['request_timeout_seconds']==3. and plan['exact_bootstrap_pair']
         launch.assert_not_called()
 
