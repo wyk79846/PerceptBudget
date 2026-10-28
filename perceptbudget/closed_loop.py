@@ -29,8 +29,9 @@ def load_settings(path):
 
 def comparison_variants(config):
     if config.get('m3_margin_scan'):
-        labels=('events_only__repeat1','events_only__repeat2','events_only__repeat3')
-        offset=config.get('m3_trigger_task_index',0)%3
+        margins=config.get('m3_margin_candidates_ms',(50,25,0))
+        labels=tuple(f'events_only__repeat{i+1}' for i in range(len(margins)))
+        offset=(config.get('m3_trigger_task_index',0)+config.get('m3_margin_round',1)-1)%len(labels)
         return labels[offset:]+labels[:offset]
     if config.get('m3_formal_comparison'):
         from perceptbudget.m3_comparison import group_order
@@ -121,7 +122,9 @@ def recording_session(config, settings, directory, cleanup_gate):
     from perceptbudget.device_quality import resident_quality
     cfg = dict(config, m3_events=settings['events'])
     if settings.get('margin_scan'):
-        cfg.update(m3_margin_scan=True,m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),
+        cfg.update(m3_margin_scan=True,m3_margin_candidates_ms=settings['margin_candidates_ms'],
+            m3_margin_long_run=settings['margin_long_run'],m3_margin_round=settings['margin_round'],
+            m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),
             m3_request_timeout_seconds=3.)
     if settings.get('watchdog_checks'):
         cfg.update(m3_watchdog_checks=True,m3_action_events_enabled=False,

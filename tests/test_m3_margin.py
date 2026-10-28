@@ -28,3 +28,21 @@ def test_margin_scan_rotates_three_candidates_without_changing_default():
             assert cfg['m3_dvfs_policy']=='joint'
             assert SafetyMargin(initial=ms/1000.,floor=0.).seconds==ms/1000.
     assert len(set(first))==3
+
+
+def test_long_margin_rounds_are_nine_tasks_two_candidates_and_opposite_order():
+    source=json.loads((Path(__file__).resolve().parents[1]/'m3.json').read_text())
+    rounds=[scan_settings(source,long_run=True,round_index=i) for i in (1,2)]
+    assert rounds[0]['calibration_tasks']==rounds[1]['calibration_tasks'][::-1]
+    for round_index,settings in enumerate(rounds,1):
+        assert len(settings['calibration_tasks'])==9
+        assert settings['margin_candidates_ms']==[50,25]
+        assert settings['trigger_repeats']==2
+        assert settings['timing']['service_quantile']==.95
+        for task_index in range(9):
+            labels=comparison_variants(dict(m3_margin_scan=True,m3_margin_candidates_ms=[50,25],
+                m3_trigger_task_index=task_index,m3_margin_round=round_index))
+            assert set(labels)=={'events_only__repeat1','events_only__repeat2'}
+    from scripts.run_m3_margin_long import commands
+    assert len(commands())==2
+    assert commands()[0][-1]=='1' and commands()[1][-1]=='2'

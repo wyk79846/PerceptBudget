@@ -18,6 +18,8 @@ def main():
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'watchdog', 'comparison', 'margin-scan', 'analyze'), default='record-only')
+    parser.add_argument('--margin-long',action='store_true',help='Nine-task eta50/25 paired validation')
+    parser.add_argument('--margin-round',type=int,choices=(1,2),default=1)
     parser.add_argument('--retest-comparison-cell',nargs=3,metavar=('SUITE','TASK','GROUP'),
         help='Separate single-cell repeat of a completed comparison; original result retained')
     parser.add_argument('--resume-comparison', type=Path, help='Retain audited completed episodes and run missing comparison cells')
@@ -41,6 +43,8 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if (args.margin_long or args.margin_round!=1) and args.mode!='margin-scan':
+        parser.error('Margin validation options require --mode margin-scan')
     if args.retest_comparison_cell and not args.resume_comparison:
         parser.error('--retest-comparison-cell requires --resume-comparison')
     if args.resume_comparison and (args.mode!='comparison' or args.comparison_screen):
@@ -86,7 +90,7 @@ def main():
             timing=dict(settings['timing'],maximum_action_offset=50,maximum_observation_age_seconds=None))
     if args.mode=='margin-scan':
         from perceptbudget.m3_margin import scan_settings
-        settings=scan_settings(settings)
+        settings=scan_settings(settings,long_run=args.margin_long,round_index=args.margin_round)
     if args.mode=='comparison':
         from perceptbudget.m3_comparison import comparison_settings
         settings=comparison_settings(settings,screen=args.comparison_screen)
@@ -112,7 +116,7 @@ def main():
     else:
         if args.trigger_suite or args.strategies or args.repeats!=1:
             parser.error('Trigger selection and repeats require --mode trigger-comparison')
-        variants_per_task=3 if settings.get('margin_scan') else 4 if settings.get('formal_comparison') else 3 if settings.get('watchdog_checks') else 2 if settings.get('dvac_paired') else 1
+        variants_per_task=len(settings['margin_candidates_ms']) if settings.get('margin_scan') else 4 if settings.get('formal_comparison') else 3 if settings.get('watchdog_checks') else 2 if settings.get('dvac_paired') else 1
     uses_dvfs=settings.get('mode')=='deadline_dvfs'
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
@@ -142,7 +146,8 @@ def main():
             exact_bootstrap_pair=bool(settings.get('margin_scan') or settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies in (['events_only','events_and_variance'],['events_only','variance_only']) or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
-            margin_candidates_ms=[50,25,0] if settings.get('margin_scan') else None,
+            margin_candidates_ms=settings.get('margin_candidates_ms'),
+            independent_margin_round=settings.get('margin_round'),
             service_quantile=settings['timing']['service_quantile'],
             reused_episodes=len(cfg.get('m3_resume_plan',{}).get('episodes',[])),
             new_episodes=cfg.get('m3_resume_plan',{}).get('remaining_episodes',len(settings['calibration_tasks'])*variants_per_task),
@@ -157,8 +162,8 @@ def main():
             slowdown_detectors=['drop','valley'] if 'events_and_variance_valley' in (args.strategies or []) else [settings['events'].get('slowdown_detector','drop')],
             signal_policies=['earliest','latest'] if 'events_and_variance_latest' in (args.strategies or []) else ['earliest'],
             merge_gap_steps=[None,8] if any(s in (args.strategies or []) for s in ('events_and_variance_merge','events_only_merge')) else [None],
-            denoising_triggers=([False]+[settings['formal']['trigger_strategy']!='events_only']*3) if settings.get('formal_comparison') else [False]*3 if settings.get('margin_scan') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
-            action_event_triggers=([False]+[settings['formal']['trigger_strategy']!='variance_only']*3) if settings.get('formal_comparison') else [True]*3 if settings.get('margin_scan') else [False]*3 if settings.get('watchdog_checks') else [s!='variance_only' for s in (args.strategies or [])],
+            denoising_triggers=([False]+[settings['formal']['trigger_strategy']!='events_only']*3) if settings.get('formal_comparison') else [False]*variants_per_task if settings.get('margin_scan') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
+            action_event_triggers=([False]+[settings['formal']['trigger_strategy']!='variance_only']*3) if settings.get('formal_comparison') else [True]*variants_per_task if settings.get('margin_scan') else [False]*3 if settings.get('watchdog_checks') else [s!='variance_only' for s in (args.strategies or [])],
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:
@@ -197,6 +202,10 @@ def main():
                     command += ['--resume-comparison',str(args.resume_comparison.resolve())]
                 if args.retest_comparison_cell:
                     command += ['--retest-comparison-cell',*args.retest_comparison_cell]
+                if args.margin_long:
+                    command += ['--margin-long']
+                if args.mode=='margin-scan':
+                    command += ['--margin-round',str(args.margin_round)]
                 if args.comparison_screen:
                     command += ['--comparison-screen']
                 if args.mode=='trigger-comparison':

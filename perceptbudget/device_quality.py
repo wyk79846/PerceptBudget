@@ -256,6 +256,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         graph_audits=[], memory=[], q=5, selection=None,
         scope='task0 calibration; task3 holdout; seed7/init0; no clock changes',
         holdout_policy='Full task3 collected early to avoid reloading, never used to select a camera')
+    if cfg.get('m3_margin_scan'):
+        record.update(margin_long_run=cfg.get('m3_margin_long_run',False),margin_round=cfg.get('m3_margin_round',1))
     if cfg.get('m3_resume_plan'):
         continuation=cfg.pop('m3_resume_plan')
         record.update(episodes=copy.deepcopy(continuation['episodes']),resume_source=continuation['source'],
