@@ -1,6 +1,6 @@
 # PerceptBudget
 
-面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2测量已交付；M3已完成动作记录、高频最晚启动及单任务降频恢复小测，下一步为看门狗故障测试。**
+面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2已交付；M3最小闭环及三类看门狗设备验证已通过，当前准备四组正式比较，尚未交付M3。**
 
 ## 唯一推理基线
 
@@ -22,7 +22,7 @@
 
 - **M1**：[统一交付报告](../任务指导与相关参考/PerceptBudget归档/M1相关报告/PerceptBudget_M1阶段交付报告_新模型H50_20261021.md)。[历史报告目录](../任务指导与相关参考/PerceptBudget归档/M1相关报告/)。
 - **M2**：[统一交付报告（含27项小表）](../任务指导与相关参考/PerceptBudget归档/M2相关报告/PerceptBudget_M2阶段交付报告_20261025.md)。[归档索引](../任务指导与相关参考/PerceptBudget归档/M2相关报告/归档索引.md)。操作接口和恢复见[调频说明](docs/M2_CLOCK_CONTROL.md)。
-- **M3进行中**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。先用Full＋Continue，按最新讨论提前接入未来动作提示，结合缓冲、设备状态相关的完整服务耗时和安全余量计算启动时刻；验证降频/恢复、RTC衔接与异常回退。动态Fast选择及完整联合搜索后续再加入。
+- **M3进行中（以此条为当前范围）**：[M3最小闭环任务书](../任务指导与相关参考/PerceptBudget_M3最小闭环任务书_20261026.md)。当前用Full＋Continue、去噪触发与剩余缓冲，结合完整服务耗时和余量计算启动时刻；机制一优化后置、只记录。最小闭环和看门狗已验证，接下来统一四组比较。动态Fast和完整联合搜索留待后续。
 
 M2已有27格成本覆盖，重点9格各60次，其余Full/Fast每格20次、高频/均衡Continue每格5窗。刷新能量是相对静态等待的平均增量，Continue能量是执行窗绝对能量，两者不能直接混算；这些不是整任务节能结果。200ms/1s是空闲标定点，不是运行时固定等待指令或已证实的GPU断电状态。
 
@@ -42,12 +42,19 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 
 [阶段进展](../任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md)包含已完成结果和待测问题。`m3.json`集中存放校准参数。
 
+当前先运行四组入口短测：
+
 ```bash
-# 不加载模型，检查下一步计划
-/home/wyk/venvs/lutvla/bin/python scripts/run_m3.py --mode deadline-dvfs --dry-run
-# 单任务调频闭环复现；已测成功，普通用户运行，内部调频助手要求sudo密码
-/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode deadline-dvfs --suite libero_spatial
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode comparison --comparison-screen
 ```
+
+Spatial task0四回合、一次模型加载：A固定q5高频，B去噪触发高频，C相同触发但到高频计划时刻才恢复，D结合恢复服务预算提前准备。全部完整感知/state/H50/N5/BF16/RTC，机制一只记录，均有已验证的3秒请求超时及外层清理。四组短测审核后，再去掉`--comparison-screen`执行正式9任务×4组=36回合，一次模型加载、任务间轮换组顺序。先不要把未运行的正式计划写成已完成结果。
+
+各回合检查完整功率覆盖、Full高频和最终恢复；保存`comparison.csv`、`comparison_summary.json`、`comparison.md`。初始图像/噪声/首次动作不严格相同的任务会标记，不能直接归因其能量差。所有失败尝试能量计入每成功任务能量。
+
+历史只记录/高频/触发器诊断入口仍保留用于复现；后文旧实验状态以其日期及阶段进展为准。
+
 
 模型前预编译环境并核对回放，连续任务沿用一次加载的模型；M3运行结果统一写入外部`M3/`目录。
 

@@ -30,6 +30,21 @@ def test_timely_result_is_not_late_only_because_next_tick_is_late(tmp_path):
     with pytest.raises(InferenceTimeout):guard.complete(17.01)
 
 
+def test_formal_tail_wait_respects_remaining_deadline_before_restoring(tmp_path):
+    from concurrent.futures import Future
+    from perceptbudget.watchdog import finish_watched_request
+    guard=RequestWatchdog(tmp_path/'request.json',3.)
+    request=dict(prediction_id=1,observation_step=38,observation_monotonic=10.,ready_monotonic=11.)
+    guard.arm(request,tmp_path)
+    future=Future();future.set_result(None)
+    with patch('perceptbudget.watchdog.time.monotonic',return_value=11.):
+        finish_watched_request(future,request,guard)
+    assert guard.record is None
+    guard.arm(request,tmp_path)
+    with patch('perceptbudget.watchdog.time.monotonic',return_value=14.):
+        with pytest.raises(InferenceTimeout):finish_watched_request(Future(),request,guard)
+
+
 @pytest.mark.parametrize('seconds',[0,-1,float('nan'),float('inf')])
 def test_bad_request_timeout_rejected(tmp_path,seconds):
     with pytest.raises(ValueError):RequestWatchdog(tmp_path/'w.json',seconds)

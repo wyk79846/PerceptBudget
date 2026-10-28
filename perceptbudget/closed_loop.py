@@ -28,6 +28,9 @@ def load_settings(path):
 
 
 def comparison_variants(config):
+    if config.get('m3_formal_comparison'):
+        from perceptbudget.m3_comparison import group_order
+        return group_order(config.get('m3_formal_task_index',0))
     if config.get('m3_watchdog_checks'):
         return ('watchdog_late','watchdog_underflow','watchdog_hang')
     if config.get('m3_event_dedup_comparison'):
@@ -113,6 +116,11 @@ def recording_session(config, settings, directory, cleanup_gate):
     if settings.get('watchdog_checks'):
         cfg.update(m3_watchdog_checks=True,m3_action_events_enabled=False,
             m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),m3_request_timeout_seconds=3.)
+    if settings.get('formal_comparison'):
+        cfg.update(m3_formal_comparison=True,m3_action_events_enabled=False,
+            m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),
+            m3_request_timeout_seconds=settings['formal']['request_timeout_seconds'])
+        _write_json_atomically(Path(directory)/'comparison_plan.json',settings)
     if settings.get('mode','record_only') in ('deadline_high','deadline_dvfs'):
         times = FullServiceTimes.from_m2_summary(settings['timing']['source_summary'],
             probability=settings['timing']['service_quantile'])
@@ -159,6 +167,10 @@ def recording_session(config, settings, directory, cleanup_gate):
         result['scope']='Retrospective one-event ablation, not a general online skip policy'
     if settings.get('dvac_paired'):
         result['comparison'] = list(comparison_variants(cfg))
+    if settings.get('formal_comparison'):
+        from perceptbudget.m3_comparison import summarize_comparison
+        result['paired_bootstrap_audit']=record['paired_bootstrap_audit']
+        result['formal_summary']=summarize_comparison(directory,record,screen=settings.get('comparison_screen',False))
     _write_json_atomically(Path(directory)/'summary.json', result)
     return result
 
@@ -183,6 +195,9 @@ class DeadlineRuntime:
         if self.event_coverage_mode not in ('event_only','shared_refresh'):
             raise ValueError('Unknown action-event coverage policy')
         self.mode = config['m3_scheduler_mode']
+        self.dvfs_policy=config.get('m3_dvfs_policy','joint')
+        if self.dvfs_policy not in ('joint','independent'):
+            raise ValueError('Unknown device preparation policy')
         self.signal_policy=config.get('m3_signal_policy','earliest')
         self.latest_signal_event=None
         if self.signal_policy not in ('earliest','latest'):
@@ -299,11 +314,12 @@ class DeadlineRuntime:
                 critical_kinds=self.latest_signal_event['kinds']
         recovery = self.clocks is not None and (self.clocks.profile!='baseline' or self.clocks.pending is not None)
         age_limit=self.settings['maximum_observation_age_seconds']
+        budget_history='recovery' if recovery and self.dvfs_policy=='joint' else 'hot'
         plan = timing_plan(now=now,step=step,buffer_end_step=end,period=period,
             critical_step=critical,
             dvac_step=current.get('dvac_step') if current else None,
             observation_deadline=current['observation']+age_limit if current and age_limit is not None else None,
-            service_seconds=self.times.estimate('recovery' if recovery else 'hot'),margin_seconds=self.margin.seconds,
+            service_seconds=self.times.estimate(budget_history),margin_seconds=self.margin.seconds,
             signal_policy=self.signal_policy)
         rtc_latest_submit=None
         rtc_guard_steps=None
@@ -327,6 +343,7 @@ class DeadlineRuntime:
                          covered_event_count=len(self.covered_events),
                          event_coverage_mode=self.event_coverage_mode,
                          signal_policy=self.signal_policy,
+                         dvfs_policy=self.dvfs_policy,service_budget_history=budget_history,
                          merged_slowdowns=self.merged_slowdowns,
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
@@ -358,7 +375,8 @@ class DeadlineRuntime:
                 self.recovering_plan = dict(decision)
                 self.clocks.switch('baseline')
             return dict(decision,start_now=False,clock_wait=decision['start_now'])
-        low_wait = decision['latest_start']-decision['decision_monotonic']-(self.times.estimate('recovery')-self.times.estimate('hot'))
+        recovery_reserve=(self.times.estimate('recovery')-self.times.estimate('hot')) if self.dvfs_policy=='joint' else 0.
+        low_wait = decision['latest_start']-decision['decision_monotonic']-recovery_reserve
         if not decision['start_now'] and low_wait >= self.settings['minimum_low_idle_seconds']:
             self.clocks.switch('gpu_emc')
         return decision

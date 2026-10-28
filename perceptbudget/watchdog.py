@@ -2,6 +2,7 @@
 import json
 import math
 import time
+from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path
 
 from perceptbudget.experiment import _write_json_atomically
@@ -91,6 +92,17 @@ def fault_window_recovered(row, commits):
     latest=commits[-1]
     return (row['step']>=latest['commit_step']
         and row['source']['prediction_id']==latest['prediction_id'])
+
+
+def finish_watched_request(future, request, guard):
+    """Keep clocks and sampling alive through an outstanding formal request."""
+    remaining=max(0.,guard.record['deadline_monotonic']-time.monotonic())
+    try:
+        future.result(timeout=remaining)
+    except FutureTimeout:
+        guard.check()
+        raise
+    guard.complete(request['ready_monotonic'])
 
 
 def validate_fault_suite(directory):

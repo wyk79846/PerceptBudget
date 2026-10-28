@@ -50,6 +50,14 @@ def audit(run):
         count+=1
         if not ok:failures.append(dict(check=name,where=where))
     eq=lambda a,b:np.array_equal(np.asarray(a,dtype=np.float32),np.asarray(b,dtype=np.float32))
+    group=cfg.get('m3_formal_group')
+    if group is not None:
+        check('formal_group_declared',group in ('A_fixed_q5','B_high','C_independent','D_joint'))
+        check('formal_same_model_settings',cfg['H']==50 and cfg['N']==5 and cfg['precision']=='bfloat16'
+              and cfg['state_enabled'] is True and q==5)
+        check('formal_signal_switches',cfg.get('m3_dvac_enabled')==(group!='A_fixed_q5')
+              and cfg.get('m3_action_events_enabled') is False and cfg.get('m3_merge_slowdown_steps') is None)
+        check('formal_request_watchdog',cfg.get('m3_request_timeout_seconds')==3. and bool(cfg.get('m3_watchdog_path')))
     check('sequential_control_steps',[r['step'] for r in controls]==list(range(len(controls))))
     check('unique_request_ids',len(by_id)==len(requests))
     check('unique_commit_ids',len(committed)==len(commits))
@@ -146,6 +154,11 @@ def audit(run):
                 policy=cfg.get('m3_signal_policy','earliest')
                 check('m3_signal_policy_matches_config',policy in ('earliest','latest')
                       and d.get('signal_policy','earliest')==policy,pid)
+                if group is not None:
+                    expected_policy='independent' if group=='C_independent' else 'joint'
+                    expected_budget='recovery' if group=='D_joint' and d.get('path')=='low_continue_recovery' else 'hot'
+                    check('formal_device_service_budget',d.get('dvfs_policy')==expected_policy
+                          and d.get('service_budget_history')==expected_budget,pid)
                 if 'signal_policy' in d:
                     required=('decision_monotonic','estimated_control_period_seconds','admitted_remaining_actions')
                     complete=all(k in d for k in required)

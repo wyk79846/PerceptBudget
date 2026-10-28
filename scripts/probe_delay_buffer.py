@@ -314,6 +314,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     pauses = []
     monitor = PowerMonitor(poll_interval=0.1)
     scheduler = None
+    fixed_clocks = None
     request_watchdog = None
     if config.get('m3_watchdog_path'):
         from perceptbudget.watchdog import RequestWatchdog
@@ -322,6 +323,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         from perceptbudget.closed_loop import DeadlineRuntime
         scheduler = DeadlineRuntime(config)
         scheduler.start_clocks(run_dir)
+    if config.get('m3_hold_high_clocks'):
+        from perceptbudget.closed_loop import RuntimeClocks
+        fixed_clocks=RuntimeClocks(run_dir)
+        fixed_clocks.__enter__()
     executor = ThreadPoolExecutor(max_workers=1)
     monitor.start()
     start = time.monotonic()
@@ -540,6 +545,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         harvest(0)
         deadline = time.monotonic()
         for step in range(task['max_steps']):
+            if fixed_clocks is not None:
+                fixed_clocks.poll()
             if step_hook is not None:
                 observation, hook_event = step_hook(env, observation, step)
                 if hook_event is not None:
@@ -682,12 +689,21 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if stop is None:
             stop = time.monotonic()
         try:
-            if scheduler is not None:
-                scheduler.stop_clocks()
+            if config.get('m3_formal_comparison') and future is not None and status!='invalid':
+                from perceptbudget.watchdog import finish_watched_request
+                finish_watched_request(future,current_request,request_watchdog)
         finally:
-            drain = _drain_executor(executor, monitor, start, stop)
-            if request_watchdog is not None and current_request is not None:
-                request_watchdog.complete(current_request.get('ready_monotonic',time.monotonic()))
+            try:
+                if scheduler is not None:
+                    scheduler.stop_clocks()
+            finally:
+                try:
+                    if fixed_clocks is not None:
+                        fixed_clocks.close()
+                finally:
+                    drain = _drain_executor(executor, monitor, start, stop)
+                    if request_watchdog is not None and current_request is not None:
+                        request_watchdog.complete(current_request.get('ready_monotonic',time.monotonic()))
         base._trace(stream, 'episode_drain', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition, **drain)
         if env_audit is not None:

@@ -16,8 +16,8 @@ def audit_paired_bootstraps(episodes):
     cases=[]
     for suite,tid in sorted({(e['suite'],e['task_id']) for e in episodes}):
         pair=[e for e in episodes if e['suite']==suite and e['task_id']==tid]
-        if len(pair) not in (2,3):
-            raise ValueError('Require two or three resident episodes per task')
+        if len(pair) not in (2,3,4):
+            raise ValueError('Require two, three or four resident episodes per task')
         requests=[json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())[0] for e in pair]
         for i in range(1,len(pair)):
             checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[i]['initial']['initial_hashes']}
@@ -349,6 +349,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     views=('full',visual_fast_mode+'_alternate')
                 if dvac_paired:
                     from perceptbudget.closed_loop import comparison_variants
+                    if cfg.get('m3_formal_comparison'):
+                        cfg['m3_formal_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
@@ -527,6 +529,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         if view.startswith('fixed_q'):
                             from perceptbudget.closed_loop import configure_fixed_baseline
                             episode_q=configure_fixed_baseline(child_cfg,int(view.removeprefix('fixed_q')))
+                    if cfg.get('m3_formal_comparison'):
+                        from perceptbudget.m3_comparison import configure_group
+                        episode_q=configure_group(child_cfg,view)
                     if recompute_comparison:
                         child_cfg['m2_reuse_enabled']=view!='full'
                         child_cfg['m2_split_delay']=view in ('kv_reuse_split','kv_once')
@@ -551,6 +556,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     _write_json_atomically(active/'system_audit.json', checked)
                     if not checked['passed']:
                         raise RuntimeError('Quality episode independent record audit failed')
+                    if cfg.get('m3_formal_comparison'):
+                        from perceptbudget.m3_comparison import audit_group_clocks
+                        clocks_checked=audit_group_clocks(active,view)
+                        _write_json_atomically(active/'formal_clock_audit.json',clocks_checked)
+                        if not clocks_checked['passed']:
+                            raise RuntimeError('Formal group frequency or restoration check failed')
                     requests = json.loads((trace_dir/f'q{episode_q}_requests.json').read_text())
                     if any(r['rtc_guidance'].get('variable_length_fallback') for r in requests):
                         raise RuntimeError('Unexpected slow fallback in quality screen')
@@ -611,6 +622,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
+            if cfg.get('m3_formal_comparison'):
+                paired=audit_paired_bootstraps(record['episodes'])
+                _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
+                record['paired_bootstrap_audit']=paired
+                record['comparison_initials_exact']=paired['passed']
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     tuple(cfg.get('m3_trigger_variants') or [])==('events_only','events_and_variance') or
                     any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge'))):
