@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-28四组Spatial0入口84241059通过：A/B/C/D成功78/77/77/77步，6.297/5.691/6.039/5.976s，151.355/71.219/64.494/63.816J，请求11/2/2/2。严格bootstrap/索引/组别预算/频率/功率覆盖/RESTORED通过，1model/1expert；原始积分复算差0。B/C/D未有去噪阈值触发，仅buffer，勿把单例−57.84%视为DVAC普遍收益；C/D请求均40步，D较C仅−1.05%不作显著结论。可按冻结配置run_m3 --mode comparison执行三集合task1/3/6×4=36；正式批次尚未跑，M3未交付，不再扩机制一优化。postrun_review与阶段进展已更新。
+
 - 2026-10-28正式入口已准备：run_m3 --mode comparison --comparison-screen为Spatial0四回合；去掉screen为原任务书三集合task1/3/6×4=36，均1model/1expert、任务间轮换组序。m3_comparison.py定义A固定q5高频/B去噪高频/C独立节能hot计划/D计恢复的joint，C/D共用RTC硬限，机制一不参与。全组3s请求/3s清理和有界频率恢复，A/B同助手固定高频；正式收尾先等在途推理完成才恢复/结束积分。独立源索引audit增加组别与服务预算检查，各回合频率/功率覆盖/恢复审核；初态/首次预测不精确配对的任务标记不用于严格归因但保留真实质量记录。m3.json formal集中固定参数及a1b001b5证据SHA，输出comparison.csv/summary/json/md，失败能量计入J/成功任务。731pass/9skip/110subtests，尚未新GPU短测，勿启动36或声称M3交付；备份archive/pre-m3-formal-comparison-20261028。下一步用户终端执行单项四组短测。
 
 - 2026-10-28看门狗恢复复测a1b001b5通过：late迟到156ms/欠载1步70ms，第51步执行pid1/offset11；underflow迟到906ms/欠载12步758ms，第62步执行pid1/offset22，独立audit及零动作核对通过；hang本地3.0218s超时、外层6.0217s，三窗RESTORED，1model/1expert。原始检查与人工postrun_review证据齐，前次早停问题已补。超时接线仍只watchdog模式，下一步统一正式配置再5.4四组36回合；不要称正式对照或M3交付已完成。机制一优化后置，FlashRT未改。
