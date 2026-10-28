@@ -84,7 +84,7 @@ def comparison_variants(config):
             raise ValueError('Event-only merge requires one baseline/candidate resident pair')
         labels=tuple(v if repeats==1 else f'{v}__repeat{r}'
                      for r in range(1,repeats+1) for v in variants)
-        if (tuple(variants)==('events_only','variance_only') and repeats==1
+        if (tuple(variants) in (('events_only','variance_only'),('events_only','events_and_variance')) and repeats==1
                 and config.get('m3_trigger_task_index',0)%2):
             labels=labels[::-1]
         if config.get('m3_device_comparison'):

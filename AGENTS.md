@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-28用户同意下一轮纯机制一vs混合取早：同LIBERO-10 1/4/7，--strategies events_only events_and_variance，--trigger-task-ids批量6回合1model、task4组序反转，strict bootstrap、无合并、其余joint DVFS/H50/N5/state/RTC相同。84相关tests/dry-run通过，尚未新GPU执行。正式36继续暂缓，未替换正式默认。备份archive/pre-event-mixed-batch-20261028；README入口已更新。
+
 - 2026-10-28纯信号e2ce8cab完成：LIBERO-10 1/4/7配对严格初态/bootstrap通过，6回合/1model/1expert，交替组序、0欠载/各audit/RESTORED，功率重积分差0。机制一3/3：245/225/249步，14.539/13.074/13.281s，205.506/190.671/195.780J，请求10/10/10；去噪1/3：task1成功239步14.120s174.923J7请求，task4/7均520步超时（406.855/386.504J，21/19请求）。不要把task1省14.88%当总体优势，失败能量计入统计，不把超时归因于断供。正式36继续暂缓，先选需求规则，当前更倾向保留机制一/必要时再对照混合；没有自动改formal默认。CSV/postrun_review及任务书/阶段记录已更新。
 
 - 2026-10-28最新安排：四组入口84241059已通过，但用户要求先比较纯机制一/events_only和纯去噪/variance_only，正式36回合暂缓。新增run_m3 --trigger-task-ids 1 4 7批量选择LIBERO-10三任务，共6回合/1model；任务索引奇数反转组序，其余相同joint DVFS/模型/state/H50/N5/RTC，不启用合并。严格bootstrap审计覆盖每对。94相关tests通过，尚未新GPU执行。备份archive/pre-pure-trigger-batch-20261028。下一步用户执行README当前命令后读逐任务成功/总能量/耗时/刷新数，不能提前判优或启动36。

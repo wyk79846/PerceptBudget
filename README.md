@@ -40,6 +40,16 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 
 ## M3当前入口
 
+当前待测：LIBERO-10 task1/4/7，纯机制一对混合取早，两组无事件合并，同一joint调频/模型/RTC、交替组序、6回合/一次模型加载。入口：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m3.py --mode trigger-comparison \
+  --trigger-suite libero_10 --trigger-task-ids 1 4 7 \
+  --strategies events_only events_and_variance --device-dvfs --no-age-limit
+```
+
+
 [阶段进展](../任务指导与相关参考/PerceptBudget_M3阶段进展_20261026.md)包含已完成结果和待测问题。`m3.json`集中存放校准参数。
 
 纯机制一与纯去噪首轮已完成（e2ce8cab）：机制一3/3成功，去噪1/3；尚不推广总体结论，正式36回合继续暂缓。以下为该轮复现入口：LIBERO-10 task1/4/7，各两种策略，共6回合、一次模型加载，任务间交替组序。调频/模型/RTC等一致，不开事件合并；逐任务核对初始输入和首次预测。

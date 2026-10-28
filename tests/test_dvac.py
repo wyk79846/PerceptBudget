@@ -309,10 +309,11 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
 
 
-def test_pure_signal_batch_reuses_model_and_alternates_order(capsys):
+@pytest.mark.parametrize('second',['variance_only','events_and_variance'])
+def test_pure_signal_batch_reuses_model_and_alternates_order(capsys,second):
     from scripts.run_m3 import main
     from perceptbudget.closed_loop import comparison_variants,configure_trigger_signals
-    strategies=['events_only','variance_only']
+    strategies=['events_only',second]
     for index in range(3):
         assert comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies,
             m3_trigger_task_index=index))==tuple(strategies if index%2==0 else strategies[::-1])
