@@ -10,6 +10,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-28机制一四组入口f447cfd0通过：Spatial0 A/B/C/D均success78/76/85/77步，6.402/5.752/6.888/6.092s，151.217/86.307/94.071/80.875J，请求11/4/5/4；0欠载，1model/1expert，strict bootstrap/索引/实际flags/频率/功率/restore通过，原始积分复算差0。正式events_only已实际生效，无合并、无Fast。D较A省46.52%、较B省6.30%但慢5.91%、较C省14.03%，单校准任务不推广。可按选定配置run_m3 --mode comparison正式36回合，尚未执行。阶段报告/任务书/README已更新。
+
 - 2026-10-28用户已明确选原版机制一并授权切换。m3.json formal.trigger_strategy=events_only；B/C/D启用原夹爪/减速/转向，关闭去噪触发及合并，A固定q5。正式配置/报告记录m3_formal_signal与formal_trigger_strategy，独立audit核对配置及运行中的实际开关；历史缺字段按variance_only解释，84241059四条原记录重审仍全通过，不改旧raw。737pass/9skip/110subtests，FlashRT/权重/RTC/精度/state/调频/看门狗未改。新机制一四组设备短测尚未执行，下一步run_m3 --mode comparison --comparison-screen（4回合1model）；通过后才36。README与任务书规范部分已同步，进一步机制一优化和触发器选择实验停止，纯去噪/混合保留消融。备份archive/pre-formal-events-only-20261028。
 
 - 2026-10-28 83a5e389纯机制一vs混合取早6回合完成，3对严格bootstrap/全成功/0欠载/audit/RESTORED，1model/1expert，功率重积分差0。task1机制239步14.284s198.682J10请求，混233步13.796s197.230J10；task4机制229/12.972/197.177/11，混229/12.945/198.409/11；task7机制244/13.026/201.057/11，混236/12.670/216.042/13。混合总J+2.47%、时间−2.16%、请求34vs32，两组均3/3；能效优先更倾向原机制一作为正式候选，但formal默认尚未修改、36未启动。上一轮event/variance在不同会话，不得拼成同模型三组实验。CSV/postrun_review/阶段进展已保存。
