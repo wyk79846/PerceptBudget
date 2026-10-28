@@ -497,6 +497,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             strategy,_,repeat=trigger.partition('__repeat')
                             child_cfg['m3_trigger_strategy']=strategy
                             child_cfg['m3_trigger_repeat']=int(repeat) if repeat else 1
+                            if cfg.get('m3_margin_scan'):
+                                from perceptbudget.m3_margin import configure_margin
+                                configure_margin(child_cfg,child_cfg['m3_trigger_repeat'])
                             if 'events_and_variance_no_turn' in (cfg.get('m3_trigger_variants') or []):
                                 child_cfg['m3_ignore_turn']=strategy=='events_and_variance_no_turn'
                             if 'events_and_variance_latest' in (cfg.get('m3_trigger_variants') or []):
@@ -634,7 +637,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_formal_comparison'):
+            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan'):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired

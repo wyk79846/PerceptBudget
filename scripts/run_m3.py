@@ -17,7 +17,7 @@ def main():
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'watchdog', 'comparison', 'analyze'), default='record-only')
+    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'watchdog', 'comparison', 'margin-scan', 'analyze'), default='record-only')
     parser.add_argument('--retest-comparison-cell',nargs=3,metavar=('SUITE','TASK','GROUP'),
         help='Separate single-cell repeat of a completed comparison; original result retained')
     parser.add_argument('--resume-comparison', type=Path, help='Retain audited completed episodes and run missing comparison cells')
@@ -84,6 +84,9 @@ def main():
         settings=dict(settings,mode='deadline_dvfs',dvac_paired=True,watchdog_checks=True,
             calibration_tasks=[[args.suite,0]],
             timing=dict(settings['timing'],maximum_action_offset=50,maximum_observation_age_seconds=None))
+    if args.mode=='margin-scan':
+        from perceptbudget.m3_margin import scan_settings
+        settings=scan_settings(settings)
     if args.mode=='comparison':
         from perceptbudget.m3_comparison import comparison_settings
         settings=comparison_settings(settings,screen=args.comparison_screen)
@@ -109,7 +112,7 @@ def main():
     else:
         if args.trigger_suite or args.strategies or args.repeats!=1:
             parser.error('Trigger selection and repeats require --mode trigger-comparison')
-        variants_per_task=4 if settings.get('formal_comparison') else 3 if settings.get('watchdog_checks') else 2 if settings.get('dvac_paired') else 1
+        variants_per_task=3 if settings.get('margin_scan') else 4 if settings.get('formal_comparison') else 3 if settings.get('watchdog_checks') else 2 if settings.get('dvac_paired') else 1
     uses_dvfs=settings.get('mode')=='deadline_dvfs'
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
@@ -136,24 +139,26 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
-            exact_bootstrap_pair=bool(settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies in (['events_only','events_and_variance'],['events_only','variance_only']) or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
+            exact_bootstrap_pair=bool(settings.get('margin_scan') or settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies in (['events_only','events_and_variance'],['events_only','variance_only']) or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
+            margin_candidates_ms=[50,25,0] if settings.get('margin_scan') else None,
+            service_quantile=settings['timing']['service_quantile'],
             reused_episodes=len(cfg.get('m3_resume_plan',{}).get('episodes',[])),
             new_episodes=cfg.get('m3_resume_plan',{}).get('remaining_episodes',len(settings['calibration_tasks'])*variants_per_task),
-            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog','comparison'), clocks_changed=uses_dvfs,
+            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog','comparison','margin-scan'), clocks_changed=uses_dvfs,
             formal_groups=['A_fixed_q5','B_high','C_independent','D_joint'] if settings.get('formal_comparison') else [],
             formal_trigger_strategy=settings['formal']['trigger_strategy'] if settings.get('formal_comparison') else None,
             fault_checks=['late','underflow','hang'] if settings.get('watchdog_checks') else [],
-            request_timeout_seconds=settings['formal']['request_timeout_seconds'] if settings.get('formal_comparison') else 3. if settings.get('watchdog_checks') else None,
+            request_timeout_seconds=settings['formal']['request_timeout_seconds'] if settings.get('formal_comparison') else 3. if settings.get('watchdog_checks') or settings.get('margin_scan') else None,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
             maximum_observation_age_seconds=settings['timing']['maximum_observation_age_seconds'],
             slowdown_confirmation=[2,3] if 'events_and_variance_hold3' in (args.strategies or []) else [settings['events'].get('slowdown_confirm_steps') or settings['events'].get('confirm_steps',2)],
             slowdown_detectors=['drop','valley'] if 'events_and_variance_valley' in (args.strategies or []) else [settings['events'].get('slowdown_detector','drop')],
             signal_policies=['earliest','latest'] if 'events_and_variance_latest' in (args.strategies or []) else ['earliest'],
             merge_gap_steps=[None,8] if any(s in (args.strategies or []) for s in ('events_and_variance_merge','events_only_merge')) else [None],
-            denoising_triggers=([False]+[settings['formal']['trigger_strategy']!='events_only']*3) if settings.get('formal_comparison') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
-            action_event_triggers=([False]+[settings['formal']['trigger_strategy']!='variance_only']*3) if settings.get('formal_comparison') else [False]*3 if settings.get('watchdog_checks') else [s!='variance_only' for s in (args.strategies or [])],
+            denoising_triggers=([False]+[settings['formal']['trigger_strategy']!='events_only']*3) if settings.get('formal_comparison') else [False]*3 if settings.get('margin_scan') else [True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
+            action_event_triggers=([False]+[settings['formal']['trigger_strategy']!='variance_only']*3) if settings.get('formal_comparison') else [True]*3 if settings.get('margin_scan') else [False]*3 if settings.get('watchdog_checks') else [s!='variance_only' for s in (args.strategies or [])],
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:
@@ -226,7 +231,7 @@ def main():
                                 result=validate_fault_suite(run)
                                 return 0
                             raise RuntimeError('Watchdog suite returned without observing the injected hang')
-                        elif args.mode=='comparison':
+                        elif args.mode in ('comparison','margin-scan'):
                             code=monitored_worker(command,log,request_watchdog=run/'request_watchdog.json',
                                 watchdog_grace_seconds=settings['formal']['cleanup_grace_seconds'])
                         else:

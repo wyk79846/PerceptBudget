@@ -28,6 +28,10 @@ def load_settings(path):
 
 
 def comparison_variants(config):
+    if config.get('m3_margin_scan'):
+        labels=('events_only__repeat1','events_only__repeat2','events_only__repeat3')
+        offset=config.get('m3_trigger_task_index',0)%3
+        return labels[offset:]+labels[:offset]
     if config.get('m3_formal_comparison'):
         from perceptbudget.m3_comparison import group_order
         return group_order(config.get('m3_formal_task_index',0))
@@ -116,6 +120,9 @@ def configure_fixed_baseline(config, q):
 def recording_session(config, settings, directory, cleanup_gate):
     from perceptbudget.device_quality import resident_quality
     cfg = dict(config, m3_events=settings['events'])
+    if settings.get('margin_scan'):
+        cfg.update(m3_margin_scan=True,m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),
+            m3_request_timeout_seconds=3.)
     if settings.get('watchdog_checks'):
         cfg.update(m3_watchdog_checks=True,m3_action_events_enabled=False,
             m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),m3_request_timeout_seconds=3.)
@@ -178,6 +185,9 @@ def recording_session(config, settings, directory, cleanup_gate):
         result['scope']='Retrospective one-event ablation, not a general online skip policy'
     if settings.get('dvac_paired'):
         result['comparison'] = list(comparison_variants(cfg))
+    if settings.get('margin_scan'):
+        from perceptbudget.m3_margin import summarize_scan
+        result['margin_scan']=summarize_scan(directory,record)
     if settings.get('formal_comparison'):
         from perceptbudget.m3_comparison import summarize_comparison
         result['paired_bootstrap_audit']=record['paired_bootstrap_audit']
@@ -195,7 +205,8 @@ class DeadlineRuntime:
                                      probability=self.settings['service_quantile'])
         for seconds in config.get('m3_recovery_samples',[]):
             self.times.observe('recovery',seconds)
-        self.margin = SafetyMargin(initial=self.settings['safety_margin_seconds'])
+        self.margin = SafetyMargin(initial=self.settings['safety_margin_seconds'],
+            floor=0. if config.get('m3_margin_scan') else .02)
         self.initial_period = config['rtc_initial_control_period_seconds']
         self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
