@@ -153,3 +153,22 @@ def test_resume_retains_timeouts_and_only_schedules_missing_cells(tmp_path):
     with patch('scripts.audit_rtc_system.audit',return_value={'passed':False}):
         with pytest.raises(ValueError,match='failed resume audit'):
             resume_plan(tmp_path,settings,config)
+
+
+def test_single_cell_retest_keeps_original_result_in_provenance(tmp_path):
+    from perceptbudget.m3_comparison import resume_plan
+    settings=comparison_settings(settings_fixture(tmp_path));config={'H':50}
+    (tmp_path/'comparison_plan.json').write_text(json.dumps(settings))
+    (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':dict(config,m3_settings=settings)}))
+    rows=[dict(suite=s,task_id=t,view=g,run='old',outcome='timeout')
+          for s,t in settings['calibration_tasks'] for g in GROUPS]
+    source=dict(episodes=rows,model_loads=1,previous_model_loads=1)
+    (tmp_path/'recording.json').write_text(json.dumps(source))
+    with patch('scripts.audit_rtc_system.audit',return_value={'passed':True}), \
+         patch('perceptbudget.m3_comparison.audit_group_clocks',return_value={'passed':True}):
+        result=resume_plan(tmp_path,settings,config,retest_cell=('libero_goal',6,'C_independent'))
+    assert len(result['episodes'])==35 and result['remaining_episodes']==1
+    assert result['remaining_tasks']==[['libero_goal',6]]
+    assert result['retested_original_episodes'][0]['outcome']=='timeout'
+    assert result['previous_model_loads']==2
+    assert json.loads((tmp_path/'recording.json').read_text())==source

@@ -259,7 +259,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if cfg.get('m3_resume_plan'):
         continuation=cfg.pop('m3_resume_plan')
         record.update(episodes=copy.deepcopy(continuation['episodes']),resume_source=continuation['source'],
-            previous_model_loads=continuation['previous_model_loads'])
+            previous_model_loads=continuation['previous_model_loads'],
+            retested_original_episodes=continuation.get('retested_original_episodes',[]))
     if cfg.get('m3_formal_comparison'):
         record['formal_trigger_strategy']=cfg['m3_formal_signal']
     if resume and path.exists():

@@ -139,7 +139,7 @@ def summarize_comparison(directory, record, *, screen):
     return result
 
 
-def resume_plan(source, settings, config):
+def resume_plan(source, settings, config, *, retest_cell=None):
     """Audit immutable completed episodes; retain failures and run only missing cells."""
     source=Path(source).resolve()
     if settings.get('comparison_screen'):
@@ -161,10 +161,21 @@ def resume_plan(source, settings, config):
         if not audit(Path(row['run']))['passed'] or not audit_group_clocks(row['run'],row['view'])['passed']:
             raise ValueError('Completed episode failed resume audit: '+row['run'])
         seen.add(key)
+    retested=[]
+    if retest_cell is not None:
+        target=tuple(retest_cell)
+        if seen!=allowed or target not in seen:
+            raise ValueError('Single-cell retest requires a completed comparison and an existing cell')
+        retested=[copy.deepcopy(row) for row in episodes
+            if (row['suite'],row['task_id'],row['view'])==target]
+        episodes=[row for row in episodes
+            if (row['suite'],row['task_id'],row['view'])!=target]
+        seen.remove(target)
     remaining=[task for task in settings['calibration_tasks']
         if any((task[0],task[1],g) not in seen for g in GROUPS)]
     if not remaining:
         raise ValueError('Comparison already complete')
     return dict(source=str(source),episodes=copy.deepcopy(episodes),remaining_tasks=remaining,
+        retested_original_episodes=retested,
         remaining_episodes=len(allowed)-len(seen),
         previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])

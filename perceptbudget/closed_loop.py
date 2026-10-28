@@ -162,6 +162,7 @@ def recording_session(config, settings, directory, cleanup_gate):
                        suffix_loads=record['suffix_loads'], episodes=record['episodes'])
     if resume:
         result.update(resume_source=resume['source'],reused_episodes=len(resume['episodes']),
+            retested_original_episodes=resume.get('retested_original_episodes',[]),
             total_model_loads=resume['previous_model_loads']+record['model_loads'])
     result['environment_cache'] = cache
     result['mode'] = settings.get('mode','record_only')

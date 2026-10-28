@@ -19,3 +19,10 @@ cd /home/wyk/workspace/PerceptBudget
 只加载一次模型补17回合。新目录引用原19回合，不修改原始结果。
 整个比较总模型加载数为2；Object task3的D组跨运行，最终初始条件审查保留不一致标记，
 不能把不一致的配对宣称为严格相同条件的节能差异。
+
+## 独立复测一个已完成回合
+
+`--resume-comparison <完成目录> --retest-comparison-cell libero_goal 6 C_independent`
+只新增该回合，其他35条引用旧记录，`retested_original_episodes`保留原失败路径及结果。
+新目录的汇总仅是复测视图；原始36回合正式比较不得被覆盖或当作没有发生该失败。
+复测后必须比较首次预测与原A/B/D，确认之前的数值差异是否重现。
