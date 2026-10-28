@@ -351,6 +351,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     from perceptbudget.closed_loop import comparison_variants
                     if cfg.get('m3_formal_comparison'):
                         cfg['m3_formal_task_index']=list(task_plan).index((suite,tid))
+                    if cfg.get('m3_trigger_comparison') and task_plan is not None:
+                        cfg['m3_trigger_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
@@ -628,7 +630,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 record['paired_bootstrap_audit']=paired
                 record['comparison_initials_exact']=paired['passed']
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
-                    tuple(cfg.get('m3_trigger_variants') or [])==('events_only','events_and_variance') or
+                    tuple(cfg.get('m3_trigger_variants') or []) in (('events_only','events_and_variance'),('events_only','variance_only')) or
                     any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge'))):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)

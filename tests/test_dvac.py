@@ -309,6 +309,26 @@ def test_phase_valley_pair_is_two_long_task_episodes_with_exact_bootstrap(capsys
         comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies[1:]))
 
 
+def test_pure_signal_batch_reuses_model_and_alternates_order(capsys):
+    from scripts.run_m3 import main
+    from perceptbudget.closed_loop import comparison_variants,configure_trigger_signals
+    strategies=['events_only','variance_only']
+    for index in range(3):
+        assert comparison_variants(dict(m3_trigger_comparison=True,m3_trigger_variants=strategies,
+            m3_trigger_task_index=index))==tuple(strategies if index%2==0 else strategies[::-1])
+    for strategy,events,variance in [('events_only',True,False),('variance_only',False,True)]:
+        cfg={};configure_trigger_signals(cfg,strategy)
+        assert cfg==dict(m3_dvac_enabled=variance,m3_action_events_enabled=events)
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10',
+        '--trigger-task-ids','1','4','7','--strategies',*strategies,'--device-dvfs','--no-age-limit','--dry-run']),patch('subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['tasks']==[['libero_10',1],['libero_10',4],['libero_10',7]]
+    assert plan['episodes']==6 and plan['model_loads']==1 and plan['exact_bootstrap_pair']
+    assert plan['denoising_triggers']==[False,True] and plan['merge_gap_steps']==[None]
+    launch.assert_not_called()
+
+
 def test_events_vs_mixed_task8_pair_checks_bootstrap_and_only_switches_variance(capsys):
     from scripts.run_m3 import main
     from perceptbudget.closed_loop import configure_trigger_signals

@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
     parser.add_argument('--trigger-suite', choices=('libero_spatial','libero_object','libero_goal','libero_10'))
     parser.add_argument('--trigger-task-id', type=int, choices=range(10), default=0)
+    parser.add_argument('--trigger-task-ids', type=int, nargs='+', choices=range(10),
+                        help='Run several trigger-comparison tasks with one resident model')
     parser.add_argument('--static-q', type=int, choices=(5,10,20,30,40), help='Pair one fixed-q high-frequency baseline with variance-only DVFS')
     parser.add_argument('--compare-event-dedup', action='store_true', help='Resident before/after event deduplication pair with exact bootstrap audit')
     parser.add_argument('--strategies', nargs='+', choices=('events_only','events_only_merge','variance_only','events_and_variance','events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge'))
@@ -38,6 +40,11 @@ def main():
     args = parser.parse_args()
     if args.comparison_screen and args.mode!='comparison':
         parser.error('--comparison-screen requires --mode comparison')
+    if args.trigger_task_ids and (not args.trigger_suite or args.trigger_task_id!=0
+            or len(set(args.trigger_task_ids))!=len(args.trigger_task_ids)):
+        parser.error('Multiple tasks require a suite, distinct IDs and no single task override')
+    if args.trigger_task_ids and any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')):
+        parser.error('Single-event probes require one task')
     if 'events_and_variance_slowdown_probe' in (args.strategies or []) and (
             args.mode!='trigger-comparison' or args.trigger_suite!='libero_10' or args.trigger_task_id!=4
             or not args.device_dvfs or args.compare_device or args.compare_event_dedup or args.static_q is not None):
@@ -50,7 +57,7 @@ def main():
             or args.compare_device or args.static_q is not None or args.repeats!=1
             or args.strategies not in (None,['events_and_variance'],['events_and_variance','variance_only'])):
         parser.error('Event dedup pair requires trigger-comparison --device-dvfs, one repeat, and events_and_variance; optionally append variance_only')
-    if (args.static_q is not None or args.trigger_task_id) and args.mode!='trigger-comparison':
+    if (args.static_q is not None or args.trigger_task_id or args.trigger_task_ids) and args.mode!='trigger-comparison':
         parser.error('Task selection and static baseline require trigger-comparison')
     if args.static_q is not None and (args.compare_device or args.device_dvfs or args.repeats!=1 or args.strategies not in (None,['variance_only'])):
         parser.error('Static pair uses variance_only, one repeat, and its own device pairing')
@@ -80,7 +87,7 @@ def main():
             trigger_variants=args.strategies,trigger_repeats=args.repeats,
             timing=dict(settings['timing'],maximum_action_offset=50))
         if args.trigger_suite:
-            settings['calibration_tasks']=[[args.trigger_suite,args.trigger_task_id]]
+            settings['calibration_tasks']=[[args.trigger_suite,tid] for tid in (args.trigger_task_ids or [args.trigger_task_id])]
         elif args.trigger_task_id:
             parser.error('--trigger-task-id requires --trigger-suite')
         if args.no_age_limit:
@@ -117,7 +124,7 @@ def main():
         print(json.dumps(dict(mode=args.mode, model_loads=0 if args.mode=='analyze' else 1,
             expert_loads=0 if args.mode=='analyze' else 1,
             tasks=settings['calibration_tasks'], q=5, static_q=args.static_q,
-            exact_bootstrap_pair=bool(settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies==['events_only','events_and_variance'] or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
+            exact_bootstrap_pair=bool(settings.get('formal_comparison')) or args.compare_event_dedup or args.strategies in (['events_only','events_and_variance'],['events_only','variance_only']) or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
             policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog','comparison'), clocks_changed=uses_dvfs,
@@ -171,6 +178,8 @@ def main():
                     if args.compare_event_dedup:
                         command += ['--compare-event-dedup']
                     command += ['--trigger-task-id',str(args.trigger_task_id)]
+                    if args.trigger_task_ids:
+                        command += ['--trigger-task-ids',*[str(tid) for tid in args.trigger_task_ids]]
                     if args.static_q is not None:
                         command += ['--static-q',str(args.static_q)]
                     command += ['--repeats',str(args.repeats)]

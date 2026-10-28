@@ -104,6 +104,28 @@ def test_variance_dvfs_plan_is_three_h50_tasks_without_sudo_or_model_load(capsys
     launch.assert_not_called()
 
 
+def test_multiple_task_ids_are_forwarded_to_the_resident_worker(tmp_path):
+    import json
+    from pathlib import Path
+    from scripts.run_m3 import main
+    from perceptbudget.experiment import load_config
+    cfg=load_config(repo_root=Path(__file__).resolve().parents[1]);cfg['output_root']=str(tmp_path)
+    run=tmp_path/'M3'/'batch';run.mkdir(parents=True)
+    (run/'run.json').write_text(json.dumps({'status':'created'}))
+    def worker(command,log):
+        at=command.index('--trigger-task-ids')
+        assert command[at+1:at+4]==['1','4','7']
+        (run/'summary.json').write_text(json.dumps(dict(status='completed',episodes=[{}]*6)))
+        return 0
+    with patch('sys.argv',['m3','--mode','trigger-comparison','--trigger-suite','libero_10',
+        '--trigger-task-ids','1','4','7','--strategies','events_only','variance_only','--device-dvfs','--no-age-limit']), \
+         patch('perceptbudget.experiment.load_config',return_value=cfg), \
+         patch('perceptbudget.experiment.create_run',return_value=run),patch('subprocess.run'), \
+         patch('perceptbudget.closed_loop.clock_preflight'), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=worker):
+        assert main()==0
+
+
 @pytest.mark.parametrize('device_args,episode_count,strategy',[
     (['--device-dvfs'],3,'variance_only'),
     (['--compare-device','--trigger-suite','libero_spatial'],2,'variance_only'),
