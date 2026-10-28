@@ -84,6 +84,15 @@ def inject_request_fault(request, config, episode_directory):
         time.sleep(seconds)
 
 
+def fault_window_recovered(row, commits):
+    """A result submitted after this tick is not yet a recovered action."""
+    if len(commits)<2 or row.get('source') is None:
+        return False
+    latest=commits[-1]
+    return (row['step']>=latest['commit_step']
+        and row['source']['prediction_id']==latest['prediction_id'])
+
+
 def validate_fault_suite(directory):
     """A killed hang is a passed fault check, never a successful task episode."""
     directory = Path(directory)
@@ -109,14 +118,18 @@ def validate_fault_suite(directory):
         run=Path(row['run'])
         episode=json.loads((run/'summary.json').read_text())['episode']
         requests=json.loads((run/'rtc/q5_requests.json').read_text())
+        controls=[event for line in (run/'rtc/trace.jsonl').open()
+            if (event:=json.loads(line))['event']=='control_step']
+        resumed=[row['step'] for row in controls if fault_window_recovered(row,episode.get('commits',[]))]
         injected=next((q for q in requests if q.get('watchdog_fault',{}).get('case')==case),None)
         timing=(injected or {}).get('m3_timing',{})
         late=timing.get('arrival_lateness_seconds',0)>0
         valid=(injected is not None and row['view']=='watchdog_'+case
-            and row['audit_passed'] and episode['status']=='fault_window_completed'
+            and row['audit_passed'] and episode['status']=='fault_window_completed' and bool(resumed)
             and (late if case=='late' else bool(episode['underflow_steps'])))
         checks[case+'_passed']=valid
         cases.append(dict(case=case, run=str(run), passed=valid,
+            resumed_execution_step=resumed[0] if resumed else None,
             underflow_steps=episode['underflow_steps'],
             arrival_lateness_seconds=timing.get('arrival_lateness_seconds')))
     clock_paths=[Path(row['run'])/'rtc/runtime_clocks.jsonl' for row in recording.get('episodes', [])]

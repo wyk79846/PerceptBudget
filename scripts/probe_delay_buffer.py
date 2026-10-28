@@ -655,8 +655,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                             condition=condition, step=step,
                             timestamp_monotonic=time.monotonic(), values=device_state())
             if config.get('m3_watchdog_case') and len(commits)>=2:
-                status = 'fault_window_completed'
-                break
+                from perceptbudget.watchdog import fault_window_recovered
+                if fault_window_recovered(row,commits):
+                    status = 'fault_window_completed'
+                    break
             if terminal:
                 status = 'success' if success else 'timeout' if step + 1 == task['max_steps'] else 'failure'
                 break

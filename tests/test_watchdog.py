@@ -83,7 +83,16 @@ def test_watchdog_window_order_and_source_settings_are_explicit():
     assert comparison_variants({'m3_watchdog_checks':True})==('watchdog_late','watchdog_underflow','watchdog_hang')
 
 
-@pytest.mark.parametrize('broken',[None,'late','underflow','wrong_hang','no_local_abort'])
+def test_window_does_not_end_on_old_action_just_because_new_result_arrived():
+    from perceptbudget.watchdog import fault_window_recovered
+    commits=[dict(prediction_id=0,commit_step=0),dict(prediction_id=1,commit_step=51)]
+    assert not fault_window_recovered(dict(step=50,source=None),commits)
+    assert not fault_window_recovered(dict(step=50,source=dict(prediction_id=0)),commits)
+    assert fault_window_recovered(dict(step=51,source=dict(prediction_id=1)),commits)
+    assert not fault_window_recovered(dict(step=51,source=dict(prediction_id=1)),commits[:1])
+
+
+@pytest.mark.parametrize('broken',[None,'late','underflow','wrong_hang','no_local_abort','no_resume'])
 def test_fault_suite_only_passes_with_all_independent_evidence(tmp_path,broken):
     from perceptbudget.watchdog import validate_fault_suite
     def write(path,value):
@@ -92,8 +101,12 @@ def test_fault_suite_only_passes_with_all_independent_evidence(tmp_path,broken):
     episodes=[]
     for case in ('late','underflow'):
         run=tmp_path/case
-        write(run/'summary.json',dict(episode=dict(status='fault_window_completed',underflow_steps=[50] if case=='underflow' and broken!='underflow' else [])))
+        write(run/'summary.json',dict(episode=dict(status='fault_window_completed',
+            commits=[dict(prediction_id=0,commit_step=0),dict(prediction_id=1,commit_step=51)],
+            underflow_steps=[50] if case=='underflow' and broken!='underflow' else [])))
         write(run/'rtc/q5_requests.json',[dict(watchdog_fault=dict(case=case),m3_timing=dict(arrival_lateness_seconds=0 if broken=='late' else .1))])
+        write(run/'rtc/trace.jsonl',dict(event='control_step',step=50 if broken=='no_resume' else 51,
+            source=None if broken=='no_resume' else dict(prediction_id=1)))
         (run/'rtc/runtime_clocks.jsonl').write_text('RESTORED\n')
         episodes.append(dict(view='watchdog_'+case,run=str(run),audit_passed=True))
     hang=tmp_path/'hang/rtc';hang.mkdir(parents=True)

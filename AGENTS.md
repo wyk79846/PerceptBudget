@@ -8,6 +8,9 @@
 
 ## 已完成与待推进
 
+- 2026-10-28 watchdog caa52a36真实三故障触发，三窗RESTORED/1model。250ms→迟到145.36ms/欠载1步68ms；1s→迟到896.87ms/欠载12步751ms；hang本地3.0003s超时、外层约6.022s终止。人工发现前两窗stop条件len(commits)>=2在末次env.step后harvest时误停：已提交51/62但最后只执行50/61，自动completed不能证明恢复执行。raw不改，postrun_review标partial_validation。修复fault_window_recovered要求实际控制来源为新提交prediction且步号>=commit，并由validator读取trace独立核对；63相关tests通过。需要原watchdog命令重测后才可完整验收/冻结正式组。备份archive/pre-watchdog-resume-step-fix-20261028。
+
+
 - 2026-10-28最新主线：用户将机制一进一步优化后置；M3依任务书回到仅去噪触发、Full/Continue调频闭环验收，随后5.4正式四组比较。新增run_m3.py --mode watchdog --suite libero_spatial：迟到0.25s、缓冲耗尽1s、无返回三短窗，model/expert各一次，最后一窗有意终止worker。watchdog.py维护请求3s期限，外层留3s清理再终止普通用户worker，不杀调频助手；要求本地超时/原始请求与截至中止功率、前两窗audit/真实迟到欠载、三窗RESTORED，证据齐才返回0。实验开启，不自动改变生产默认；真实GPU三故障尚未跑，勿称已完成5.3验收。全量717pass/9skip/110subtests，FlashRT未改。任务书/阶段进展已更新，备份archive/pre-m3-watchdog-checks-20261028。
 
 
