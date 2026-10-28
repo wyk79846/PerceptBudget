@@ -37,7 +37,7 @@ def clock_preflight(run, profiles, summary):
                                f'NO MODEL LOADED; inspect {path}')
 
 
-def monitored_worker(command, out):
+def monitored_worker(command, out, *, request_watchdog=None, watchdog_grace_seconds=0.):
     # Keep the user's controlling terminal/session for sudo's tty-bound cache.
     # Do not use guarded_run's setsid: that would lose this authorization.
     # Never send group signals: a finite privileged lease may be a descendant.
@@ -47,6 +47,14 @@ def monitored_worker(command, out):
     child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
     try:
         while child.poll() is None:
+            if request_watchdog is not None:
+                from perceptbudget.watchdog import expired_request, InferenceTimeout
+                from perceptbudget.experiment import _write_json_atomically
+                record=expired_request(request_watchdog)
+                if record is not None and time.monotonic()>=record['deadline_monotonic']+watchdog_grace_seconds:
+                    record=dict(record, detected_monotonic=time.monotonic())
+                    _write_json_atomically(Path(request_watchdog).parent/'outer_watchdog_timeout.json',record)
+                    raise InferenceTimeout(record)
             if available_ram_bytes() < RAM_FLOOR_BYTES:
                 raise RuntimeError('RAM protection stopped worker; wait for finite root helper and verify restoration')
             time.sleep(.1)

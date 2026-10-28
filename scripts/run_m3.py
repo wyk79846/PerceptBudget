@@ -17,7 +17,7 @@ def main():
     from perceptbudget.experiment import load_config, create_run, _write_json_atomically
     from scripts.eval_pooled_views import CLEANUP_GATE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'analyze'), default='record-only')
+    parser.add_argument('--mode', choices=('record-only', 'deadline-high', 'deadline-dvfs', 'dvac-probe', 'dvac-validate', 'dvac-paired', 'dvac-horizon-paired', 'trigger-comparison', 'watchdog', 'analyze'), default='record-only')
     parser.add_argument('--suite', choices=('libero_spatial','libero_object','libero_goal'), default='libero_spatial',
                         help='Single task0 suite for the deadline-high smoke test')
     parser.add_argument('--settings', type=Path, default=ROOT/'m3.json')
@@ -63,6 +63,10 @@ def main():
     if args.mode in ('dvac-paired','dvac-horizon-paired'):
         settings=dict(settings,mode='deadline_high',dvac_paired=True,
                       dvac_horizon_paired=args.mode=='dvac-horizon-paired')
+    if args.mode=='watchdog':
+        settings=dict(settings,mode='deadline_dvfs',dvac_paired=True,watchdog_checks=True,
+            calibration_tasks=[[args.suite,0]],
+            timing=dict(settings['timing'],maximum_action_offset=50,maximum_observation_age_seconds=None))
     if args.mode=='trigger-comparison':
         settings=dict(settings,mode='deadline_dvfs' if args.device_dvfs or args.compare_device or args.static_q is not None else 'deadline_high',dvac_paired=True,trigger_comparison=True,
             device_comparison=args.compare_device or args.static_q is not None,static_q=args.static_q,
@@ -85,7 +89,7 @@ def main():
     else:
         if args.trigger_suite or args.strategies or args.repeats!=1:
             parser.error('Trigger selection and repeats require --mode trigger-comparison')
-        variants_per_task=2 if settings.get('dvac_paired') else 1
+        variants_per_task=3 if settings.get('watchdog_checks') else 2 if settings.get('dvac_paired') else 1
     uses_dvfs=settings.get('mode')=='deadline_dvfs'
     cfg = load_config(repo_root=ROOT)
     validate(cfg)
@@ -110,14 +114,16 @@ def main():
             exact_bootstrap_pair=args.compare_event_dedup or args.strategies==['events_only','events_and_variance'] or any(s in (args.strategies or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge')),
             exact_preintervention_prefix=any(s in (args.strategies or []) for s in ('events_and_variance_open_probe','events_and_variance_slowdown_probe')), H=50, N=5, state=True,
             episodes=len(settings['calibration_tasks'])*variants_per_task,
-            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison'), clocks_changed=uses_dvfs,
+            policy_changed=args.mode in ('deadline-high','deadline-dvfs','dvac-paired','dvac-horizon-paired','trigger-comparison','watchdog'), clocks_changed=uses_dvfs,
+            fault_checks=['late','underflow','hang'] if settings.get('watchdog_checks') else [],
+            request_timeout_seconds=3. if settings.get('watchdog_checks') else None,
             action_offset_limits=[20,50] if settings.get('dvac_horizon_paired') else [settings['timing']['maximum_action_offset']],
             maximum_observation_age_seconds=settings['timing']['maximum_observation_age_seconds'],
             slowdown_confirmation=[2,3] if 'events_and_variance_hold3' in (args.strategies or []) else [settings['events'].get('slowdown_confirm_steps') or settings['events'].get('confirm_steps',2)],
             slowdown_detectors=['drop','valley'] if 'events_and_variance_valley' in (args.strategies or []) else [settings['events'].get('slowdown_detector','drop')],
             signal_policies=['earliest','latest'] if 'events_and_variance_latest' in (args.strategies or []) else ['earliest'],
             merge_gap_steps=[None,8] if any(s in (args.strategies or []) for s in ('events_and_variance_merge','events_only_merge')) else [None],
-            denoising_triggers=[s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
+            denoising_triggers=[True]*3 if settings.get('watchdog_checks') else [s not in ('events_only','events_only_merge') for s in (args.strategies or [])],
             event_thresholds=settings['events']), ensure_ascii=False))
         return 0
     if args.worker:
@@ -174,7 +180,16 @@ def main():
                 with (run/'worker.log').open('w') as log:
                     if uses_dvfs:
                         from scripts.profile_clock_screen import monitored_worker
-                        code = monitored_worker(command, log)
+                        if args.mode=='watchdog':
+                            from perceptbudget.watchdog import InferenceTimeout, validate_fault_suite
+                            try:
+                                code=monitored_worker(command,log,request_watchdog=run/'request_watchdog.json',watchdog_grace_seconds=3.)
+                            except InferenceTimeout:
+                                result=validate_fault_suite(run)
+                                return 0
+                            raise RuntimeError('Watchdog suite returned without observing the injected hang')
+                        else:
+                            code = monitored_worker(command, log)
                     else:
                         code = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT).returncode
                 if code:

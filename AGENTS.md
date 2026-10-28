@@ -8,6 +8,9 @@
 
 ## 已完成与待推进
 
+- 2026-10-28最新主线：用户将机制一进一步优化后置；M3依任务书回到仅去噪触发、Full/Continue调频闭环验收，随后5.4正式四组比较。新增run_m3.py --mode watchdog --suite libero_spatial：迟到0.25s、缓冲耗尽1s、无返回三短窗，model/expert各一次，最后一窗有意终止worker。watchdog.py维护请求3s期限，外层留3s清理再终止普通用户worker，不杀调频助手；要求本地超时/原始请求与截至中止功率、前两窗audit/真实迟到欠载、三窗RESTORED，证据齐才返回0。实验开启，不自动改变生产默认；真实GPU三故障尚未跑，勿称已完成5.3验收。全量717pass/9skip/110subtests，FlashRT未改。任务书/阶段进展已更新，备份archive/pre-m3-watchdog-checks-20261028。
+
+
 - 2026-10-27 取早/取晚/纯DVAC同模型Long1消融3b600253 completed，初态/frame/state/noise/bootstrap全相同，取早/取晚前4份预测raw完全相同（与纯DVAC共享前2份）。纯DVAC32c27907 success253/14.9048s/188.1537J/8请求8提交；取早5be092ac success233/13.8437s/196.1693J/10请求10提交；取晚2652d87e success236/14.0002s/181.5464J/8请求8提交。均0gap/新融合独立审计通过/功率全覆盖/RESTORED，配置mask和policy核对正确。取晚较纯DVAC省3.51%能量且快6.07%；较取早省7.45%能量、慢1.13%。事件触发4→2，buffer4/DVAC1不变；119步critical130 vs DVAC128取130，205步保留已过事件179与DVAC216比较，不追逐后续事件，验证latest锁存。仅单任务一次，值得作为下一轮主候选，尚未切默认earliest，需其他Long任务验证；证据postrun_review.json。
 
 - 2026-10-27 用户提出机制一/DVAC改取后者，已接可选events_and_variance_latest。timing_plan.signal_policy默认earliest不变；latest在两信号存在时取较晚边界，仅一信号时仍用它，buffer/age仍取早，RTC离散提交上界/服务预算/50ms不变。同一chunk首次可用动作事件会锁存，经过后不被下一个事件替换以免不断后推；新预测提交后重置，允许latest中该已过事件与未来DVAC比较。所有决策/config记录policy，独立audit重算融合deadline/硬边界/减服务与余量一次，新增伪造deadline测试。179相关tests通过，200组默认与存档逐项精确相同，两份真实日志补policy后的独立审核1237/1395检查均通过。734ed0ad保存CPU重放，Long1首次计划差96步：原DVAC128→latest事件130；Long0 57步原立即刷→latest等待约1.61s。尚无闭环结果，sudo需用户密码。建议同模型Long1三组variance_only/events_and_variance/events_and_variance_latest各1、严格bootstrap，默认仍earliest。backup archive/pre-later-signal-comparison-20261027，FlashRT未改。

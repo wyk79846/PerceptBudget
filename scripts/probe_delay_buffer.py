@@ -314,6 +314,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     pauses = []
     monitor = PowerMonitor(poll_interval=0.1)
     scheduler = None
+    request_watchdog = None
+    if config.get('m3_watchdog_path'):
+        from perceptbudget.watchdog import RequestWatchdog
+        request_watchdog = RequestWatchdog(config['m3_watchdog_path'], config['m3_request_timeout_seconds'])
     if config.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs'):
         from perceptbudget.closed_loop import DeadlineRuntime
         scheduler = DeadlineRuntime(config)
@@ -396,6 +400,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     request['rtc_guidance']['delay_history_mode']=mode
                 request['rtc_guidance']['initialization_d_exceeds_s'] = delay > executed
         requests.append(request)
+        if request_watchdog is not None:
+            request_watchdog.arm(request, run_dir)
 
         def predict():
             if rtc_adapter is not None and step == 0:
@@ -413,6 +419,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             else:
                 actions = base._infer_actions(model, snapshot, task['instruction'],
                                               config['H'], request)
+            if config.get('m3_watchdog_case'):
+                from perceptbudget.watchdog import inject_request_fault
+                inject_request_fault(request, config, run_dir)
             request['actions'] = actions.tolist()
             request['ready_monotonic'] = time.monotonic()
             return actions
@@ -420,6 +429,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
 
     def harvest(step, completed_row=None):
         nonlocal future, current_request, previous_commit_step
+        if future is not None and request_watchdog is not None:
+            # A completed request is judged by its ready timestamp, not the
+            # later control tick which first observes completion.
+            request_watchdog.check(current_request.get('ready_monotonic') if future.done() else None)
         controlled = config.get('controlled_delay_steps')
         if future is not None and controlled is not None and current_request['observation_step'] > 0:
             target_step = current_request['observation_step'] + controlled
@@ -431,6 +444,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if future is None or not future.done():
             return
         ready_actions = future.result()
+        if request_watchdog is not None:
+            request_watchdog.complete(current_request['ready_monotonic'])
         if rtc_adapter is not None and current_request.get('rtc_guidance'):
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
@@ -521,7 +536,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             env_context = reuse_control_forward(env)
             env_audit = env_context.__enter__()
         future, current_request = submit(observation, 0)
-        future.result()  # Explicit sync diagnostic: no env steps while waiting.
+        future.result(timeout=config.get('m3_request_timeout_seconds'))  # Bootstrap only; no env steps yet.
         harvest(0)
         deadline = time.monotonic()
         for step in range(task['max_steps']):
@@ -557,6 +572,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 due = step - previous_request_step >= rtc_adapter.estimate_delay_steps(measured_period)
             if refresh_policy == 'post_commit' and future is not None:
                 due = False  # Next q-step window starts only after this result commits.
+            if config.get('m3_watchdog_case') and len(commits)>=2:
+                due=False  # The short fault window ends after this commit.
             if due:
                 if future is None:
                     future, current_request = submit(observation, step)
@@ -637,6 +654,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 base._trace(stream, 'device_state', q=q, trial_index=trial_index,
                             condition=condition, step=step,
                             timestamp_monotonic=time.monotonic(), values=device_state())
+            if config.get('m3_watchdog_case') and len(commits)>=2:
+                status = 'fault_window_completed'
+                break
             if terminal:
                 status = 'success' if success else 'timeout' if step + 1 == task['max_steps'] else 'failure'
                 break
@@ -645,6 +665,17 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             else:
                 time.sleep(max(0, deadline - time.monotonic()))
         stop = time.monotonic()
+    except BaseException as exc:
+        if request_watchdog is not None:
+            abort_time=time.monotonic()
+            base._trace(stream,'watchdog_abort',error=type(exc).__name__,
+                timestamp_monotonic=abort_time,request=request_watchdog.record,executed_steps=len(rows))
+            base._write_json_atomic(run_dir/'watchdog_abort.json',dict(
+                status='aborted',error=type(exc).__name__,request=request_watchdog.record,
+                executed_steps=len(rows),underflow_steps=underflows,requests=requests,
+                power_until_abort=base._power_result(monitor,start,abort_time),
+                scope='Measured through local abort; outer process termination/cleanup energy not included'))
+        raise
     finally:
         if stop is None:
             stop = time.monotonic()
@@ -653,6 +684,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 scheduler.stop_clocks()
         finally:
             drain = _drain_executor(executor, monitor, start, stop)
+            if request_watchdog is not None and current_request is not None:
+                request_watchdog.complete(current_request.get('ready_monotonic',time.monotonic()))
         base._trace(stream, 'episode_drain', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition, **drain)
         if env_audit is not None:

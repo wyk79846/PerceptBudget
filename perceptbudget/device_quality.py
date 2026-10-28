@@ -473,6 +473,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
                     episode_q=5
+                    if cfg.get('m3_watchdog_checks'):
+                        child_cfg.update(m3_watchdog_case=view.removeprefix('watchdog_'),
+                            m3_dvac_enabled=True,m3_action_events_enabled=False)
                     if dvac_paired:
                         child_cfg['m3_dvac_enabled']=view!='deadline_high'
                         if cfg.get('m3_trigger_comparison'):

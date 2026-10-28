@@ -28,6 +28,8 @@ def load_settings(path):
 
 
 def comparison_variants(config):
+    if config.get('m3_watchdog_checks'):
+        return ('watchdog_late','watchdog_underflow','watchdog_hang')
     if config.get('m3_event_dedup_comparison'):
         labels=('events_and_variance__coverage_event_only',
                 'events_and_variance__coverage_shared_refresh')
@@ -108,6 +110,9 @@ def configure_fixed_baseline(config, q):
 def recording_session(config, settings, directory, cleanup_gate):
     from perceptbudget.device_quality import resident_quality
     cfg = dict(config, m3_events=settings['events'])
+    if settings.get('watchdog_checks'):
+        cfg.update(m3_watchdog_checks=True,m3_action_events_enabled=False,
+            m3_watchdog_path=str(Path(directory)/'request_watchdog.json'),m3_request_timeout_seconds=3.)
     if settings.get('mode','record_only') in ('deadline_high','deadline_dvfs'):
         times = FullServiceTimes.from_m2_summary(settings['timing']['source_summary'],
             probability=settings['timing']['service_quantile'])
