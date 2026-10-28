@@ -8,6 +8,8 @@
 
 ## 已完成与待推进
 
+- 2026-10-28看门狗恢复复测a1b001b5通过：late迟到156ms/欠载1步70ms，第51步执行pid1/offset11；underflow迟到906ms/欠载12步758ms，第62步执行pid1/offset22，独立audit及零动作核对通过；hang本地3.0218s超时、外层6.0217s，三窗RESTORED，1model/1expert。原始检查与人工postrun_review证据齐，前次早停问题已补。超时接线仍只watchdog模式，下一步统一正式配置再5.4四组36回合；不要称正式对照或M3交付已完成。机制一优化后置，FlashRT未改。
+
 - 2026-10-28 watchdog caa52a36真实三故障触发，三窗RESTORED/1model。250ms→迟到145.36ms/欠载1步68ms；1s→迟到896.87ms/欠载12步751ms；hang本地3.0003s超时、外层约6.022s终止。人工发现前两窗stop条件len(commits)>=2在末次env.step后harvest时误停：已提交51/62但最后只执行50/61，自动completed不能证明恢复执行。raw不改，postrun_review标partial_validation。修复fault_window_recovered要求实际控制来源为新提交prediction且步号>=commit，并由validator读取trace独立核对；63相关tests通过。需要原watchdog命令重测后才可完整验收/冻结正式组。备份archive/pre-watchdog-resume-step-fix-20261028。
 
 
