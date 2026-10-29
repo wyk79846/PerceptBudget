@@ -59,3 +59,15 @@ def test_directional_preparation_enables_all_ten_high_low_policies(state):
     assert sum(s['kind']=='transition' for s in down['segments'])==1
     # Low->high Full recovery is in service already; only the post-service down is charged.
     assert next(s['energy_j'] for s in down['segments'] if s['kind']=='transition')==3
+
+
+def test_warm_post_compute_up_window_is_not_priced_as_cold_wait_recovery():
+    transitions={('baseline','gpu_emc'):{'seconds':.25,'energy_j':3,'reference_quiet_age_seconds':0.},
+        ('gpu_emc','baseline'):{'seconds':.25,'energy_j':2,'reference_quiet_age_seconds':1.}}
+    r=build(CFG,services(),WAIT,current_profile='gpu_emc',quiet_age_seconds=1.,window_seconds=2,
+        deadline_seconds=2,transitions=transitions)
+    candidate=next(c for c in r['catalog'] if c['label']=='Full:gpu_emc->baseline')
+    # Current warm low-side quarter second: .2*14+.05*10=3.3J;
+    # cold reference: .25*7=1.75J. Only the positive history difference is added.
+    energy=next(s['energy_j'] for s in candidate['segments'] if s['kind']=='transition')
+    assert energy==pytest.approx(2+3.3-1.75)

@@ -9,8 +9,9 @@ from perceptbudget.experiment import load_config,create_run,_write_json_atomical
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--transition-run',type=Path)
-    args=parser.parse_args();transitions=load_transitions(args.transition_run)
+    args=parser.parse_args()
     settings=json.loads((ROOT/'m4.json').read_text());services=load_service_costs(settings)
+    transitions=load_transitions(args.transition_run or settings.get('directional_cost_source'))
     waits=wait_model(json.loads(Path(settings['wait_cost_source']).read_text()))
     cases=[]
     for state in settings['hold_profiles']:

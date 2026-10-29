@@ -56,7 +56,14 @@ def load_transitions(path):
     for c in costs:
         if c['energy_j']<=0 or c['seconds']<=0 or c['max_readback_seconds']>c['seconds']:
             raise ValueError('Invalid directional preparation cost')
-        result[c['source'],c['target']]=dict(c,evidence=str(source))
+        reference_ages=[]
+        for trial in data['trials']:
+            if trial['mode']!='switch':continue
+            phase='down' if c['target']=='gpu_emc' else 'up'
+            controls=json.loads((Path(trial['source'])/'control.json').read_text())
+            reference_ages.append(max(0.,trial['windows'][phase]['start_monotonic']-controls[0]['tick_monotonic']))
+        result[c['source'],c['target']]=dict(c,evidence=str(source),
+            reference_quiet_age_seconds=sum(reference_ages)/len(reference_ages))
     if set(result)!={('baseline','gpu_emc'),('gpu_emc','baseline')}:
         raise ValueError('Unexpected transition directions')
     return result

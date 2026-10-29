@@ -44,10 +44,17 @@ def build(config,services,waits,*,current_profile,quiet_age_seconds,window_secon
     if critical_seconds is not None and (not math.isfinite(critical_seconds) or critical_seconds<0):
         raise ValueError('Invalid critical time')
     transitions=transitions or {}
-    def change(source,target):
+    def change(source,target,age=None):
         if source==target:return None
         if (source,target) not in transitions:raise ValueError('missing_directional_preparation')
-        return transitions[source,target]
+        measured=transitions[source,target]
+        result=dict(measured)
+        if age is not None:
+            duration=measured['seconds'];reference=measured.get('reference_quiet_age_seconds',0.)
+            extra=max(0.,hold_energy(waits,source,age,duration)-hold_energy(waits,source,reference,duration))
+            result['energy_j']+=extra
+            result['history_adjustment_j']=extra
+        return result
     eta=config['timing']['safety_margin_seconds'];candidates=[];catalog=[]
     full_budget=max(c['p95_service_seconds'] for c in services if c['mode']=='Full' and c['profile']=='baseline')
     fast_allowed=(not bootstrap and not unexpected_change and consecutive_fast<1 and
@@ -58,7 +65,7 @@ def build(config,services,waits,*,current_profile,quiet_age_seconds,window_secon
         allowed=not inflight and (mode!='Fast' or fast_allowed)
         try:
             if mode=='Continue':
-                transition=change(current_profile,next_state)
+                transition=change(current_profile,next_state,quiet_age_seconds)
                 duration=transition['seconds'] if transition else 0.
                 if duration>window_seconds:raise ValueError('preparation_exceeds_window')
                 next_budgets=[]
@@ -79,7 +86,7 @@ def build(config,services,waits,*,current_profile,quiet_age_seconds,window_secon
                     entry=change(current_profile,profile)
                     available=[c for c in services if c['mode']==mode and c['profile']==profile and c['from_profile']==profile]
                 if not available:raise ValueError('missing_service_entry_state')
-                post=change(profile,next_state)
+                post=change(profile,next_state,0.)
                 if next_state not in waits:raise ValueError('missing_hold_profile')
                 # Short/long recovery are calibration histories, not hardware states.
                 # Use the larger observed recovery estimate until dwell-specific online updates exist.
@@ -91,10 +98,13 @@ def build(config,services,waits,*,current_profile,quiet_age_seconds,window_secon
                 post_seconds=post['seconds'] if post else 0.
                 start=max(entry_seconds,min(deadline-p95-eta,window_seconds-mean-post_seconds))
                 remaining=window_seconds-start-mean-post_seconds
-                if remaining<0:raise ValueError('service_exceeds_window')
+                if remaining < -1e-9:raise ValueError('service_exceeds_window')
+                remaining=max(0.,remaining)
                 before=start-entry_seconds
                 segments=[Segment('hold',before,hold_energy(waits,current_profile,quiet_age_seconds,before))]
-                if entry:segments.append(Segment('transition',entry_seconds,entry['energy_j']))
+                if entry:
+                    entry=change(current_profile,profile,quiet_age_seconds+before)
+                    segments.append(Segment('transition',entry_seconds,entry['energy_j']))
                 segments.append(Segment('service',mean,energy))
                 if post:segments.append(Segment('transition',post_seconds,post['energy_j']))
                 segments.append(Segment('hold',remaining,hold_energy(waits,next_state,post_seconds,remaining)))
