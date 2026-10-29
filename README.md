@@ -124,3 +124,11 @@ H50范围的新实验使用`--no-age-limit`关闭未标定的2秒硬截断；H50
 LIBERO-Long已接入M3可选校准：`--trigger-suite libero_10`选择task0（两个物体依次入篮），520步上限与本地OpenPI/FlashRT一致。原三集合默认范围不变，73项相关检查和无主模型环境/图像预检通过；完整模型测试尚未运行。将上面的无年龄高频/DVFS配对命令的suite替换为libero_10即可，两回合共用一次模型；需检查去噪阈值实际激活情况。
 
 Long首轮35462fef：高频有效超时520步；DVFS因旧chunk已走41步只剩9目标步、RTC估计d10而异常退出，频率已恢复。已补调度的离散提交上限`origin+H-d`及恢复确认余量，原记录复放验证更早启动，全量590检查通过。未改变RTC延迟或H50，原命令可重试；尚无修复后Long闭环结果。
+
+### M4固定任务验收（两组）
+
+```bash
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m4_acceptance.py
+```
+
+Spatial/Object/Goal/Long各task0/3/6，seed7、init0；先q30高频Full12回合，再当前联合调度12回合。每组模型常驻，共2次加载。现有默认调度，未加入新PACE规则。结果自动汇总到M4/paired-acceptance会话。后续传`--baseline-run <acceptance-q30目录>`只重测joint并复用固定基线；`--dry-run`检查清单而不加载模型。

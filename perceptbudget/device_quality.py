@@ -503,6 +503,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     child_cfg = copy.deepcopy(cfg)
                     child_cfg['m2_view'] = current_view
                     episode_q=5
+                    if cfg.get('m4_acceptance_group')=='q30':
+                        from perceptbudget.m4_acceptance import configure_baseline
+                        episode_q=configure_baseline(child_cfg)
                     if cfg.get('m3_watchdog_checks'):
                         child_cfg.update(m3_watchdog_case=view.removeprefix('watchdog_'),
                             m3_dvac_enabled=True,m3_action_events_enabled=False)
@@ -572,7 +575,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m2_split_delay']=view!='full' or cfg.get('m4_enabled',False)
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
-                    active = create_run(child_cfg, 'M4' if cfg.get('m4_enabled') else 'M3' if record_only else 'M2',
+                    active = create_run(child_cfg, 'M4' if cfg.get('m4_enabled') or cfg.get('m4_acceptance_group') else 'M3' if record_only else 'M2',
                                         'record-full' if record_only else quality_run_purpose(label))
                     record.update(active_run=str(active),active_group=view)
                     save()
