@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Build measured M4 candidate catalog without model loading or clock writes."""
-import json,sys
+import argparse,json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from perceptbudget.m4_candidates import build,wait_model,templates
-from perceptbudget.m4_costs import load_service_costs
+from perceptbudget.m4_costs import load_service_costs,load_transitions
 from perceptbudget.experiment import load_config,create_run,_write_json_atomically
 
 if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--transition-run',type=Path)
+    args=parser.parse_args();transitions=load_transitions(args.transition_run)
     settings=json.loads((ROOT/'m4.json').read_text());services=load_service_costs(settings)
     waits=wait_model(json.loads(Path(settings['wait_cost_source']).read_text()))
     cases=[]
     for state in settings['hold_profiles']:
         for scene,flags in [('ordinary',{}),('after_fast',{'consecutive_fast':1}),('bootstrap',{'bootstrap':True})]:
             result=build(settings,services,waits,current_profile=state,quiet_age_seconds=.5,
-                window_seconds=1,deadline_seconds=.9,**flags)
+                window_seconds=2,deadline_seconds=2,transitions=transitions,**flags)
             cases.append(dict(current_profile=state,scene=scene,**result))
     run=create_run(dict(load_config(repo_root=ROOT),m4_settings=settings),'M4','candidate-check',repo_root=ROOT)
     _write_json_atomically(run/'summary.json',dict(status='completed',templates=templates(settings),

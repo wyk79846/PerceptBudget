@@ -265,7 +265,10 @@ def fixed_view_probe(config, directory, source_run, kind, repeats=5, *, clock_sc
         elif clock_recovery or clock_matrix:
             from perceptbudget.device_clock_recovery import screen
         elif clock_transitions:
-            from perceptbudget.device_clock_transitions import screen
+            if config.get('m4_transition_probe'):
+                from perceptbudget.m4_transition_probe import screen
+            else:
+                from perceptbudget.device_clock_transitions import screen
         else:
             from perceptbudget.device_clock_screen import screen
         kwargs = dict(matrix=True) if clock_matrix else {}

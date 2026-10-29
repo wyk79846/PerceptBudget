@@ -77,6 +77,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--idle-state-scan',action='store_true',help='Fixed high clocks, seven idle durations, three randomized blocks; no preassigned states')
+    modes.add_argument('--m4-transitions',action='store_true',help='Paired active-control high/low directional preparation windows')
     modes.add_argument('--transitions', action='store_true', help='Resident static combination holds and transition cost')
     modes.add_argument('--recovery', action='store_true', help='Short/long idle recovery followed by prepared-input Full RTC')
     modes.add_argument('--matrix', action='store_true', help='Nine Full cost cells, three candidate clock combinations by three idle states')
@@ -126,6 +127,8 @@ def main():
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
     validate(config)
+    if args.m4_transitions:
+        config=dict(config,m4_transition_probe=True)
     if args.service_hot_only:
         config = dict(config,m2_service_hot_only=True)
     if args.service_validation:
@@ -140,6 +143,11 @@ def main():
         previous=load_history_resume(args.resume_continue,config)
         config=dict(config,m2_continue_resume_run=str(args.resume_continue.resolve()))
     source = Path(config['output_root'])/'M1/20261021T081454.319874Z-rtc-diag-actual_history-7444fb8d'
+    if args.dry_run and args.m4_transitions:
+        print(json.dumps(dict(mode='m4-transitions',model_loads=1,trials=10,paired_repeats=5,
+            control_steps_per_trial=40,window_seconds=.25,profiles=['baseline','gpu_emc'],
+            measurement='Absolute250ms preparation+control energy, not instantaneous switch-only energy')))
+        return 0
     if args.dry_run:
         if args.continue_validation:
             print(json.dumps(dict(model_loads=1, mode='continue_only', windows=60,
@@ -237,19 +245,23 @@ def main():
                               source_run=str(source)), ensure_ascii=False))
         return 0
     if args.worker:
-        if args.run_dir is None or args.run_dir.resolve().parent != (Path(config['output_root'])/'M2').resolve():
+        if args.run_dir is None or args.run_dir.resolve().parent != (Path(config['output_root'])/('M4' if args.m4_transitions else 'M2')).resolve():
             parser.error('Worker requires M2 output directory')
         # Check the inherited tty credential before loading any weights.
         subprocess.run(['sudo', '-n', 'true'], check=True)
         from perceptbudget.device_profile import fixed_view_probe
-        fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
-                         clock_transitions=args.transitions, clock_recovery=args.recovery,
-                         clock_matrix=args.matrix or args.idle_recovery, continue_control=args.continue_control or args.continue_camera_compare or args.continue_history,
-                         full_service=args.full_service or args.live_service, service_profiles=service_profiles,
-                         fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
-                         pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
-                         selected_fast_clocks=args.selected_fast_clocks,continue_history=args.continue_history,
-                         idle_state_scan=args.idle_state_scan)
+        from contextlib import nullcontext
+        from perceptbudget.closed_loop import compiled_environments
+        preparation=compiled_environments(args.run_dir,[('libero_spatial',0)],config) if args.m4_transitions else nullcontext()
+        with preparation:
+            fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
+                             clock_transitions=args.transitions or args.m4_transitions, clock_recovery=args.recovery,
+                             clock_matrix=args.matrix or args.idle_recovery, continue_control=args.continue_control or args.continue_camera_compare or args.continue_history,
+                             full_service=args.full_service or args.live_service, service_profiles=service_profiles,
+                             fast_clocks=args.fast_clocks, visual_clocks=args.visual_clocks,
+                             pooled_clocks=args.pooled_clocks, camera_compare=args.continue_camera_compare,
+                             selected_fast_clocks=args.selected_fast_clocks,continue_history=args.continue_history,
+                             idle_state_scan=args.idle_state_scan)
         return 0
     # Fail before loading weights if no interactive terminal/authorization.
     subprocess.run(['sudo', '-v'], check=True)
@@ -259,18 +271,21 @@ def main():
                     m2_selected_fast_live_service=args.live_service)
     if args.continue_history:
         config=dict(config,m2_continue_history=True)
-    purpose = 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
+    purpose = 'm4-directional-transitions' if args.m4_transitions else 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     if args.service_validation:
         purpose = validation_purpose(args.live_service,args.validation_batch)
     if args.continue_validation:
         purpose = 'continue-validation-batch'+str(args.validation_batch)
-    run = create_run(config, 'M2', purpose, repo_root=ROOT)
+    run = create_run(config, 'M4' if args.m4_transitions else 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.continue_validation:
+            if args.m4_transitions:
+                from perceptbudget.closed_loop import clock_preflight as runtime_preflight
+                runtime_preflight(run)
+            elif args.continue_validation:
                 clock_preflight(run, ('baseline','gpu_emc'), summary)
             elif args.idle_state_scan:
                 clock_preflight(run,('baseline',),summary)
@@ -283,6 +298,8 @@ def main():
                 clock_preflight(run, tuple(dict.fromkeys((*service_profiles, 'gpu_emc'))) if args.service_validation else service_profiles, summary)
             command = [config['python_executable'], '-u', str(Path(__file__).resolve()),
                        '--worker', '--run-dir', str(run)]
+            if args.m4_transitions:
+                command.append('--m4-transitions')
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
             if args.service_hot_only:
@@ -333,6 +350,12 @@ def main():
                     raise RuntimeError('Incomplete idle state scan')
                 summary.update(status='completed',scope=record['scope'],model_loads=record['model_loads'],
                     conditions=record['summary'],restored=record['restored'],state_classification=None)
+                return 0
+            if args.m4_transitions:
+                record=json.loads((run/'m4_transitions.json').read_text())
+                if record['status']!='completed' or len(record['trials'])!=10:
+                    raise RuntimeError('Incomplete M4 directional measurement')
+                summary.update(status='completed',model_loads=1,trials=record['trials'],scope=record['scope'])
                 return 0
             if args.full_service or args.live_service:
                 record = json.loads((run/('selected_fast_service.json' if args.live_service else 'full_service.json')).read_text())

@@ -37,36 +37,49 @@ def templates(config):
 
 
 def build(config,services,waits,*,current_profile,quiet_age_seconds,window_seconds,deadline_seconds,
-          critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False):
+          critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False,transitions=None):
     if current_profile not in config['hold_profiles']:raise ValueError('Unsupported current state')
     if any(not math.isfinite(v) or v<0 for v in (quiet_age_seconds,window_seconds,deadline_seconds)) or window_seconds==0:
         raise ValueError('Invalid runtime timing')
     if critical_seconds is not None and (not math.isfinite(critical_seconds) or critical_seconds<0):
         raise ValueError('Invalid critical time')
+    transitions=transitions or {}
+    def change(source,target):
+        if source==target:return None
+        if (source,target) not in transitions:raise ValueError('missing_directional_preparation')
+        return transitions[source,target]
     eta=config['timing']['safety_margin_seconds'];candidates=[];catalog=[]
     full_budget=max(c['p95_service_seconds'] for c in services if c['mode']=='Full' and c['profile']=='baseline')
     fast_allowed=(not bootstrap and not unexpected_change and consecutive_fast<1 and
         (critical_seconds is None or critical_seconds>full_budget+eta))
     deadline=min(deadline_seconds,critical_seconds) if critical_seconds is not None else deadline_seconds
-    budgets=[]
-    for mode in ('Full','Fast') if fast_allowed else ('Full',):
-        for profile in config['compute_profiles']:
-            measured=[c['p95_service_seconds'] for c in services if c['mode']==mode and c['profile']==profile and c['from_profile']==current_profile]
-            if measured:budgets.append(max(measured))
-    refresh_reserve=min(budgets) if budgets else float('inf')
     for mode,profile,next_state in templates(config):
         label=f'{mode}:{profile}->{next_state}';segments=[];start=p95=None;missing=None;source=[]
         allowed=not inflight and (mode!='Fast' or fast_allowed)
         try:
             if mode=='Continue':
-                allowed=not bootstrap and not unexpected_change and window_seconds+refresh_reserve+eta<=deadline
-                if next_state!=current_profile:raise ValueError('missing_wait_entry_transition')
-                segments=[Segment('hold',window_seconds,hold_energy(waits,current_profile,quiet_age_seconds,window_seconds))]
+                transition=change(current_profile,next_state)
+                duration=transition['seconds'] if transition else 0.
+                if duration>window_seconds:raise ValueError('preparation_exceeds_window')
+                next_budgets=[]
+                for future_mode in ('Full','Fast') if fast_allowed else ('Full',):
+                    for future_profile in config['compute_profiles']:
+                        measured=[c['p95_service_seconds'] for c in services if c['mode']==future_mode and c['profile']==future_profile and c['from_profile']==next_state]
+                        if measured:next_budgets.append(max(measured))
+                reserve=min(next_budgets) if next_budgets else float('inf')
+                allowed=not bootstrap and not unexpected_change and window_seconds+reserve+eta<=deadline
+                if transition:segments.append(Segment('transition',duration,transition['energy_j']))
+                segments.append(Segment('hold',window_seconds-duration,hold_energy(waits,next_state,
+                    duration if transition else quiet_age_seconds,window_seconds-duration)))
             else:
                 # Complete service includes its measured recovery. Do not add it again.
                 available=[c for c in services if c['mode']==mode and c['profile']==profile and c['from_profile']==current_profile]
+                entry=None
+                if not available:
+                    entry=change(current_profile,profile)
+                    available=[c for c in services if c['mode']==mode and c['profile']==profile and c['from_profile']==profile]
                 if not available:raise ValueError('missing_service_entry_state')
-                if next_state!=profile:raise ValueError('missing_post_service_transition')
+                post=change(profile,next_state)
                 if next_state not in waits:raise ValueError('missing_hold_profile')
                 # Short/long recovery are calibration histories, not hardware states.
                 # Use the larger observed recovery estimate until dwell-specific online updates exist.
@@ -74,11 +87,17 @@ def build(config,services,waits,*,current_profile,quiet_age_seconds,window_secon
                 mean=max(c['mean_service_seconds'] for c in available)
                 energy=max(c['mean_absolute_service_energy_j'] for c in available)
                 source=[c['history'] for c in available]
-                start=max(0.,min(deadline-p95-eta,window_seconds-mean))
-                remaining=window_seconds-start-mean
+                entry_seconds=entry['seconds'] if entry else 0.
+                post_seconds=post['seconds'] if post else 0.
+                start=max(entry_seconds,min(deadline-p95-eta,window_seconds-mean-post_seconds))
+                remaining=window_seconds-start-mean-post_seconds
                 if remaining<0:raise ValueError('service_exceeds_window')
-                segments=[Segment('hold',start,hold_energy(waits,current_profile,quiet_age_seconds,start)),
-                    Segment('service',mean,energy),Segment('hold',remaining,hold_energy(waits,next_state,0.,remaining))]
+                before=start-entry_seconds
+                segments=[Segment('hold',before,hold_energy(waits,current_profile,quiet_age_seconds,before))]
+                if entry:segments.append(Segment('transition',entry_seconds,entry['energy_j']))
+                segments.append(Segment('service',mean,energy))
+                if post:segments.append(Segment('transition',post_seconds,post['energy_j']))
+                segments.append(Segment('hold',remaining,hold_energy(waits,next_state,post_seconds,remaining)))
         except (ValueError,KeyError) as exc:missing=str(exc)
         c=Candidate(label,mode,profile,next_state,start,p95,tuple(segments),allowed,missing is None)
         candidates.append(c);catalog.append(dict(label=label,costs_complete=c.costs_complete,

@@ -42,3 +42,20 @@ def test_continue_leaves_enough_time_for_next_refresh():
 def test_wait_cost_integrates_age_bins_without_resetting_age():
     assert hold_energy(WAIT,'baseline',.1,.5)==pytest.approx(.1*16+.3*12+.1*10)
     assert hold_energy(WAIT,'baseline',.6,.2)==pytest.approx(2)
+
+
+@pytest.mark.parametrize('state',['baseline','gpu_emc'])
+def test_directional_preparation_enables_all_ten_high_low_policies(state):
+    transitions={('baseline','gpu_emc'):{'seconds':.25,'energy_j':3},
+                 ('gpu_emc','baseline'):{'seconds':.25,'energy_j':4}}
+    result=build(CFG,services(),WAIT,current_profile=state,quiet_age_seconds=.5,window_seconds=2,
+        deadline_seconds=2,transitions=transitions)
+    assert result['measured_count']==10
+    missing=[c for c in result['catalog'] if not c['costs_complete']]
+    assert len(missing)==4 and all(':balanced->' in c['label'] for c in missing)
+    down=next(c for c in result['catalog'] if c['label']=='Full:baseline->gpu_emc')
+    assert down['costs_complete']
+    assert sum(s['seconds'] for s in down['segments'])==pytest.approx(2)
+    assert sum(s['kind']=='transition' for s in down['segments'])==1
+    # Low->high Full recovery is in service already; only the post-service down is charged.
+    assert next(s['energy_j'] for s in down['segments'] if s['kind']=='transition')==3

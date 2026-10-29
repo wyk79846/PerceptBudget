@@ -40,3 +40,23 @@ def load_service_costs(config):
             mean_service_seconds=sum(samples)/len(samples),p95_service_seconds=percentile(samples,.95),
             sources=sources,source=str(source),energy_scope='Latest three-batch absolute service mean')
     return list(cells.values())
+
+
+def load_transitions(path):
+    if path is None:return {}
+    source=Path(path)
+    if source.is_dir():source=source/'m4_transitions.json'
+    data=json.loads(source.read_text())
+    if data.get('status')!='completed' or len(data.get('trials',[]))!=10:
+        raise ValueError('Require completed paired directional probe')
+    if not all(t.get('restored') for t in data['trials']):raise ValueError('Missing clock restoration')
+    costs=data['directional_costs']
+    if len(costs)!=2:raise ValueError('Missing direction')
+    result={}
+    for c in costs:
+        if c['energy_j']<=0 or c['seconds']<=0 or c['max_readback_seconds']>c['seconds']:
+            raise ValueError('Invalid directional preparation cost')
+        result[c['source'],c['target']]=dict(c,evidence=str(source))
+    if set(result)!={('baseline','gpu_emc'),('gpu_emc','baseline')}:
+        raise ValueError('Unexpected transition directions')
+    return result
