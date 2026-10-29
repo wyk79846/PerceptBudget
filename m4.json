@@ -1,0 +1,12 @@
+{
+  "stage": "M4",
+  "source_document": "/home/wyk/workspace/任务指导与相关参考/Student_A_PerceptBudget_Revised.docx",
+  "m3_settings": "m3.json",
+  "timing": {"service_quantile": 0.95, "safety_margin_seconds": 0.025},
+  "modes": {"Full": {"visual_mode": "full", "state": true}, "Fast": {"visual_mode": "pool2_agent", "state": false}, "Continue": {"neural_compute": false}},
+  "compute_profiles": ["baseline", "balanced", "gpu_emc"],
+  "hold_profiles": ["baseline", "gpu_emc"],
+  "cost_summary": "/home/wyk/workspace/任务产出/perceptbudget/M2/20261026T023602.896667Z-cost-table-27-d4594b43/summary.json",
+  "output_phase": "M4",
+  "status": "candidate_inventory_not_active_scheduler"
+}
