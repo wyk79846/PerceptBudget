@@ -134,3 +134,5 @@ Long首轮35462fef：高频有效超时520步；DVFS因旧chunk已走41步只剩
 Spatial/Object/Goal/Long各task0/3/6，seed7、init0；先q30高频Full12回合，再当前联合调度12回合。每组模型常驻，共2次加载。现有默认调度，未加入新PACE规则。结果自动汇总到M4/paired-acceptance会话。后续传`--baseline-run <acceptance-q30目录>`只重测joint并复用固定基线；`--dry-run`检查清单而不加载模型。
 
 M4中断续测：`run_m4_acceptance.py --baseline-run <已完成q30组> --resume-joint <中断的joint组>`。核验并保留全部已完成结果（包括失败），仅预检/执行缺失任务，汇总完整配对表。
+
+SSH断开后继续M4测试：先`tmux new -s pb-m4-v2`，在会话内运行`bash scripts/run_m4_ssh.sh --baseline-run <已完成q30组>`。脚本只在tmux普通用户终端下运行；sudo交互授权一次并每60秒续期，退出后结束续期，不改sudoers。按Ctrl+B再D离开；`tmux attach -t pb-m4-v2`返回。总日志在启动时打印的/tmp/perceptbudget-m4-ssh-时间.log，各回合记录仍在M4输出目录。已改变策略的v2需新跑joint12，不能resume旧策略回合。
