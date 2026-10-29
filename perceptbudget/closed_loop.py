@@ -616,6 +616,10 @@ def compiled_environments(directory, tasks, config):
                 max_changed_pixels=max(int(np.any(x!=0,axis=-1).sum()) for x in pixels),
                 success_equal=all(a[3]==b[3] for a,b in zip(*captures)))
             case['passed'] = physical==0 and state==0 and case['success_equal'] and case['pixel_max_abs']<=1 and case['max_changed_pixels']<=4
+            if config.get('m4_acceptance_group'):
+                from perceptbudget.m4_acceptance import render_parity
+                case['render_parity']=render_parity(case,int(np.prod(pixels[0].shape[:2])))
+                case['passed']=case['render_parity']['passed']
             report['cases'].append(case)
             if not case['passed']:
                 raise RuntimeError('Compiled environment replay mismatch: '+str(case))

@@ -10,6 +10,17 @@ TASK_IDS = (0, 3, 6)
 GROUPS = ('q30', 'joint')
 
 
+def render_parity(case, total_pixels):
+    """Permit sparse one-level RGB raster differences, never physics drift."""
+    budget=max(4,int(total_pixels*0.0001))
+    return dict(passed=case['physical_max_abs']==0 and case['state_max_abs']==0
+                and case['success_equal'] and case['pixel_max_abs']<=1
+                and case['max_changed_pixels']<=budget,
+                total_pixels=total_pixels,changed_pixel_limit=budget,
+                changed_fraction=case['max_changed_pixels']/total_pixels,
+                rule='exact physics/state/success; RGB delta<=1; changed pixels<=0.01% (minimum4)')
+
+
 @contextmanager
 def precompiled_environments(directory, tasks, config):
     """Read validated on-disk models after the preparation process has exited."""

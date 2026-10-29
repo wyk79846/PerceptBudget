@@ -9,6 +9,16 @@ from perceptbudget.baseline import FROZEN
 from perceptbudget.m4_acceptance import manifest, configure_baseline, request_path, summarize
 
 
+def test_render_noise_does_not_mask_physics_or_visible_image_change():
+    from perceptbudget.m4_acceptance import render_parity
+    case=dict(physical_max_abs=0.,state_max_abs=0.,success_equal=True,pixel_max_abs=1,max_changed_pixels=8)
+    assert render_parity(case,2*256*256)['passed']
+    assert render_parity(case,2*256*256)['changed_pixel_limit']==13
+    for field,value in [('physical_max_abs',1e-12),('state_max_abs',1e-12),('success_equal',False),
+                        ('pixel_max_abs',2),('max_changed_pixels',14)]:
+        assert not render_parity(dict(case,**{field:value}),2*256*256)['passed']
+
+
 def test_manifest_fixes_twelve_cases_and_detects_model_changes():
     cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats')
     fixed=manifest(cfg)
