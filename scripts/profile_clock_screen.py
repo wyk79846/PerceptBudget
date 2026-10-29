@@ -93,6 +93,7 @@ def main():
     parser.add_argument('--resume-continue',type=Path,help='With --continue-history only: preserve validated windows and fill missing indices')
     parser.add_argument('--service-profiles', nargs='+', choices=MATRIX_PROFILES,
                         help='Full service clock points; five paired requests per point')
+    parser.add_argument('--service-hot-only',action='store_true',help='Selected validation: hot condition only')
     parser.add_argument('--service-validation', action='store_true', help='Twenty live services per hot/short/long condition; selected configurations only')
     parser.add_argument('--skip-continue-validation', action='store_true', help='Full service only: reuse existing Continue evidence instead of repeating it')
     parser.add_argument('--continue-validation', action='store_true', help='Standalone selected Continue long test, preserving prior Full service results')
@@ -100,6 +101,10 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.service_hot_only and not (args.service_validation and (args.full_service or args.live_service)):
+        parser.error('--service-hot-only requires live service validation')
+    if args.service_hot_only and args.full_service and not args.skip_continue_validation:
+        parser.error('Hot-only Full requires --skip-continue-validation')
     if args.skip_continue_validation and not (args.service_validation and args.full_service):
         parser.error('--skip-continue-validation requires --full-service --service-validation')
     if args.continue_validation and (not args.continue_history or args.resume_continue or args.service_validation):
@@ -121,6 +126,8 @@ def main():
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
     validate(config)
+    if args.service_hot_only:
+        config = dict(config,m2_service_hot_only=True)
     if args.service_validation:
         config = dict(config, m2_service_validation=True, m2_validation_batch=args.validation_batch)
     if args.skip_continue_validation:
@@ -142,8 +149,8 @@ def main():
         if args.service_validation:
             print(json.dumps(dict(model_loads=1, mode='selected_fast' if args.live_service else 'full',
                 purpose=validation_purpose(args.live_service,args.validation_batch),
-                profiles=service_profiles, histories_seconds=[0,.2,1.], requests_per_condition=20,
-                requests=60*len(service_profiles), batch=args.validation_batch,
+                profiles=service_profiles, histories_seconds=[0] if args.service_hot_only else [0,.2,1.], requests_per_condition=20,
+                requests=(20 if args.service_hot_only else 60)*len(service_profiles), batch=args.validation_batch,
                 runs_continue_after_service=bool(args.full_service and not args.skip_continue_validation),
                 service_boundary='device preparation command to fresh observation and new action packet ready',
                 state_enabled=not args.live_service, independent_process_per_batch=True)))
@@ -278,6 +285,8 @@ def main():
                        '--worker', '--run-dir', str(run)]
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
+            if args.service_hot_only:
+                command.append('--service-hot-only')
             if args.skip_continue_validation:
                 command.append('--skip-continue-validation')
             if args.continue_validation:
@@ -327,7 +336,7 @@ def main():
                 return 0
             if args.full_service or args.live_service:
                 record = json.loads((run/('selected_fast_service.json' if args.live_service else 'full_service.json')).read_text())
-                if record['status'] != 'completed' or len(record['requests']) != (60 if args.service_validation else 5)*len(service_profiles):
+                if record['status'] != 'completed' or len(record['requests']) != ((20 if args.service_hot_only else 60) if args.service_validation else 5)*len(service_profiles):
                     raise RuntimeError('Incomplete live Full service measurement')
                 fields = ('service_median_ms', 'service_max_ms', 'mean_service_energy_j',
                           'acquisition_median_ms', 'preprocess_median_ms', 'predict_median_ms',

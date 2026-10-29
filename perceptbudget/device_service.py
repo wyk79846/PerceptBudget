@@ -262,7 +262,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
     cfg = adapter.config
     validation = bool(cfg.get('m2_service_validation'))
     requests_per_condition = 20 if validation else 5
-    histories = (('hot', 0.), ('short', .2), ('long', 1.)) if validation else (('hot', 0.),)
+    histories = (('hot', 0.), ('short', .2), ('long', 1.)) if validation and not cfg.get('m2_service_hot_only') else (('hot', 0.),)
     gate = json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases']) != 6 or gate['render_cleanup']['errors']:
         raise RuntimeError('Require passed hard-reset render cleanup gate')
