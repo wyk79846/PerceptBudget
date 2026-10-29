@@ -30,7 +30,8 @@
   ],
   "cost_summary": "/home/wyk/workspace/任务产出/perceptbudget/M2/20261026T023602.896667Z-cost-table-27-d4594b43/summary.json",
   "output_phase": "M4",
-  "status": "offline_selection_development",
+  "status": "offline_selection_and_explicit_visual_interface",
   "absolute_service_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T034454.820208Z-absolute-energy-recovery-b5a59320/summary.json",
-  "preferred_hot_energy_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T040346.605365Z-energy-repeat-session-5d9441e9/energy_review.json"
+  "preferred_hot_energy_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T040346.605365Z-energy-repeat-session-5d9441e9/energy_review.json",
+  "wait_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T043556.986171Z-wait-cost-extraction-fbb77e51/summary.json"
 }
