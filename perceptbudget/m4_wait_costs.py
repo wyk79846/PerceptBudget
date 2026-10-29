@@ -15,15 +15,18 @@ def extract(run,guard_seconds=.3):
     readings=[PowerReading(x['timestamp_monotonic'],x['power_mw'],x.get('error')) for x in raw]
     requests=json.loads((run/'rtc/q5_requests.json').read_text())
     busy=[]
+    quiet_origins=[]
     for q in requests:
         t=q.get('m3_timing') or {}
         start=t.get('service_start_monotonic') or q['observation_monotonic']
         busy.append((start,q['ready_monotonic']+guard_seconds))
+        quiet_origins.append(q['ready_monotonic'])
     clocks=[]
     for line in (run/'rtc/runtime_clocks.jsonl').read_text().splitlines():
         try:clocks.append(json.loads(line))
         except ValueError:pass
     switches=[c for c in clocks if c.get('status')=='APPLIED']
+    quiet_origins.extend(c['observed_match_monotonic'] for c in switches)
     blocked=[(c['command_monotonic'],c['observed_match_monotonic']+guard_seconds) for c in switches]
     samples=[c for c in clocks if c.get('status')=='SAMPLE']
     controls=[json.loads(line) for line in (run/'rtc/trace.jsonl').read_text().splitlines()
@@ -46,7 +49,9 @@ def extract(run,guard_seconds=.3):
         if len(matches)!=1:continue
         power=_integrate_report(readings,a,b,.2)
         if power.total_energy_mj is None or power.missing_count:continue
-        windows.append(dict(profile=matches[0],start=a,stop=b,seconds=b-a,energy_j=power.total_energy_mj/1000))
+        origin=max((t for t in quiet_origins if t<=a),default=a)
+        windows.append(dict(profile=matches[0],start=a,stop=b,seconds=b-a,
+            quiet_age_seconds=a-origin,energy_j=power.total_energy_mj/1000))
     transitions=[dict(profile=c['profile'],seconds=c['observed_match_monotonic']-c['command_monotonic'],
         energy_status='unresolved_at_100ms_power_poll',command_monotonic=c['command_monotonic']) for c in switches]
     return dict(run=str(run),guard_seconds=guard_seconds,windows=windows,transitions=transitions)

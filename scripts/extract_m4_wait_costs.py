@@ -14,7 +14,7 @@ if __name__=='__main__':
         base/'20261028T112013.062341Z-margin-scan-dc9d03b2/recording.json']
     runs=sorted({e['run'] for p in sources for e in json.loads(p.read_text())['episodes']})
     results=[]
-    for guard in (.2,.3,.5):
+    for guard in (0.,.2,.3,.5):
         episodes=[extract(p,guard) for p in runs];groups=[]
         for profile in ('baseline','gpu_emc'):
             windows=[w for e in episodes for w in e['windows'] if w['profile']==profile]
