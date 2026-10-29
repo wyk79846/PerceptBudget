@@ -164,7 +164,11 @@ def recording_session(config, settings, directory, cleanup_gate):
         cfg['m3_event_dedup_comparison']=bool(settings.get('event_dedup_comparison'))
     resume=cfg.get('m3_resume_plan')
     preflight_tasks=resume['remaining_tasks'] if resume else settings['calibration_tasks']
-    with compiled_environments(directory, preflight_tasks, config) as cache:
+    environment_context=compiled_environments
+    if cfg.get('m4_precompiled_environments'):
+        from perceptbudget.m4_acceptance import precompiled_environments
+        environment_context=precompiled_environments
+    with environment_context(directory, preflight_tasks, config) as cache:
         record = resident_quality(cfg, directory, 'full', cleanup_gate=cleanup_gate,
                                   task_plan=[tuple(t) for t in settings['calibration_tasks']], record_only=True)
     reports = [json.loads(Path(e['action_events']).read_text()) for e in record['episodes']]

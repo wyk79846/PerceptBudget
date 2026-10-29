@@ -3,10 +3,48 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+from contextlib import contextmanager
 
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal', 'libero_10')
 TASK_IDS = (0, 3, 6)
 GROUPS = ('q30', 'joint')
+
+
+@contextmanager
+def precompiled_environments(directory, tasks, config):
+    """Read validated on-disk models after the preparation process has exited."""
+    import os
+    from unittest.mock import patch
+    from perceptbudget.experiment import _write_json_atomically
+    os.environ.update(MUJOCO_GL='egl', MUJOCO_EGL_DEVICE_ID='0', PYOPENGL_PLATFORM='egl',
+                      CUBLAS_WORKSPACE_CONFIG=':4096:8')
+    import mujoco
+    import robosuite.utils.binding_utils as binding
+    directory=Path(directory)
+    report=json.loads((directory/'environment_cache.json').read_text())
+    expected={tuple(t) for t in tasks}
+    if (report.get('status')!='passed' or not report.get('frozen')
+            or report.get('version')!=mujoco.__version__
+            or {(c['suite'],c['task_id']) for c in report['cases']}!=expected
+            or not all(c['passed'] for c in report['cases'])):
+        raise ValueError('Require completed matching environment preflight before model loading')
+    report['preparation_process_exited']=True
+    report['resident_binary_loads']=0
+
+    def factory(cls, xml):
+        key=hashlib.sha256((mujoco.__version__+'\0'+xml).encode()).hexdigest()
+        path=directory/'environment_models'/(key+'.mjb')
+        if not path.is_file():
+            raise RuntimeError('Unprepared environment XML; no compilation with resident model: '+key)
+        native=mujoco.MjModel.from_binary_path(str(path))
+        report['resident_binary_loads']+=1
+        return cls(native)
+
+    with patch.object(binding.MjSim,'from_xml_string',classmethod(factory)):
+        try:
+            yield report
+        finally:
+            _write_json_atomically(directory/'environment_cache.json',report)
 
 
 def manifest(config):

@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
     cfg=load_config(repo_root=ROOT);validate(cfg)
@@ -39,11 +40,20 @@ def main():
             compute_profiles=['baseline'] if args.acceptance_group=='q30' else ['baseline','gpu_emc'],
             policies=1 if args.acceptance_group=='q30' else 10,
             source='fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+    if args.prepare_environments:
+        if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
+            parser.error('Environment preparation requires acceptance group and M4 directory')
+        from perceptbudget.closed_loop import compiled_environments
+        with compiled_environments(args.run_dir,settings['calibration_tasks'],cfg):
+            pass
+        print('ENVIRONMENT_PREPARATION=completed',flush=True)
+        return 0
     if args.worker:
         if args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Worker requires M4 directory')
         subprocess.run(['sudo','-n','true'],check=True)
         cfg.update(m3_watchdog_path=str(args.run_dir/'request_watchdog.json'),m3_request_timeout_seconds=3.)
+        if args.acceptance_group:cfg['m4_precompiled_environments']=True
         from scripts.eval_pooled_views import CLEANUP_GATE
         result=recording_session(cfg,settings,args.run_dir,CLEANUP_GATE)
         # Audit selected compute frequency, not M3's fixed high-frequency assumption.
@@ -70,6 +80,12 @@ def main():
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
             from scripts.profile_clock_screen import monitored_worker
+            if args.acceptance_group:
+                preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
+                    '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
+                with (run/'environment_preparation.log').open('w') as log:
+                    prepared=monitored_worker(preparation,log)
+                if prepared:raise RuntimeError('Environment preparation failed; no model loaded')
             with (run/'worker.log').open('w') as log:
                 code=monitored_worker(command,log,request_watchdog=run/'request_watchdog.json',watchdog_grace_seconds=3.)
             if code:raise RuntimeError('Worker failed; inspect '+str(run/'worker.log'))

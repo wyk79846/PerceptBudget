@@ -1,4 +1,9 @@
 import json
+import hashlib
+import sys
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 from perceptbudget.baseline import FROZEN
 from perceptbudget.m4_acceptance import manifest, configure_baseline, request_path, summarize
@@ -46,3 +51,35 @@ def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path
     assert pair['initial_raw_max_abs']>0
     assert not pair['both_success'] and pair['energy_saving_percent'] is None
     assert len(result['rows'])==2 and (out/'comparison.csv').exists()
+
+
+def test_resident_environment_only_loads_validated_binary(tmp_path,monkeypatch):
+    from perceptbudget.m4_acceptance import precompiled_environments
+    loaded=[]
+    class Sim:
+        def __init__(self,model):self.model=model
+        @classmethod
+        def from_xml_string(cls,xml):
+            raise AssertionError('Resident worker must not compile XML')
+    mujoco=ModuleType('mujoco');mujoco.__version__='test'
+    mujoco.MjModel=SimpleNamespace(from_binary_path=lambda p: loaded.append(p) or 'binary-model')
+    binding=ModuleType('robosuite.utils.binding_utils');binding.MjSim=Sim
+    package=ModuleType('robosuite');package.__path__=[]
+    utils=ModuleType('robosuite.utils');utils.__path__=[]
+    monkeypatch.setitem(sys.modules,'mujoco',mujoco)
+    monkeypatch.setitem(sys.modules,'robosuite',package)
+    monkeypatch.setitem(sys.modules,'robosuite.utils',utils)
+    monkeypatch.setitem(sys.modules,'robosuite.utils.binding_utils',binding)
+    report=dict(status='passed',frozen=True,version='test',cases=[dict(suite='libero_10',task_id=0,passed=True)])
+    (tmp_path/'environment_cache.json').write_text(json.dumps(report))
+    folder=tmp_path/'environment_models';folder.mkdir()
+    key=hashlib.sha256(b'test\0xml').hexdigest();(folder/(key+'.mjb')).write_bytes(b'model')
+    with precompiled_environments(tmp_path,[['libero_10',0]],{}) as cache:
+        assert Sim.from_xml_string('xml').model=='binary-model'
+        with pytest.raises(RuntimeError,match='Unprepared environment'):
+            Sim.from_xml_string('unexpected xml')
+        assert cache['preparation_process_exited']
+    assert len(loaded)==1
+    assert json.loads((tmp_path/'environment_cache.json').read_text())['resident_binary_loads']==1
+    with pytest.raises(ValueError,match='matching environment'):
+        with precompiled_environments(tmp_path,[['libero_10',3]],{}):pass
