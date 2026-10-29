@@ -6,9 +6,12 @@ allocation/upload; an overflow is an error, never silent truncation.
 """
 
 
-def frontend_type(base_type,capacity,*,pipeline_type=None,exact_no_state=False):
+def frontend_type(base_type,capacity,*,pipeline_type=None,exact_no_state=False,stateless_capacity=None):
     if not isinstance(capacity,int) or isinstance(capacity,bool) or not 1<=capacity<=200:
         raise ValueError('state prompt capacity must be an integer in [1,200]')
+    if stateless_capacity is not None and (not exact_no_state or type(stateless_capacity) is not int
+                                           or not 1<=stateless_capacity<=capacity):
+        raise ValueError('stateless capacity requires no-state mode and a bounded positive capacity')
 
     class CompactStateFrontend(base_type):
         def _set_prompt_per_length(self,state,prompt_len):
@@ -21,8 +24,10 @@ def frontend_type(base_type,capacity,*,pipeline_type=None,exact_no_state=False):
         def _set_prompt_fixed(self,prompt_len):
             if prompt_len>capacity:
                 raise ValueError(f'full state prompt has {prompt_len} tokens, compact capacity {capacity}; no truncation allowed')
-            active_capacity=prompt_len if exact_no_state else capacity
-            if exact_no_state and self._fixed_pipeline is not None and self._fixed_pipeline.max_prompt_len!=prompt_len:
+            active_capacity=(stateless_capacity if stateless_capacity is not None else prompt_len) if exact_no_state else capacity
+            if prompt_len>active_capacity:
+                raise ValueError('Stateless prompt exceeds prepared capacity; no truncation allowed')
+            if exact_no_state and stateless_capacity is None and self._fixed_pipeline is not None and self._fixed_pipeline.max_prompt_len!=prompt_len:
                 raise ValueError('Stateless context prompt changed; prepare a separate frontend')
             self._ensure_prompt_capacity(active_capacity)
             if self._fixed_pipeline is None:

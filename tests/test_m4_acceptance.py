@@ -39,6 +39,17 @@ def test_q30_has_no_joint_scheduler_or_fast():
                                   'm2_visual_fast_enabled','m2_split_delay'))
 
 
+def test_task_local_prefixes_do_not_depend_on_task0_history():
+    from perceptbudget.m4_acceptance import visual_prefixes
+    full=list(range(653,670))
+    for valid in (335,340,344,368):
+        lengths,coverage=visual_prefixes(full,valid,48)
+        assert lengths==full+[valid]
+        assert coverage['fast_state_enabled'] is False
+    for valid in (320,369):
+        with pytest.raises(ValueError):visual_prefixes(full,valid,48)
+
+
 def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path):
     sources={}
     for group,q in [('q30',30),('joint',5)]:

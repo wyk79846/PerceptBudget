@@ -10,6 +10,19 @@ TASK_IDS = (0, 3, 6)
 GROUPS = ('q30', 'joint')
 
 
+def visual_prefixes(full_lengths, fast_valid, fast_capacity):
+    """Task-local tokenizer bounds, not historical task0 prompt lengths."""
+    if (not full_lengths or len(full_lengths)>17 or
+            full_lengths!=list(range(min(full_lengths),max(full_lengths)+1)) or
+            not 512<=min(full_lengths)<=max(full_lengths)<=712 or
+            type(fast_valid) is not int or not 320<fast_valid<=320+fast_capacity):
+        raise ValueError('Invalid task-local Full/Fast prefix envelope')
+    return full_lengths+[fast_valid], dict(kind='task_tokenizer_state_bounds_and_current_stateless_text',
+        full=full_lengths,fast=[fast_valid],fast_mode='pool2_agent',fast_state_enabled=False,
+        fast_prompt_capacity=fast_capacity,source='current task h50_state_prefix_lengths; no historical task restriction',
+        unseen_prefix='abort before expert; no slow fallback or runtime capture')
+
+
 def render_parity(case, total_pixels):
     """Permit sparse one-level RGB raster differences, never physics drift."""
     budget=max(4,int(total_pixels*0.0001))

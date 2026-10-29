@@ -401,7 +401,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         from perceptbudget.shared_visual_context import wrist_frontend
                         from flash_rt.api import VLAModel
                         wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode,
-                            no_state=cfg.get('m2_fast_no_state',False)), 'torch')
+                            no_state=cfg.get('m2_fast_no_state',False),
+                            no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity')), 'torch')
                         enable(wrist_model)
                         fast_prepared = select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full')
                         if cfg.get('m2_fast_no_state',False):
@@ -429,6 +430,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if not gate.get('passed') or root_expert.provenance != gate['original_source_hashes']:
                         raise RuntimeError('Frozen source gate mismatch')
                 adapter.config = cfg
+                if cfg.get('m4_enabled'):
+                    adapter.select_next_mode('Full')
                 first = {}
                 adapter.bootstrap(prepared, task['instruction'], first)
                 num_views = 2 if kind == 'full' else 1
@@ -437,10 +440,14 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    from perceptbudget.shared_visual_context import historical_visual_prefixes
-                    lengths, coverage = historical_visual_prefixes(cfg, suite, tid,
-                        first['rtc_guidance']['valid_prefix_length'], wrist_valid,
-                        allowed_text_range=[min(lengths)-512,max(lengths)-512])
+                    if cfg.get('m4_acceptance_group')=='joint':
+                        from perceptbudget.m4_acceptance import visual_prefixes
+                        lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'])
+                    else:
+                        from perceptbudget.shared_visual_context import historical_visual_prefixes
+                        lengths, coverage = historical_visual_prefixes(cfg, suite, tid,
+                            first['rtc_guidance']['valid_prefix_length'], wrist_valid,
+                            allowed_text_range=[min(lengths)-512,max(lengths)-512])
                     cfg['m2_visual_prefix_coverage'] = coverage
                     record.setdefault('visual_prefix_coverage', []).append(dict(suite=suite,task_id=tid,**coverage))
                 cfg['source_step_prefixes'] = lengths

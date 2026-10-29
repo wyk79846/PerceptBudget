@@ -21,6 +21,21 @@ class FakeBase:
 
 
 class CompactStateTests(unittest.TestCase):
+    def test_stateless_multiple_tasks_share_bounded_masked_pipeline(self):
+        f=frontend_type(FakeBase,200,pipeline_type=lambda **kw:types.SimpleNamespace(**kw),
+                        exact_no_state=True,stateless_capacity=48)()
+        f._set_prompt_per_length(None,20)
+        pipeline=f.pipeline
+        for length in (24,15,48,20):
+            f._set_prompt_per_length(None,length)
+            self.assertIs(f.pipeline,pipeline)
+            self.assertEqual(f.current_prompt_len,length)
+            self.assertEqual(f.pipeline.max_prompt_len,48)
+        with self.assertRaisesRegex(ValueError,'no truncation'):
+            f._set_prompt_per_length(None,49)
+        with self.assertRaisesRegex(ValueError,'received state'):
+            f._set_prompt_per_length([0],20)
+
     def test_stateless_path_preserves_custom_pipeline_and_exact_capacity(self):
         f=frontend_type(FakeBase,200,pipeline_type=lambda **kw:types.SimpleNamespace(**kw),exact_no_state=True)()
         f._set_prompt_per_length(None,19)

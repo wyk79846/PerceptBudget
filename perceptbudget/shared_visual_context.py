@@ -71,7 +71,7 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
-def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False):
+def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None):
     if no_state and fast_kind!='pool2_agent':
         raise ValueError('Stateless Fast experiment supports mixed pooling only')
     if fast_kind not in ('wrist','pool2','pool2_agent'):
@@ -86,7 +86,8 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False):
         from perceptbudget.mixed_view_pool import pipeline_type
         from flash_rt.models.pi05.pipeline_rtx import Pi05Pipeline
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
-                           pipeline_type=pipeline_type(Pi05Pipeline,'agent'),exact_no_state=no_state)
+                           pipeline_type=pipeline_type(Pi05Pipeline,'agent'),exact_no_state=no_state,
+                           stateless_capacity=no_state_prompt_capacity)
         clone=kind.__new__(kind)
         clone.__dict__.update(full.__dict__)
     # Separate dictionaries so context-only cleanup cannot mutate the peer.

@@ -30,6 +30,11 @@ def main():
         from perceptbudget.m4_acceptance import manifest
         fixed=manifest(cfg)
         cfg.update(m4_acceptance_group=args.acceptance_group,m4_acceptance_manifest=fixed)
+        if args.acceptance_group=='joint':
+            cfg.update(m4_fast_prompt_capacity=20,
+                m4_fast_cost_scope='M2 costs are initial estimates from exact no-state text shapes; '
+                'acceptance uses fixed20 (maximum across the12 fixed tasks) capacity with valid-token masking; task calibration measures actual latency, '
+                'whole-task energy is measured independently')
         settings['calibration_tasks']=fixed['tasks']
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
