@@ -27,6 +27,7 @@ class Candidate:
     segments: tuple
     quality_allowed: bool=True
     costs_complete: bool=True
+    additional_services: tuple=()
 
 
 def choose(candidates, *, window_seconds,deadline_seconds,margin_seconds=.025,fast_allowed=False):
@@ -50,7 +51,7 @@ def choose(candidates, *, window_seconds,deadline_seconds,margin_seconds=.025,fa
             elif window_seconds+margin_seconds>deadline_seconds:reason='continue_exceeds_deadline'
         else:
             services=[s for s in c.segments if s.kind=='service']
-            if len(services)!=1:reason='service_accounting'
+            if len(services)!=1+len(c.additional_services):reason='service_accounting'
             elif c.service_start_seconds is None or c.service_p95_seconds is None:reason='missing_service_budget'
             elif not all(math.isfinite(v) and v>=0 for v in (c.service_start_seconds,c.service_p95_seconds)):reason='invalid_service_budget'
             elif c.service_p95_seconds==0:reason='invalid_service_budget'
@@ -61,6 +62,15 @@ def choose(candidates, *, window_seconds,deadline_seconds,margin_seconds=.025,fa
                     if segment.kind=='service':break
                     elapsed+=segment.seconds
                 if abs(elapsed-c.service_start_seconds)>1e-6:reason='service_start_mismatch'
+                elapsed=0.;positions=[]
+                for segment in c.segments:
+                    if segment.kind=='service':positions.append(elapsed)
+                    elapsed+=segment.seconds
+                for position,(start,budget) in zip(positions[1:],c.additional_services):
+                    if not all(math.isfinite(v) and v>=0 for v in (start,budget)) or budget==0:
+                        reason='invalid_followup_budget'
+                    elif abs(position-start)>1e-6:reason='followup_start_mismatch'
+                    elif start+budget+margin_seconds>deadline_seconds+1e-9:reason='followup_deadline'
         if reason:rejected.append(dict(label=c.label,reason=reason))
         else:accepted.append(dict(label=c.label,mode=c.mode,compute_profile=c.compute_profile,
             next_state=c.next_state,energy_j=sum(s.energy_j for s in c.segments)))

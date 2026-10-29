@@ -21,7 +21,7 @@ def load_service_costs(config):
             and frequencies[1]==actual['kernel/debug/bpmp/debug/clk/emc/rate']),None)
         if initial is None:raise ValueError('Unknown measured service entry state')
         cell['from_profile']=initial
-        cell.update(mean_service_seconds=sum(measured)/len(measured),p95_service_seconds=percentile(measured,.95))
+        cell.update(service_samples_seconds=list(measured),mean_service_seconds=sum(measured)/len(measured),p95_service_seconds=percentile(measured,.95))
     source=Path(config['preferred_hot_energy_source']);review=json.loads(source.read_text())
     if review['status']!='reviewed':raise ValueError('Unreviewed repeated energy measurements')
     for mode in ('Full','Fast'):
@@ -37,7 +37,7 @@ def load_service_costs(config):
         if len(samples)!=60:raise ValueError('Require60 services per mode')
         cells[mode,'baseline','hot']=dict(mode=mode,profile='baseline',history='hot',samples=len(samples),
             from_profile='baseline',mean_absolute_service_energy_j=sum(energies)/len(energies),
-            mean_service_seconds=sum(samples)/len(samples),p95_service_seconds=percentile(samples,.95),
+            service_samples_seconds=list(samples),mean_service_seconds=sum(samples)/len(samples),p95_service_seconds=percentile(samples,.95),
             sources=sources,source=str(source),energy_scope='Latest three-batch absolute service mean')
     return list(cells.values())
 

@@ -61,3 +61,36 @@ def test_external_preparation_is_before_rtc_observation_limit(tmp_path):
     with patch('perceptbudget.m4_runtime.plan',return_value={'selected':selected}):
         rt.decide(now=.25,step=5,queue=queue,rows=[],inflight=False,rtc_delay_steps=16)
     assert rt.active['prepare_at']+.25<=rt.base['latest_start']+1e-9
+
+
+def test_minimum_request_interval_does_not_start_service_timer(tmp_path):
+    rt=runtime(tmp_path);rt.chunks[0]=dict(origin=0,observation=0)
+    q={i:(None,0,i) for i in range(50)}
+    d=rt.decide(now=.05,step=1,queue=q,rows=[],inflight=False,rtc_delay_steps=5)
+    assert d['m4_phase']=='minimum_request_interval' and rt.active is None and rt.service_begin is None
+    assert rt.control_clocks(d,inflight=False)['start_now'] is False
+
+
+def test_emergency_is_replanned_when_old_event_passes(tmp_path):
+    rt=runtime(tmp_path);rt.base={'reason':'action_event','critical_step':93,'candidate_event_kinds':['slowdown']}
+    rt.active=dict(selected={'label':'emergency-Full-high'},trigger=('action_event',83,('gripper_open',)))
+    rt.phase='preparing'
+    d=rt.control_clocks({},inflight=False)
+    assert not d['start_now'] and rt.active is None and rt.phase is None
+
+
+def test_bootstrap_does_not_poison_steady_p95_and_poll_is_budgeted(tmp_path):
+    rt=runtime(tmp_path)
+    request=dict(prediction_id=0,observation_step=0,observation_monotonic=10.,ready_monotonic=12.,
+        actions=[[0.]*7 for _ in range(50)])
+    rt.committed(request,dict(commit_step=0,commit_monotonic=12.))
+    assert all(len(v)==1 for v in rt.ready_histories.values())
+    assert not rt.poll_delays
+    for c in rt.services:
+        rt.ready_histories[rt.cost_key(c)].clear();rt.ready_histories[rt.cost_key(c)].extend([.3]*60)
+    rt.poll_delays.extend([.055,.06])
+    c=next(c for c in rt.services if c['mode']=='Fast' and c['profile']=='baseline')
+    rt.calibration_ready_samples[rt.cost_key(c)]=[.3]*60
+    rt.end_to_end_histories[rt.cost_key(c)].append(1.5)
+    measured=next(c for c in rt.planning_services(.05) if c['mode']=='Fast' and c['profile']=='baseline')
+    assert measured['p95_service_seconds']==pytest.approx(.35) # percentile of whole-service samples, not component quantile sum or running max

@@ -21,12 +21,14 @@ def price(segments,waits,transitions,initial_profile,initial_age):
     return priced
 
 
-def refresh_plan(row,*,style,window,deadline,eta,current,age,waits,transitions):
+def refresh_plan(row,*,style,window,deadline,eta,current,age,waits,transitions,earliest_observation=0.,earliest_prepare=0.):
     raw=row['segments'];service_index=next(i for i,s in enumerate(raw) if s['kind']=='service')
     entry=sum(s['seconds'] for s in raw[:service_index] if s['kind']=='transition')
     post=sum(s['seconds'] for s in raw[service_index+1:] if s['kind']=='transition')
     p95=row['service_p95_seconds'];latest=min(row['service_start_seconds'],deadline-p95-eta,window-p95-eta-post)
-    start=entry if style=='now' else latest
+    first_start=max(entry+earliest_prepare,earliest_observation)
+    start=first_start if style=='now' else latest
+    if start<first_start-1e-9:return None
     if start<entry-1e-9 or start+p95+eta>deadline+1e-9 or start+p95+eta+post>window+1e-9:return None
     start=max(start,entry);segments=[];mode,tail=row['label'].split(':');compute,next_state=tail.split('->')
     for i,s in enumerate(raw):
@@ -46,7 +48,7 @@ def refresh_plan(row,*,style,window,deadline,eta,current,age,waits,transitions):
 
 
 def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_seconds,deadline_seconds,
-         transitions=None,critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False):
+         transitions=None,critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False,earliest_observation_seconds=0.,earliest_prepare_seconds=0.):
     if inflight:return dict(status='waiting_for_inflight',selected=None,plans=[],rejected=[])
     transitions=transitions or {};eta=config['timing']['safety_margin_seconds']
     deadline=min(deadline_seconds,critical_seconds) if critical_seconds is not None else deadline_seconds
@@ -58,7 +60,8 @@ def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_second
         if not row['costs_complete'] or not row['quality_allowed'] or row['label'].startswith('Continue:'):continue
         for style in ('now',) if bootstrap else ('now','latest'):
             p=refresh_plan(row,style=style,window=window_seconds,deadline=deadline,eta=eta,
-                current=current_profile,age=quiet_age_seconds,waits=waits,transitions=transitions)
+                current=current_profile,age=quiet_age_seconds,waits=waits,transitions=transitions,
+                earliest_observation=earliest_observation_seconds,earliest_prepare=earliest_prepare_seconds)
             if p:proposals.append(p)
     # Continue is not free: price a concrete later Full on the SAME window.
     if not bootstrap and not unexpected_change:
@@ -75,7 +78,9 @@ def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_second
             for row in sub['catalog']:
                 if not row['costs_complete'] or not row['label'].startswith('Full:'):continue
                 p=refresh_plan(row,style='latest',window=window_seconds-prefix,deadline=deadline-prefix,eta=eta,
-                    current=held,age=prefix if transition else quiet_age_seconds,waits=waits,transitions=transitions)
+                    current=held,age=prefix if transition else quiet_age_seconds,waits=waits,transitions=transitions,
+                    earliest_observation=max(0.,earliest_observation_seconds-prefix),
+                    earliest_prepare=max(0.,earliest_prepare_seconds-prefix))
                 if not p or p['prepare_start_seconds']<=1e-6:continue
                 segments=([dict(kind='transition',seconds=prefix,target=held)] if transition else [])+p['segments']
                 segments=price(segments,waits,transitions,current_profile,quiet_age_seconds)
@@ -85,6 +90,30 @@ def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_second
                     segments=segments,energy_j=sum(s['energy_j'] for s in segments))
                 following.append(p)
             if following:proposals.append(min(following,key=lambda p:(p['energy_j'],p['label'])))
+    # An event-deadline Fast must still deliver a Full before that event.
+    # Replacing only a hold tail with the concrete Full makes quality obligations equal.
+    complete=[]
+    for p in proposals:
+        if p['service_mode']!='Fast' or critical_seconds is None:
+            complete.append(p);continue
+        prefix=p['segments'][:-1];used=sum(s['seconds'] for s in prefix)
+        remaining=window_seconds-used
+        if remaining<=0:continue
+        post=sum(s['seconds'] for s in prefix[next(i for i,s in enumerate(prefix) if s['kind']=='service')+1:])
+        earliest=max(0.,p['service_start_seconds']+p['service_p95_seconds']+eta+post-used)
+        future=plan(config,services,waits,current_profile=p['next_state'],quiet_age_seconds=post,
+            window_seconds=remaining,deadline_seconds=max(0.,deadline-used),critical_seconds=max(0.,deadline-used),
+            consecutive_fast=1,transitions=transitions,earliest_prepare_seconds=earliest)
+        full=future['selected']
+        if full is None:continue
+        segments=price(prefix+full['segments'],waits,transitions,current_profile,quiet_age_seconds)
+        p=dict(p,segments=segments,energy_j=sum(s['energy_j'] for s in segments),
+            terminal_state=full['next_state'],followup=dict(mode='Full',compute_profile=full['compute_profile'],
+                prepare_start_seconds=used+full['prepare_start_seconds'],
+                service_start_seconds=used+full['service_start_seconds'],service_p95_seconds=full['service_p95_seconds']),
+            obligation='Full_before_critical')
+        complete.append(p)
+    proposals=complete
     unique={}
     for p in proposals:
         signature=json.dumps([p['service_mode'],p['compute_profile'],p['next_state'],
@@ -93,7 +122,8 @@ def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_second
         else:unique[signature]=p
     plans=list(unique.values())
     candidates=[Candidate(p['label'],p['service_mode'],p['compute_profile'],p['next_state'],
-        p['service_start_seconds'],p['service_p95_seconds'],tuple(Segment(s['kind'],s['seconds'],s['energy_j']) for s in p['segments'])) for p in plans]
+        p['service_start_seconds'],p['service_p95_seconds'],tuple(Segment(s['kind'],s['seconds'],s['energy_j']) for s in p['segments']),
+        additional_services=((p['followup']['service_start_seconds'],p['followup']['service_p95_seconds']),) if p.get('followup') else ()) for p in plans]
     decision=choose(candidates,window_seconds=window_seconds,deadline_seconds=deadline,margin_seconds=eta,fast_allowed=base['fast_allowed'])
     selected=next((p for p in plans if decision['selected'] and p['label']==decision['selected']['label']),None)
     if selected:

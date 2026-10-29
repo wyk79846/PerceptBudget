@@ -34,3 +34,17 @@ def test_busy_and_unreachable_deadline_do_not_create_extra_inference():
     assert plan(CFG,services(),WAIT,deadline_seconds=1,inflight=True,**kwargs)['status']=='waiting_for_inflight'
     r=plan(CFG,services(),WAIT,deadline_seconds=.1,unexpected_change=True,**kwargs)
     assert r['selected'] is None
+
+
+def test_event_fast_plan_pays_for_following_full_in_same_window():
+    r=plan(CFG,services(),WAIT,current_profile='baseline',quiet_age_seconds=.5,window_seconds=2,
+        deadline_seconds=2,critical_seconds=2,transitions=TRANS)
+    fast=[p for p in r['plans'] if p['service_mode']=='Fast']
+    assert fast
+    for p in fast:
+        assert p['obligation']=='Full_before_critical' and p['followup']['mode']=='Full'
+        assert sum(s['kind']=='service' for s in p['segments'])==2
+        assert abs(sum(s['seconds'] for s in p['segments'])-2)<1e-8
+        assert p['followup']['service_start_seconds']+p['followup']['service_p95_seconds']+.025<=2+1e-8
+        assert p['energy_j']>=20  # Both 8J Fast and12J Full, not just Fast+hold.
+    assert r['selected']['service_mode']=='Full'
