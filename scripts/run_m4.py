@@ -12,6 +12,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suites',nargs='+',choices=('libero_spatial','libero_object','libero_goal'),default=['libero_spatial'])
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
+    parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
@@ -20,11 +21,11 @@ def main():
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
     settings.update(mode='deadline_dvfs',calibration_tasks=[[s,args.task_id] for s in args.suites])
     settings['timing'].update(m4['timing'],maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False)
-    cfg.update(m4_enabled=True,m4_settings=m4,m3_action_events_enabled=True,m3_dvac_enabled=False,
+    cfg.update(m4_enabled=True,m4_settings=m4,m4_cover_close_slowdown=args.cover_close_slowdown,m3_action_events_enabled=True,m3_dvac_enabled=False,
         m3_event_coverage_mode='event_only',m3_signal_policy='earliest',m3_merge_slowdown_steps=None)
     if args.dry_run:
         print(json.dumps(dict(tasks=settings['calibration_tasks'],model_loads=1,Full=True,Fast='pool2_agent_no_state',
-            eta_ms=25,H=50,N=5,compute_profiles=['baseline','gpu_emc'],policies=10,
+            eta_ms=25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,compute_profiles=['baseline','gpu_emc'],policies=10,
             source='complete common-window plans, no inference in Continue')));return 0
     if args.worker:
         if args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
@@ -59,6 +60,7 @@ def main():
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);clock_preflight(run)
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
+            if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             from scripts.profile_clock_screen import monitored_worker
             with (run/'worker.log').open('w') as log:
                 code=monitored_worker(command,log,request_watchdog=run/'request_watchdog.json',watchdog_grace_seconds=3.)

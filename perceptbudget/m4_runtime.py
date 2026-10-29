@@ -13,6 +13,7 @@ class M4Runtime(DeadlineRuntime):
     def __init__(self,config,adapter):
         super().__init__(config)
         self.adapter=adapter;self.settings4=config['m4_settings']
+        self.cover_close_slowdown=bool(config.get('m4_cover_close_slowdown'))
         self.services=load_service_costs(self.settings4)
         self.waits=wait_model(json.loads(Path(self.settings4['wait_cost_source']).read_text()))
         self.transitions=load_transitions(self.settings4['directional_cost_source'])
@@ -69,6 +70,11 @@ class M4Runtime(DeadlineRuntime):
         saved={k:list(v) for k,v in self.times.samples.items()}
         saved_recovery=list(self.times.recovery_samples)
         super().committed(request,commit)
+        if self.cover_close_slowdown:
+            from perceptbudget.m4_event_coverage import close_slowdowns
+            added=close_slowdowns(request,commit,self.events,self.covered_events,self.events_config.match_steps)
+            self.covered_events.extend(added)
+            request['m4_event_coverage']=added
         for k,values in saved.items():self.times.samples[k].clear();self.times.samples[k].extend(values)
         self.times.recovery_samples.clear();self.times.recovery_samples.extend(saved_recovery)
         mode=request.get('m4_service_mode','Full');profile=request.get('m4_compute_profile','baseline')
@@ -102,11 +108,17 @@ class M4Runtime(DeadlineRuntime):
             available=base['deadline']-now
             if available<=0:available=.001
             critical=(base['critical_step']-step)*base['estimated_control_period_seconds'] if base.get('critical_step') is not None else None
+            # Covered events need no extra refresh, but still constrain Fast quality.
+            upcoming=min((e['target_step'] for e in self.events if e['target_step']>=step),default=None)
+            quality_time=(upcoming-step)*base['estimated_control_period_seconds'] if upcoming is not None else None
+            full_budget=max(c['p95_service_seconds'] for c in measured if c['mode']=='Full' and c['profile']=='baseline')
+            fast_permitted=quality_time is None or quality_time>full_budget+self.margin.seconds
             result=plan(self.settings4,measured,self.waits,current_profile=self.clocks.profile,
                 quiet_age_seconds=max(0.,now-(self.quiet_since or now)),window_seconds=available,
                 deadline_seconds=available,critical_seconds=max(0.,critical) if critical is not None else None,
                 unexpected_change=bool(rows and rows[-1].get('late_hold')),consecutive_fast=self.consecutive_fast,
-                transitions=self.transitions)
+                transitions=self.transitions,fast_permitted=fast_permitted)
+            result['quality_critical_seconds']=quality_time
             self.plan_counter+=1
             with self.log.open('a') as f:f.write(json.dumps(dict(now=now,step=step,**result))+'\n')
             if result['selected'] is None:
@@ -173,7 +185,7 @@ class M4Runtime(DeadlineRuntime):
             return
         super().requested(request)
         chosen=self.active['selected']
-        critical=self.plan.get('critical_step')
+        critical=min((e['target_step'] for e in self.events if e['target_step']>=request['observation_step']),default=None)
         seconds=(critical-request['observation_step'])*self.plan['estimated_control_period_seconds'] if critical is not None else float('inf')
         measured=self.planning_services(self.plan['estimated_control_period_seconds'])
         full_budget=max(c['p95_service_seconds'] for c in measured if c['mode']=='Full' and c['profile']=='baseline')

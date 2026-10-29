@@ -48,3 +48,11 @@ def test_event_fast_plan_pays_for_following_full_in_same_window():
         assert p['followup']['service_start_seconds']+p['followup']['service_p95_seconds']+.025<=2+1e-8
         assert p['energy_j']>=20  # Both 8J Fast and12J Full, not just Fast+hold.
     assert r['selected']['service_mode']=='Full'
+
+
+def test_covered_near_event_limits_fast_without_forcing_a_new_deadline():
+    r=plan(CFG,services(),WAIT,current_profile='gpu_emc',quiet_age_seconds=.1,window_seconds=2,
+        deadline_seconds=2,fast_permitted=False,transitions=TRANS)
+    assert r['selected'] and all(p['service_mode']=='Full' for p in r['plans'])
+    assert any(p['prepare_start_seconds']>0 for p in r['plans'])
+    assert r['deadline_seconds']==2 # Quality restriction did not resurrect covered event deadline.

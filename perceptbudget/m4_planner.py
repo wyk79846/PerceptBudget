@@ -48,13 +48,13 @@ def refresh_plan(row,*,style,window,deadline,eta,current,age,waits,transitions,e
 
 
 def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_seconds,deadline_seconds,
-         transitions=None,critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False,earliest_observation_seconds=0.,earliest_prepare_seconds=0.):
+         transitions=None,critical_seconds=None,unexpected_change=False,bootstrap=False,consecutive_fast=0,inflight=False,earliest_observation_seconds=0.,earliest_prepare_seconds=0.,fast_permitted=True):
     if inflight:return dict(status='waiting_for_inflight',selected=None,plans=[],rejected=[])
     transitions=transitions or {};eta=config['timing']['safety_margin_seconds']
     deadline=min(deadline_seconds,critical_seconds) if critical_seconds is not None else deadline_seconds
     base=build(config,services,waits,current_profile=current_profile,quiet_age_seconds=quiet_age_seconds,
         window_seconds=window_seconds,deadline_seconds=deadline,critical_seconds=critical_seconds,
-        unexpected_change=unexpected_change,bootstrap=bootstrap,consecutive_fast=consecutive_fast,transitions=transitions)
+        unexpected_change=unexpected_change,bootstrap=bootstrap,consecutive_fast=consecutive_fast if fast_permitted else max(1,consecutive_fast),transitions=transitions)
     proposals=[]
     for row in base['catalog']:
         if not row['costs_complete'] or not row['quality_allowed'] or row['label'].startswith('Continue:'):continue

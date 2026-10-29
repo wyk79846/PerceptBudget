@@ -118,6 +118,21 @@ def audit(run):
                 check('m4_full_bootstrap',pid!=0 or declared=='Full',pid)
                 if declared=='Fast' and pid>0:
                     check('m4_no_consecutive_fast',by_id[pid-1].get('m4_service_mode')!='Fast',pid)
+            for proof in request.get('m4_event_coverage',[]):
+                from perceptbudget.action_events import EventConfig,detect_events
+                ec=EventConfig(**cfg['m3_events']);commit=committed.get(pid,{})
+                close=proof.get('close_target_step',-1000);slow=proof.get('target_step',-1000)
+                timing=request.get('m3_timing') or {}
+                extracted={(e['kind'],origin+e['offset']) for e in detect_events(request['actions'],ec,
+                    start_offset=max(0,commit.get('commit_step',0)-origin))}
+                check('m4_local_close_slowdown_proof',cfg.get('m4_cover_close_slowdown') is True
+                    and request.get('m4_service_mode')=='Full' and pid>0
+                    and timing.get('arrival_lateness_seconds',1)<=0
+                    and 'gripper_close' in timing.get('candidate_event_kinds',[])
+                    and abs(close-timing.get('critical_step',-1000))<=ec.match_steps
+                    and 0<slow-close<=ec.match_steps
+                    and commit.get('commit_step',float('inf'))<=close
+                    and ('gripper_close',close) in extracted and ('slowdown',slow) in extracted,pid)
             geometry=visual_geometry(expected_mode)
             check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
             check('fresh_visual_inputs',visual.get('current_images_encoded') is True
