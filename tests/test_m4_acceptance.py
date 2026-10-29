@@ -124,7 +124,8 @@ def test_calibrated_start_requires_unchanged_state_and_task():
 def test_resume_keeps_failures_and_only_returns_missing_tasks(tmp_path,monkeypatch):
     import scripts.audit_rtc_system as auditing
     import perceptbudget.m4_acceptance as acceptance
-    cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats',m4_settings={'fixed':True})
+    from perceptbudget.m4_planner import POLICY_REVISION
+    cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats',m4_settings={'fixed':True},m4_policy_revision=POLICY_REVISION)
     fixed=manifest(cfg)
     (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':dict(cfg,m4_acceptance_group='joint',
         m4_acceptance_manifest=fixed,m4_fast_prompt_capacity=20,m4_cover_close_slowdown=False)}))
@@ -140,3 +141,6 @@ def test_resume_keeps_failures_and_only_returns_missing_tasks(tmp_path,monkeypat
     assert resumed['remaining_tasks']==[['libero_10',0],['libero_10',3],['libero_10',6]]
     monkeypatch.setattr(acceptance,'clock_audit',lambda run:{'passed':False})
     with pytest.raises(ValueError,match='audit'):acceptance.resume_joint(tmp_path,cfg)
+    meta=json.loads((tmp_path/'run.json').read_text());meta['config_snapshot'].pop('m4_policy_revision')
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    with pytest.raises(ValueError,match='version changed'):acceptance.resume_joint(tmp_path,cfg)

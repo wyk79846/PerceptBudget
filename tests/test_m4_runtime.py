@@ -94,3 +94,36 @@ def test_bootstrap_does_not_poison_steady_p95_and_poll_is_budgeted(tmp_path):
     rt.end_to_end_histories[rt.cost_key(c)].append(1.5)
     measured=next(c for c in rt.planning_services(.05) if c['mode']=='Fast' and c['profile']=='baseline')
     assert measured['p95_service_seconds']==pytest.approx(.35) # percentile of whole-service samples, not component quantile sum or running max
+
+
+def test_preparation_end_is_not_shifted_by_late_control_tick(tmp_path):
+    rt=runtime(tmp_path)
+    rt.active=dict(origin=10.,initial='baseline',prepare_at=10.75,selected=dict(service_mode='Full',
+        compute_profile='gpu_emc',service_start_seconds=1.,prepare_start_seconds=.75,segments=[]))
+    rt.phase='waiting'
+    rt.clocks.switch=lambda p:setattr(rt.clocks,'profile',p)
+    with patch('perceptbudget.m4_runtime.time.monotonic',return_value=10.8):
+        assert not rt.control_clocks({},inflight=False)['start_now']
+    assert rt.phase_end==pytest.approx(11.) # Not10.8+.25=11.05
+    with patch('perceptbudget.m4_runtime.time.monotonic',return_value=11.01):
+        assert rt.control_clocks({},inflight=False)['start_now']
+
+
+def test_downclock_at_wait_start_does_not_submit_fast_early(tmp_path):
+    rt=runtime(tmp_path);switches=[]
+    rt.active=dict(origin=10.,initial='baseline',prepare_at=11.75,selected=dict(service_mode='Fast',
+        compute_profile='gpu_emc',service_start_seconds=2.,prepare_start_seconds=1.75,
+        segments=[dict(kind='transition',seconds=.25,target='gpu_emc'),dict(kind='hold',seconds=1.75)]))
+    rt.phase='waiting'
+    def switch(profile):
+        switches.append(profile);rt.clocks.profile=profile
+    rt.clocks.switch=switch
+    with patch('perceptbudget.m4_runtime.time.monotonic',return_value=10.):
+        assert not rt.control_clocks({},inflight=False)['start_now']
+    assert switches==['gpu_emc'] and rt.phase=='waiting'
+    with patch('perceptbudget.m4_runtime.time.monotonic',return_value=11.8):
+        assert not rt.control_clocks({},inflight=False)['start_now']
+    assert rt.phase_end==pytest.approx(12.)
+    with patch('perceptbudget.m4_runtime.time.monotonic',return_value=12.01):
+        assert rt.control_clocks({},inflight=False)['start_now']
+    assert switches==['gpu_emc']

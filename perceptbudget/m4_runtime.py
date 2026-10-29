@@ -173,7 +173,11 @@ class M4Runtime(DeadlineRuntime):
             self.service_begin=now if included_recovery else None
             if entry_seconds:self.entry_state=target
             if self.clocks.profile!=target:self.clocks.switch(target)
-            self.phase_end=now+entry_seconds
+            # Preparation has an absolute planned end. A late control-thread
+            # check must not restart the whole preparation interval. This also
+            # serves plans that already downclocked at the start of the wait.
+            self.phase_end=(min(self.active['origin']+chosen['service_start_seconds'],
+                                self.active['prepare_at']+entry_seconds) if entry_seconds else now)
             self.phase='preparing'
         if self.phase=='preparing' and self.clocks.pending is None and now>=self.phase_end:
             self.adapter.select_next_mode(chosen['service_mode']);self.phase='ready'

@@ -10,6 +10,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from perceptbudget.experiment import load_config,create_run,_write_json_atomically
 from perceptbudget.m4_acceptance import manifest,summarize,clock_audit
+from perceptbudget.m4_planner import POLICY_REVISION
 
 
 def validate_baseline(source,fixed):
@@ -50,7 +51,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else 12*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
-            model_loads=len(groups),joint_version='current default; no new PACE rule; close-slowdown coverage off'),ensure_ascii=False))
+            model_loads=len(groups),joint_version=POLICY_REVISION,signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed),'M4','paired-acceptance',repo_root=ROOT)

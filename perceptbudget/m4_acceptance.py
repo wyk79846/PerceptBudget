@@ -93,8 +93,11 @@ def resume_joint(source, config):
     """Retain all audited completed outcomes and run only missing tasks."""
     import copy
     from scripts.audit_rtc_system import audit
+    from perceptbudget.m4_planner import POLICY_REVISION
     source=Path(source).resolve()
     original=json.loads((source/'run.json').read_text())['config_snapshot']
+    if original.get('m4_policy_revision','legacy-v1')!=config.get('m4_policy_revision',POLICY_REVISION):
+        raise ValueError('Joint scheduling version changed; start a new joint group and reuse only q30')
     fixed=manifest(config)
     if (original.get('m4_acceptance_group')!='joint' or original.get('m4_acceptance_manifest')!=fixed
             or original.get('m4_fast_prompt_capacity')!=20

@@ -1,3 +1,4 @@
+import pytest
 from perceptbudget.m4_planner import plan
 from test_m4_candidates import CFG,WAIT,services
 
@@ -7,7 +8,7 @@ TRANS={('baseline','gpu_emc'):{'seconds':.25,'energy_j':3},('gpu_emc','baseline'
 def test_complete_plans_have_one_refresh_and_identical_window():
     r=plan(CFG,services(),WAIT,current_profile='baseline',quiet_age_seconds=.5,window_seconds=2,
         deadline_seconds=2,transitions=TRANS)
-    assert r['selected'] and len(r['plans'])<=18
+    assert r['selected'] and len(r['plans'])<=26
     for p in r['plans']:
         assert sum(s['kind']=='service' for s in p['segments'])==1
         assert abs(sum(s['seconds'] for s in p['segments'])-2)<1e-8
@@ -56,3 +57,18 @@ def test_covered_near_event_limits_fast_without_forcing_a_new_deadline():
     assert r['selected'] and all(p['service_mode']=='Full' for p in r['plans'])
     assert any(p['prepare_start_seconds']>0 for p in r['plans'])
     assert r['deadline_seconds']==2 # Quality restriction did not resurrect covered event deadline.
+
+
+def test_downclock_before_wait_can_precede_fast_without_early_inference():
+    r=plan(CFG,services(),WAIT,current_profile='baseline',quiet_age_seconds=.3,
+        window_seconds=2.5,deadline_seconds=2.5,transitions=TRANS)
+    moved=[p for p in r['plans'] if p['label']=='Fast:gpu_emc->gpu_emc@wait-first-latest']
+    assert moved
+    candidate=moved[0]
+    later=next(p for p in r['plans'] if p['label']=='Fast:gpu_emc->gpu_emc@latest')
+    assert candidate['service_start_seconds']==later['service_start_seconds']
+    assert candidate['service_p95_seconds']==later['service_p95_seconds']
+    assert candidate['segments'][0]['kind']=='transition'
+    assert candidate['segments'][1]['kind']=='hold' and candidate['segments'][1]['profile']=='gpu_emc'
+    assert candidate['energy_j']<later['energy_j']
+    assert sum(s['seconds'] for s in candidate['segments'])==pytest.approx(2.5)

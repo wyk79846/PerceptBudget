@@ -3,6 +3,8 @@ import json
 from perceptbudget.m4_candidates import build,hold_energy
 from perceptbudget.m4_selector import Candidate,Segment,choose
 
+POLICY_REVISION='wait-first-absolute-prepare-v2'
+
 
 def price(segments,waits,transitions,initial_profile,initial_age):
     state,age=initial_profile,initial_age;priced=[]
@@ -40,6 +42,14 @@ def refresh_plan(row,*,style,window,deadline,eta,current,age,waits,transitions,e
         if s['kind']=='transition':s['target']=compute if i<service_index else next_state
         if s['kind']=='service':s['compute_profile']=compute
         segments.append(s)
+    if style=='wait-first-latest':
+        # Move a necessary downclock ahead of the wait, without moving neural
+        # inference earlier or changing its geometry/profile/quality obligation.
+        # The previous catalog only offered this wait-state choice before Full.
+        if (len(segments)<3 or segments[0]['kind']!='hold' or segments[0]['seconds']<=1e-6
+                or segments[1]['kind']!='transition' or segments[1]['target']!='gpu_emc'):
+            return None
+        segments=[segments[1],segments[0],*segments[2:]]
     segments=price(segments,waits,transitions,current,age)
     return dict(label=row['label']+'@'+style,policy_type=row['label'],service_mode=mode,
         compute_profile=compute,next_state=next_state,service_start_seconds=start,service_p95_seconds=p95,
@@ -58,7 +68,7 @@ def plan(config,services,waits,*,current_profile,quiet_age_seconds,window_second
     proposals=[]
     for row in base['catalog']:
         if not row['costs_complete'] or not row['quality_allowed'] or row['label'].startswith('Continue:'):continue
-        for style in ('now',) if bootstrap else ('now','latest'):
+        for style in ('now',) if bootstrap else ('now','latest','wait-first-latest'):
             p=refresh_plan(row,style=style,window=window_seconds,deadline=deadline,eta=eta,
                 current=current_profile,age=quiet_age_seconds,waits=waits,transitions=transitions,
                 earliest_observation=earliest_observation_seconds,earliest_prepare=earliest_prepare_seconds)

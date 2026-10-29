@@ -23,6 +23,8 @@ def main():
     args=parser.parse_args()
     cfg=load_config(repo_root=ROOT);validate(cfg)
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
+    from perceptbudget.m4_planner import POLICY_REVISION
+    cfg['m4_policy_revision']=POLICY_REVISION
     settings.update(mode='deadline_dvfs',calibration_tasks=[[s,args.task_id] for s in args.suites])
     settings['timing'].update(m4['timing'],maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False)
     cfg.update(m4_enabled=True,m4_settings=m4,m4_cover_close_slowdown=args.cover_close_slowdown,m3_action_events_enabled=True,m3_dvac_enabled=False,
