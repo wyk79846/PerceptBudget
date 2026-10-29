@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
     parser.add_argument('--acceptance-group',choices=('q30','joint'),help='Fixed four-suite/three-task acceptance group')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
@@ -39,8 +40,15 @@ def main():
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
             cfg.update(m4_enabled=False,m3_hold_high_clocks=True)
+    continuation=None
+    if args.resume_from:
+        if args.acceptance_group!='joint':parser.error('Resume is only available for joint acceptance')
+        from perceptbudget.m4_acceptance import resume_joint
+        continuation=resume_joint(args.resume_from,cfg)
+        cfg['m3_resume_plan']=continuation
+    pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
     if args.dry_run:
-        print(json.dumps(dict(tasks=settings['calibration_tasks'],group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='disabled' if args.acceptance_group=='q30' else 'pool2_agent_no_state',
+        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='disabled' if args.acceptance_group=='q30' else 'pool2_agent_no_state',
             eta_ms=None if args.acceptance_group=='q30' else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline'] if args.acceptance_group=='q30' else ['baseline','gpu_emc'],
             policies=1 if args.acceptance_group=='q30' else 10,
@@ -49,7 +57,7 @@ def main():
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
         from perceptbudget.closed_loop import compiled_environments
-        with compiled_environments(args.run_dir,settings['calibration_tasks'],cfg):
+        with compiled_environments(args.run_dir,pending_tasks,cfg):
             pass
         print('ENVIRONMENT_PREPARATION=completed',flush=True)
         return 0
@@ -84,10 +92,12 @@ def main():
                 '--task-id',str(args.task_id),'--suites',*args.suites]
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
+            if args.resume_from:command.extend(['--resume-from',str(args.resume_from)])
             from scripts.profile_clock_screen import monitored_worker
             if args.acceptance_group:
                 preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
+                if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])
                 with (run/'environment_preparation.log').open('w') as log:
                     prepared=monitored_worker(preparation,log)
                 if prepared:raise RuntimeError('Environment preparation failed; no model loaded')

@@ -104,3 +104,39 @@ def test_resident_environment_only_loads_validated_binary(tmp_path,monkeypatch):
     assert json.loads((tmp_path/'environment_cache.json').read_text())['resident_binary_loads']==1
     with pytest.raises(ValueError,match='matching environment'):
         with precompiled_environments(tmp_path,[['libero_10',3]],{}):pass
+
+
+def test_calibrated_start_requires_unchanged_state_and_task():
+    import numpy as np
+    from perceptbudget.m4_acceptance import calibrated_start
+    physics=np.asarray([1.,2.])
+    env=SimpleNamespace(env=SimpleNamespace(control_freq=20,sim=SimpleNamespace(
+        get_state=lambda: SimpleNamespace(flatten=lambda: physics.copy()))))
+    task=dict(suite='libero_10',task_id=0)
+    prepared=dict(task,observation={'image':'unchanged'},physics=physics.copy())
+    observation,hz=calibrated_start(env,task,prepared,np)
+    assert observation is prepared['observation'] and hz==20
+    with pytest.raises(ValueError):calibrated_start(env,dict(task,task_id=3),prepared,np)
+    physics[0]+=1
+    with pytest.raises(ValueError):calibrated_start(env,task,prepared,np)
+
+
+def test_resume_keeps_failures_and_only_returns_missing_tasks(tmp_path,monkeypatch):
+    import scripts.audit_rtc_system as auditing
+    import perceptbudget.m4_acceptance as acceptance
+    cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats',m4_settings={'fixed':True})
+    fixed=manifest(cfg)
+    (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':dict(cfg,m4_acceptance_group='joint',
+        m4_acceptance_manifest=fixed,m4_fast_prompt_capacity=20,m4_cover_close_slowdown=False)}))
+    episodes=[]
+    for i,(suite,tid) in enumerate(fixed['tasks'][:9]):
+        run=tmp_path/str(i);run.mkdir();(run/'summary.json').write_text(json.dumps({'status':'completed'}))
+        episodes.append(dict(suite=suite,task_id=tid,view='full',run=str(run),outcome='timeout' if i==3 else 'success'))
+    (tmp_path/'recording.json').write_text(json.dumps({'episodes':episodes,'model_loads':1}))
+    monkeypatch.setattr(auditing,'audit',lambda run: {'passed':True})
+    monkeypatch.setattr(acceptance,'clock_audit',lambda run:{'passed':True})
+    resumed=acceptance.resume_joint(tmp_path,cfg)
+    assert len(resumed['episodes'])==9 and resumed['episodes'][3]['outcome']=='timeout'
+    assert resumed['remaining_tasks']==[['libero_10',0],['libero_10',3],['libero_10',6]]
+    monkeypatch.setattr(acceptance,'clock_audit',lambda run:{'passed':False})
+    with pytest.raises(ValueError,match='audit'):acceptance.resume_joint(tmp_path,cfg)

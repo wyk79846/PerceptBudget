@@ -386,6 +386,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 env = base._make_env(env_class, task)
                 env._pb_lock_fixtures = True
                 observation, calibration = calibrate(env, task, np)
+                prepared_start=(dict(observation=observation,physics=env.env.sim.get_state().flatten().copy(),
+                                     suite=task['suite'],task_id=task['task_id'])
+                    if cfg.get('m4_acceptance_group')=='joint' else None)
                 current_view = 'full' if dvac_paired else views[0]
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)
@@ -508,6 +511,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else view
                     child_cfg = copy.deepcopy(cfg)
+                    if prepared_start is not None:child_cfg['m4_reuse_calibrated_start']=True
                     child_cfg['m2_view'] = current_view
                     episode_q=5
                     if cfg.get('m4_acceptance_group')=='q30':
@@ -591,9 +595,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     _write_json_atomically(active/'control_period_calibration.json', calibration)
                     mem('before_'+suite+str(tid)+view)
                     with (trace_dir/'trace.jsonl').open('w') as stream:
+                        start_options={'prepared_start':prepared_start} if prepared_start is not None else {}
                         episode = probe.run_episode(env, task, episode_q, model, stats, child_cfg, np, torch,
                             trace_dir, stream, rtc_adapter=adapter, condition='m2_'+label,
-                            refresh_policy='latest_due', pending_arm_gain=1.)
+                            refresh_policy='latest_due', pending_arm_gain=1.,**start_options)
                     _write_json_atomically(active/'summary.json', dict(status='validating', episode=episode))
                     checked = audit(active)
                     _write_json_atomically(active/'system_audit.json', checked)

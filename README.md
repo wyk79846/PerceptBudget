@@ -132,3 +132,5 @@ Long首轮35462fef：高频有效超时520步；DVFS因旧chunk已走41步只剩
 ```
 
 Spatial/Object/Goal/Long各task0/3/6，seed7、init0；先q30高频Full12回合，再当前联合调度12回合。每组模型常驻，共2次加载。现有默认调度，未加入新PACE规则。结果自动汇总到M4/paired-acceptance会话。后续传`--baseline-run <acceptance-q30目录>`只重测joint并复用固定基线；`--dry-run`检查清单而不加载模型。
+
+M4中断续测：`run_m4_acceptance.py --baseline-run <已完成q30组> --resume-joint <中断的joint组>`。核验并保留全部已完成结果（包括失败），仅预检/执行缺失任务，汇总完整配对表。

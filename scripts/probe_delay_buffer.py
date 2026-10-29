@@ -275,7 +275,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 trial_index=1, condition='crop_overwrite', action_blend_enabled=False,
                 rtc_fusion_enabled=False, rtc_adapter=None, artifact_tag='',
                 alignment_policy=None, refresh_policy='boundary', pending_arm_gain=1.0,
-                synchronous=False, step_hook=None):
+                synchronous=False, step_hook=None, prepared_start=None):
     if synchronous and (action_blend_enabled or rtc_fusion_enabled or alignment_policy is not None or (pending_arm_gain != 1.0)):
         raise ValueError('Synchronous recording must execute an unchanged fresh prefix')
     if alignment_policy is not None and (action_blend_enabled or rtc_fusion_enabled):
@@ -284,7 +284,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         raise ValueError('RTC VJP rollout is an isolated asynchronous condition')
     if not 0 < pending_arm_gain <= 1:
         raise ValueError('pending arm gain must be in (0, 1]')
-    observation, hz = base._prepare_env_episode(env, task, np)
+    if prepared_start is None:
+        observation, hz = base._prepare_env_episode(env, task, np)
+    else:
+        if config.get('m4_acceptance_group')!='joint' or not config.get('m4_reuse_calibrated_start'):
+            raise ValueError('Prepared start is restricted to explicit M4 joint acceptance')
+        from perceptbudget.m4_acceptance import calibrated_start
+        observation,hz=calibrated_start(env,task,prepared_start,np)
     assert hz == 20
     base._seed_process(7, np, torch)
     period = 1 / hz

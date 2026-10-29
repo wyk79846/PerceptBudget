@@ -89,6 +89,45 @@ def configure_baseline(config):
     return 30
 
 
+def resume_joint(source, config):
+    """Retain all audited completed outcomes and run only missing tasks."""
+    import copy
+    from scripts.audit_rtc_system import audit
+    source=Path(source).resolve()
+    original=json.loads((source/'run.json').read_text())['config_snapshot']
+    fixed=manifest(config)
+    if (original.get('m4_acceptance_group')!='joint' or original.get('m4_acceptance_manifest')!=fixed
+            or original.get('m4_fast_prompt_capacity')!=20
+            or original.get('m4_cover_close_slowdown')!=config.get('m4_cover_close_slowdown',False)
+            or original.get('m4_settings')!=config.get('m4_settings')):
+        raise ValueError('Joint resume requires matching fixed manifest and scheduling configuration')
+    record=json.loads((source/'recording.json').read_text())
+    seen=set();episodes=record['episodes'];expected={tuple(t) for t in fixed['tasks']}
+    for row in episodes:
+        key=(row['suite'],row['task_id'])
+        if key not in expected or key in seen or row['view']!='full':
+            raise ValueError('Unexpected or duplicate completed task in resume record')
+        run=Path(row['run'])
+        result=json.loads((run/'summary.json').read_text())
+        if result.get('status')!='completed' or not audit(run)['passed'] or not clock_audit(run)['passed']:
+            raise ValueError('Completed joint episode failed resume audit: '+str(run))
+        seen.add(key)
+    remaining=[t for t in fixed['tasks'] if tuple(t) not in seen]
+    if not remaining:raise ValueError('Joint group is already complete')
+    return dict(source=str(source),episodes=copy.deepcopy(episodes),remaining_tasks=remaining,
+                previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])
+
+
+def calibrated_start(env, task, prepared, np):
+    """Use the untouched calibrated reset, without constructing another simulator."""
+    if (prepared['suite']!=task['suite'] or prepared['task_id']!=task['task_id']
+            or not np.array_equal(prepared['physics'],env.env.sim.get_state().flatten())):
+        raise ValueError('Calibrated environment changed before episode start')
+    hz=float(env.env.control_freq)
+    if hz!=20:raise ValueError('Calibrated start requires unchanged20Hz environment')
+    return prepared['observation'],hz
+
+
 def request_path(run):
     run = Path(run)
     cfg = json.loads((run/'run.json').read_text())['config_snapshot']

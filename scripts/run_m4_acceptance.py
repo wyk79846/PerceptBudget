@@ -36,13 +36,20 @@ def validate_baseline(source,fixed):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
+    parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
+    continuation=None
+    if args.resume_joint:
+        if not args.baseline_run:parser.error('Joint continuation requires --baseline-run')
+        from perceptbudget.m4_acceptance import resume_joint
+        continuation=resume_joint(args.resume_joint,dict(cfg,m4_settings=json.loads((ROOT/'m4.json').read_text())))
     if args.baseline_run:validate_baseline(args.baseline_run,fixed)
     groups=['joint'] if args.baseline_run else ['q30','joint']
     if args.dry_run:
-        print(json.dumps(dict(manifest=fixed,groups_to_run=groups,episodes=12*len(groups),
+        print(json.dumps(dict(manifest=fixed,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else 12*len(groups)),
+            reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
             model_loads=len(groups),joint_version='current default; no new PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
@@ -58,6 +65,7 @@ def main():
             print('START '+group+' log='+str(log),flush=True)
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
                 '--acceptance-group',group,'--result-index',str(index)]
+            if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:
                 code=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT).returncode
             if index.exists():sources[group]=json.loads(index.read_text())['run']
