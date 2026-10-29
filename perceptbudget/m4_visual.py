@@ -3,6 +3,10 @@ from perceptbudget.rtc_visual_alternation import FreshViewRTCAdapter
 
 
 class M4ViewRTCAdapter(FreshViewRTCAdapter):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.select_next_mode('Full')
+
     def select_next_mode(self,mode):
         if mode not in ('Full','Fast'):
             raise ValueError('Continue does not submit neural inference')

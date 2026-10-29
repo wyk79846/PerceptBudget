@@ -305,6 +305,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             raise ValueError('Split delay requires explicit expert-recompute RTC experiment')
         mode_delay_queues={mode:DelayQueue(config['rtc_initial_delays_by_mode'][mode],config['rtc_delay_buffer_size'])
                            for mode in config.get('m2_delay_modes', ('full','expert_only'))}
+    if config.get('m4_enabled') and mode_delay_queues is not None:
+        mode_delay_queues={key:DelayQueue(value,config['rtc_delay_buffer_size']) for key,value in config['rtc_initial_delays_by_compute'].items()}
     current_request = None
     missed_triggers, underflows = [], []
     prefix_rejection = None
@@ -321,7 +323,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         request_watchdog = RequestWatchdog(config['m3_watchdog_path'], config['m3_request_timeout_seconds'])
     if config.get('m3_scheduler_mode') in ('deadline_high','deadline_dvfs'):
         from perceptbudget.closed_loop import DeadlineRuntime
-        scheduler = DeadlineRuntime(config)
+        if config.get('m4_enabled'):
+            from perceptbudget.m4_runtime import M4Runtime
+            scheduler=M4Runtime(config,rtc_adapter)
+        else:
+            scheduler = DeadlineRuntime(config)
         scheduler.start_clocks(run_dir)
     if config.get('m3_hold_high_clocks'):
         from perceptbudget.closed_loop import RuntimeClocks
@@ -358,7 +364,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if mode_delay_queues is not None:
             mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
             request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']=mode
-            selected_delay_queue=mode_delay_queues[mode]
+            delay_key=mode+':'+request['m4_compute_profile'] if config.get('m4_enabled') else mode
+            request['planned_delay_key']=delay_key
+            selected_delay_queue=mode_delay_queues[delay_key]
         rtc_previous_raw = None
         if rtc_adapter is not None and step > 0:
             executed = step - previous_request_step
@@ -403,6 +411,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
                 if mode_delay_queues is not None:
                     request['rtc_guidance']['delay_history_mode']=mode
+                    request['rtc_guidance']['delay_history_key']=request.get('planned_delay_key',mode)
                 request['rtc_guidance']['initialization_d_exceeds_s'] = delay > executed
         requests.append(request)
         if request_watchdog is not None:
@@ -460,7 +469,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     mode=current_request['context_refresh' if config.get('m2_visual_alternation') else 'kv_recompute']['mode']
                     if mode!=current_request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']:
                         raise RuntimeError('Delay observation mode differs from planned inference')
-                    observed_queue=mode_delay_queues[mode]
+                    key=current_request.get('planned_delay_key',mode)
+                    observed_queue=mode_delay_queues[key]
                 current_request['delay_queue_observed'] = observed_queue.observe(
                     guidance['actual_delay_steps'],
                     observation_step=current_request['observation_step'])
@@ -561,6 +571,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             due = refresh_due(step, anchor_step, q, refresh_policy)
             if scheduler is not None:
                 rtc_delay=delay_queue.estimate if delay_queue is not None else None
+                if config.get('m4_enabled') and mode_delay_queues:
+                    rtc_delay=max(q.estimate for q in mode_delay_queues.values())
                 if config.get('rtc_fixed_delay_estimate') is not None:
                     rtc_delay=config['rtc_fixed_delay_estimate']
                 decision = scheduler.decide(now=time.monotonic(),step=step,queue=queue,

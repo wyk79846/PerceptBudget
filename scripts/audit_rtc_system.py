@@ -76,6 +76,8 @@ def audit(run):
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
     mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in cfg.get('m2_delay_modes', ('full','expert_only'))}
                     if cfg.get('m2_split_delay') else None)
+    if cfg.get('m4_enabled') and mode_histories is not None:
+        mode_histories={key:[value] for key,value in cfg['rtc_initial_delays_by_compute'].items()}
     previous=None
     slacks=[]
     for request in requests:
@@ -109,6 +111,13 @@ def audit(run):
             visual=request.get('context_refresh',{})
             expected_mode=scheduled_visual_mode(pid,cfg.get('m2_visual_fast_mode','wrist'),
                 cfg.get('m2_visual_fast_enabled'),cfg.get('m2_full_per_fast',1))
+            if cfg.get('m4_enabled'):
+                declared=request.get('m4_service_mode')
+                check('m4_explicit_service_mode',declared in ('Full','Fast'),pid)
+                expected_mode='full' if declared=='Full' else cfg['m2_visual_fast_mode']
+                check('m4_full_bootstrap',pid!=0 or declared=='Full',pid)
+                if declared=='Fast' and pid>0:
+                    check('m4_no_consecutive_fast',by_id[pid-1].get('m4_service_mode')!='Fast',pid)
             geometry=visual_geometry(expected_mode)
             check('fresh_visual_schedule',visual.get('mode')==expected_mode,pid)
             check('fresh_visual_inputs',visual.get('current_images_encoded') is True
@@ -196,7 +205,7 @@ def audit(run):
                                and e.get('decision_monotonic')==d.get('decision_monotonic')]
                     decision_step=min(e['step'] for e in originals)
                     period=d['estimated_control_period_seconds']
-                    delay=g['delay_estimate_steps']
+                    delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') else g['delay_estimate_steps']
                     latest_submit=old['observation_step']+cfg['H']-delay
                     guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
@@ -208,7 +217,7 @@ def audit(run):
                     expected_start=min(expected_start,prefix_start)
                 check('m3_service_and_margin_subtracted_once',bool(d)
                       and abs(d['latest_start']-expected_start)<1e-8,pid)
-                check('m3_nonnegative_wait_and_due',d.get('wait_seconds')==0
+                check('m3_nonnegative_wait_and_due',(d.get('wait_seconds',-1)>=0 if cfg.get('m4_enabled') else d.get('wait_seconds')==0)
                       and d.get('service_seconds',0)>0 and d.get('margin_seconds',-1)>=0,pid)
                 # The source step and normalized state checks above independently
                 # bind this request to the actual observation at the trigger.
@@ -226,7 +235,10 @@ def audit(run):
                     check('planned_delay_mode_matches_execution',request.get('planned_context_mode' if cfg.get('m2_visual_alternation') else 'planned_kv_mode')==mode,pid)
                     check('delay_history_mode',g.get('delay_history_mode')==mode
                         and g.get('delay_estimate_mode')=='mode_history_max',pid)
-                    expected_history=mode_histories.get(mode,[])
+                    key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') else mode
+                    if cfg.get('m4_enabled'):
+                        check('m4_compute_delay_key',request.get('planned_delay_key')==key and g.get('delay_history_key')==key,pid)
+                    expected_history=mode_histories.get(key,[])
                 check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
                       g['delay_estimate_steps']==(max(expected_history) if estimate is None else estimate)
                       and g['delay_history_steps']==expected_history,pid)
@@ -258,7 +270,8 @@ def audit(run):
             history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
             if mode_histories is not None:
                 mode=request['context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute']['mode']
-                mode_histories[mode]=(mode_histories[mode]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
+                key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') else mode
+                mode_histories[key]=(mode_histories[key]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         previous=c
     underflows=[]
     for step,row in by_step.items():

@@ -1,3 +1,10 @@
+## M4联合调度小测（待设备验证）
+
+入口：`python -u scripts/run_m4.py`，默认Spatial task0一次、一次模型加载。
+`--dry-run`只查看计划；通过单任务检查后再用`--suites libero_spatial libero_object libero_goal`扩展。
+完整候选包含一次刷新和同窗口等待，Continue计入后续Full；Full/Fast按计算频率分别记录RTC延迟。
+结果统一放在任务产出/perceptbudget/M4，未修改FlashRT或M3默认配置。
+
 # PerceptBudget
 
 面向Orin NX的VLA时限与能耗调度。依据[Word任务书](../任务指导与相关参考/Student_A_PerceptBudget_Revised.docx)推进。**M1、M2已交付；M3最小闭环及三类看门狗设备验证已通过，当前准备四组正式比较，尚未交付M3。**
