@@ -47,3 +47,33 @@ class DiskFrames:
         if dtype is not None:
             result = result.astype(dtype, copy=False)
         return result.copy() if copy else result
+
+
+def read_recorded_frame(spool, index):
+    """Read one frame from the mmap spool or its lossless NPZ replacement.
+
+    Seeking inside the compressed NPY avoids expanding an entire episode in RAM.
+    """
+    from pathlib import Path
+    from zipfile import ZipFile
+    import numpy as np
+    spool=Path(spool)
+    if type(index) is not int or index<0:
+        raise IndexError('Frame index must be nonnegative')
+    if spool.exists():
+        frames=np.load(spool,mmap_mode='r',allow_pickle=False)
+        return frames[index].copy()
+    archive=spool.with_name(spool.name.replace('_frames_spool.npy','_frames.npz'))
+    with ZipFile(archive) as saved, saved.open('frames.npy') as stream:
+        version=np.lib.format.read_magic(stream)
+        if version==(1,0):shape,fortran,dtype=np.lib.format.read_array_header_1_0(stream)
+        elif version==(2,0):shape,fortran,dtype=np.lib.format.read_array_header_2_0(stream)
+        else:raise ValueError('Unsupported recorded frame format')
+        if fortran or dtype.hasobject or len(shape)<2:
+            raise ValueError('Recorded frames must be C-order numeric arrays')
+        if index>=shape[0]:raise IndexError('Frame index beyond recorded episode')
+        size=int(np.prod(shape[1:]))*dtype.itemsize
+        stream.seek(stream.tell()+index*size)
+        data=stream.read(size)
+        if len(data)!=size:raise ValueError('Truncated recorded frame')
+        return np.frombuffer(data,dtype=dtype).reshape(shape[1:]).copy()

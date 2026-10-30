@@ -84,17 +84,17 @@ def export_frames(result, output):
             continue
         e, s = options[-1] if phase == 'unknown' else options[0]
         spool = Path(e['worker']) / f"rtc/q{e['q']}_frames_spool.npy"
-        frames = np.load(spool, mmap_mode='r', allow_pickle=False)
+        from perceptbudget.trace_frames import read_recorded_frame
         # Each step stores the pre-action observation; annotation uses AFTER.
         idx = s['step'] + 1
-        if idx > len(e['steps']) or idx >= len(frames):
+        if idx > len(e['steps']):
             raise ValueError('missing after-action frame')
-        pixels = frames[idx]
+        pixels = read_recorded_frame(spool,idx)
         path = output / f"frame_task{task}_{e['mode']}_q{e['q']}_after{s['step']}_{phase}.png"
         Image.fromarray(pixels).save(path)
         if not np.array_equal(np.asarray(Image.open(path)), pixels):
             raise ValueError('frame export changed pixels')
-        chosen.append(dict(path=str(path), source=str(spool), frame_index=idx,
+        chosen.append(dict(path=str(path), source=str(spool if spool.exists() else spool.with_name(spool.name.replace('_frames_spool.npy','_frames.npz'))), frame_index=idx,
                            step=s['step'], phase=phase, task_id=task,
                            pixel_sha256=hashlib.sha256(pixels.tobytes()).hexdigest(),
                            visual_review='pending', orientation='raw recorded orientation'))

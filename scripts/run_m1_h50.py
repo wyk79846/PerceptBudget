@@ -272,8 +272,11 @@ def compare_initial(reference, candidate):
             row=next(json.loads(line) for line in stream if '"control_step"' in line)
         if row['step']!=0:raise ValueError('missing initial control record')
         paths=list(directory.glob('*frames_spool.npy'))
+        if not paths:
+            paths=[p.with_name(p.name.replace('_frames.npz','_frames_spool.npy')) for p in directory.glob('*frames.npz')]
         if len(paths)!=1:raise ValueError('missing unambiguous saved frame spool')
-        frame=np.load(paths[0],mmap_mode='r')[0].copy()
+        from perceptbudget.trace_frames import read_recorded_frame
+        frame=read_recorded_frame(paths[0],0)
         if frame.shape!=(256,512,3) or frame.dtype!=np.uint8:
             raise ValueError('unexpected initial render format')
         if hashlib.sha256(frame.tobytes()).hexdigest()!=info['initial_hashes']['initial_frames_sha256']:
