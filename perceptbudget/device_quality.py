@@ -399,7 +399,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 stage_progress('environment_calibrated')
                 prepared_start=(dict(observation=observation,physics=env.env.sim.get_state().flatten().copy(),
                                      suite=task['suite'],task_id=task['task_id'])
-                    if cfg.get('m4_acceptance_group') in ('joint','m3') else None)
+                    if (cfg.get('m4_acceptance_group')=='joint' or
+                        (cfg.get('m4_acceptance_group')=='m3' and cfg.get('experimental_setup_reuse',False))) else None)
                 current_view = 'full' if dvac_paired else views[0]
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)

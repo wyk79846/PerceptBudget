@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
+    parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
@@ -27,6 +28,7 @@ def main():
     if args.task_indices and (args.acceptance_group!='m3' or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
     cfg=load_config(repo_root=ROOT);validate(cfg)
+    cfg['experimental_setup_reuse']=args.reuse_preparation
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
     from perceptbudget.m4_planner import POLICY_REVISION
     cfg['m4_policy_revision']=POLICY_REVISION
@@ -107,6 +109,7 @@ def main():
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);clock_preflight(run)
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
+            if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
             command.extend(['--first-tasks',str(args.first_tasks)])
@@ -116,6 +119,7 @@ def main():
             if args.acceptance_group:
                 preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
+                if args.reuse_preparation:preparation.append('--reuse-preparation')
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
                 if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])

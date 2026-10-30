@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
+    parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     if args.first_tasks!=12 and (args.candidate!='m3' or not args.baseline_run):
@@ -75,6 +76,7 @@ def main():
             print('START '+group+' log='+str(log),flush=True)
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
+            if args.reuse_preparation:command.append('--reuse-preparation')
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:
