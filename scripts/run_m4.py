@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Opt-in small real-async M4 joint-selection test; one resident model."""
-import argparse,fcntl,json,subprocess,sys
+import argparse,fcntl,json,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from perceptbudget.experiment import load_config,create_run,_write_json_atomically
@@ -97,6 +97,11 @@ def main():
     if args.result_index:
         _write_json_atomically(args.result_index,dict(run=str(run)))
     print('run_dir='+str(run),flush=True);status=dict(status='running')
+    stage_times={}
+    def finish_stage(name,started):
+        stage_times[name]=time.monotonic()-started
+        _write_json_atomically(run/'stage_timings.json',stage_times)
+        print('ACCEPTANCE_STAGE='+json.dumps(dict(stage=name,seconds=round(stage_times[name],3))),flush=True)
     try:
         with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);clock_preflight(run)
@@ -114,11 +119,17 @@ def main():
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
                 if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])
+                started=time.monotonic()
+                print('ACCEPTANCE_STAGE=environment_preparation_started',flush=True)
                 with (run/'environment_preparation.log').open('w') as log:
                     prepared=monitored_worker(preparation,log)
+                finish_stage('environment_preparation',started)
                 if prepared:raise RuntimeError('Environment preparation failed; no model loaded')
+            started=time.monotonic()
+            print('ACCEPTANCE_STAGE=model_worker_started',flush=True)
             with (run/'worker.log').open('w') as log:
                 code=monitored_worker(command,log,request_watchdog=run/'request_watchdog.json',watchdog_grace_seconds=3.)
+            finish_stage('model_worker',started)
             if code:raise RuntimeError('Worker failed; inspect '+str(run/'worker.log'))
             result=json.loads((run/'summary.json').read_text())
             if result['status']!='completed' or len(result['episodes'])!=len(settings['calibration_tasks']):raise RuntimeError('Incomplete M4 test')

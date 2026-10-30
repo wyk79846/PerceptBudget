@@ -591,7 +591,8 @@ def compiled_environments(directory, tasks, config):
                 env = base._make_env(cls, task)
                 env._pb_lock_fixtures = True
                 try:
-                    calibrate(env, task, np)
+                    # XML/binary parity needs one seeded reset, not control-period
+                    # calibration. The model worker calibrates its own live env.
                     observation, _ = base._prepare_env_episode(env, task, np)
                     samples = []
                     for a in [None, *replay]:
