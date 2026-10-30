@@ -204,7 +204,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     explicit_visual=bool(config.get('m4_enabled') or config.get('m3_fast_enabled'))
     dual_visual=visual_comparison or explicit_visual
-    if explicit_visual:visual_fast_mode='pool2_agent'
+    if explicit_visual:visual_fast_mode='selective416' if config.get('m3_fast_selective416') else 'pool2_agent'
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
     if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
@@ -216,7 +216,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
-    if visual_fast_mode not in ('wrist','pool2','pool2_agent'):
+    if visual_fast_mode not in ('wrist','pool2','pool2_agent','selective416'):
         raise ValueError('Unsupported visual Fast mode')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
@@ -457,7 +457,14 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    if cfg.get('m4_acceptance_group') in ('joint','m3_fast'):
+                    if visual_fast_mode=='selective416':
+                        full_lengths=list(lengths)
+                        fast_lengths=[n-96 for n in full_lengths]
+                        if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-96:
+                            raise RuntimeError('Selective416 changed prompt/state tokenization')
+                        coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode='selective416',fast_state_enabled=True)
+                        lengths=full_lengths+fast_lengths
+                    elif cfg.get('m4_acceptance_group') in ('joint','m3_fast'):
                         from perceptbudget.m4_acceptance import visual_prefixes
                         lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'])
                     else:
@@ -513,6 +520,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     finally:
                         cfg['m2_visual_fast_enabled']=False
                         if explicit_visual:adapter.select_next_mode('Full')
+                    if visual_fast_mode=='selective416':
+                        # New geometry must not inherit stateless320's latency.
+                        cfg['m3_fast_service_calibration_seconds']=[t/1000 for t in wrist_timing['trials_ms']]
+                        cfg['m3_fast_energy_prior_scope']='old320 M2 energy is only a ranking proxy; report measured task energy'
                     cfg['rtc_initial_delays_by_mode']={'full':cfg['rtc_initial_delay_steps'],
                         visual_fast_mode:math.ceil(wrist_timing['median_ms']/1000/calibration['median_seconds'])}
                     record.setdefault('mode_delay_calibrations', []).append(dict(suite=suite,task_id=tid,

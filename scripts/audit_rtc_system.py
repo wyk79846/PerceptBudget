@@ -191,6 +191,14 @@ def audit(run):
         service_history={'Full':{h:list(v) for h,v in cfg['m3_service_samples'].items()},
             'Fast':{h:list(cfg['m3_fast_cost_model']['service']['Fast'][h]['samples_seconds'])
                     for h in ('hot','short','long')}}
+        if cfg.get('m3_fast_selective416'):
+            probability=cfg['m3_timing']['service_quantile']
+            def initial_q(values):
+                values=sorted(values);return values[math.ceil(len(values)*probability)-1]
+            recovery_q=max(initial_q(v) for v in service_history['Full'].values())
+            if cfg.get('m3_recovery_samples'):recovery_q=max(recovery_q,initial_q(cfg['m3_recovery_samples']))
+            overhead=max(0.,recovery_q-initial_q(service_history['Full']['hot']))
+            service_history['Fast']={h:[v+(overhead if h!='hot' else 0.) for v in cfg['m3_fast_service_calibration_seconds']] for h in ('hot','short','long')}
         service_history['Full']['recovery']=list(cfg.get('m3_recovery_samples',[]))
         service_history['Fast']['recovery']=[]
     previous=None
@@ -308,6 +316,11 @@ def audit(run):
                   and visual.get('visual_tokens')==geometry['visual_tokens']
                   and visual.get('camera_indices')==([1] if expected_mode=='wrist' else [0,1]),pid)
             check('fresh_visual_pool_factor',visual.get('vision_pool_factor',1)==geometry['vision_pool_factor'],pid)
+            if expected_mode=='selective416':
+                check('selective416_state_and_compression',cfg.get('m3_fast_selective416') is True and not cfg.get('m2_fast_no_state')
+                    and visual.get('compression')=='redundancy_selected_32_of64_blocks'
+                    and visual.get('external_tokens')==160 and visual.get('wrist_tokens')==256
+                    and g.get('state_in_prompt') is True,pid)
             if expected_mode=='pool2_agent':
                 check('fresh_visual_pooled_camera',visual.get('pooled_view')=='agent',pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)

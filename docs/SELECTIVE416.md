@@ -1,0 +1,13 @@
+# 温和压缩接入实验
+
+入口：run_m4_ssh.sh --candidate m3_fast --fast-advance --fast-selective416。默认路径未变；仅在显式参数启用时用416候选。首测Long6，task-indices11。
+
+Full保持双视角512视觉token与state。Fast保持双视角与state，外部64个2×2块中按单位特征离散度合并最相似32块，其他token及腕部完整保留，输出160+256=416。当前图像每次重新计算，非旧KV复用。原先30步限制、夹爪准入均已撤回；Fast后必须Full。
+
+项目新增selective_pool.cu / selective_pool_cuda.py / selective_pipeline.py，实现三小内核：特征离散度、稳定选择及行列打包。首次独立编译缓存位于任务产出/perceptbudget/build。原Torch选择器仍作为参考。原先尝试嵌套Torch图被该版本运行时拒绝；现用原生小内核正常由FlashRT捕获，未修改FlashRT源码。
+
+shared_visual_context增加416前端；rtc_visual_alternation增加几何/请求元数据和state前缀家族分派；device_quality准备全部真实state长度，并现场校准Fast。416前缀家族为同任务Full家族减96，不能按粗范围分派（两个容量范围会重叠）。Full/Fast各最多17形状，沿用共享权重/共享图池和已修复内存生命周期。
+
+调度保持M3基础与V4提前规则。Fast的初始hot时延取新候选现场校准，恢复初始估计加已有Full测得的recovery-hot差，随后真实提交更新Fast独立恢复历史。旧320 M2能量只作初始排序参考，配置明确标注；不是416已测服务能量，不据此声称收益。最终比较实测全任务能量，Continue仍单独积分。
+
+验证：CUDA小内核对随机/同分输入选块及输出与参考逐元素相同；接入上下文图在Long6第140步，与独立CPU参考特征差0，416有效前缀568，Full重复动作差0。原生图固定输入证据：M4/20261030T171416.568107Z-fast-fixed-input-c90ba91a；前10步相对Full动作RMSE0.04485，非闭环成功率。77项相关测试（含新增时延初始值用例）通过。闭环尚待sudo用户终端执行。

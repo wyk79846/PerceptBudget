@@ -17,6 +17,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-run',type=Path,required=True)
     parser.add_argument('--observation-step',type=int,default=64)
+    parser.add_argument('--selective416',action='store_true',help='Test production selective416 frontend with state')
     args=parser.parse_args()
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
@@ -65,7 +66,7 @@ def main():
             # valid prefix tokens attend; no padding token enters the expert.
             # Avoid the legacy state=None exact-length pipeline reconstruction.
             import types
-            frontend=wrist_frontend(model._pipe,torch,fast_kind='pool2_agent',no_state=False)
+            frontend=wrist_frontend(model._pipe,torch,fast_kind='selective416' if args.selective416 else 'pool2_agent',no_state=False)
             def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
             frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
             model._pipe._set_prompt_per_length=types.MethodType(fixed_prompt,model._pipe)
@@ -78,16 +79,25 @@ def main():
             noise=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
             previous=torch.tensor(solver['previous_raw'],device='cuda',dtype=torch.float32)
             outputs={}
-            for name,frontend,state in [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]:
+            conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.selective416 else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
+            for name,frontend,state in conditions:
                 adapter.model=frontend;adapter.pipe=frontend._pipe;adapter.pipeline=frontend._pipe.pipeline
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
                 pl=frontend._pipe.pipeline
-                expected=(512 if name.startswith('Full') else 320)+frontend._pipe.current_prompt_len
+                expected=(512 if name.startswith('Full') else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
-                    layout=pool_check(pl,torch,np,'agent')
+                    if args.selective416:
+                        from perceptbudget.selective_pool import compact
+                        bits=np.empty(512*1152,dtype=np.uint16);pl.bufs['vision_x'].download(bits)
+                        features=torch.from_numpy(bits).view(torch.bfloat16).reshape(2,16,16,1152)
+                        expected_tokens,_=compact(features,32)
+                        bits=np.empty(416*1152,dtype=np.uint16);pl.bufs['vision_x_pooled'].download(bits)
+                        actual=torch.from_numpy(bits).view(torch.bfloat16).reshape(416,1152)
+                        layout=dict(max_abs=float((actual.float()-expected_tokens.float()).abs().max()),mismatched_elements=int((actual!=expected_tokens).sum()),camera_token_counts=[160,256])
+                    else:layout=pool_check(pl,torch,np,'agent')
                     result.setdefault('pooling_checks',{})[name]=layout
                     if layout['mismatched_elements']:raise ValueError('Native pooling differs from CPU reference')
                 adapter.expert.refresh_context(pl.attn.enc_K,pl.attn.enc_V,valid)
@@ -103,7 +113,7 @@ def main():
                 result['cases'][name]['vs_recorded_raw_max_abs']=float(np.max(np.abs(out-np.asarray(r['actions_raw']))))
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
             result['factorial_pairs']={}
-            for a,b in [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]:
+            for a,b in ([('Full','Fast_state')] if args.selective416 else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]):
                 delta=outputs[a][:,:7]-outputs[b][:,:7]
                 result['factorial_pairs'][a+'_vs_'+b]=dict(all_action7_rmse=float(np.sqrt(np.mean(delta**2))),next10_executable_action7_rmse=float(np.sqrt(np.mean(delta[solver['delay']:solver['delay']+10]**2))))
             np.savez(run/'actions.npz',**outputs)

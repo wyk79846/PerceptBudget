@@ -224,6 +224,15 @@ class DeadlineRuntime:
         if self.fast_selection:
             self.fast_times=FullServiceTimes({h:self.fast_cost_model['service']['Fast'][h]['samples_seconds']
                 for h in ('hot','short','long')},probability=self.settings['service_quantile'])
+        if config.get('m3_fast_selective416'):
+            values=config['m3_fast_service_calibration_seconds']
+            # Warm probe excludes low->high recovery and commit polling. Use
+            # the existing observed Full recovery overhead as an initial prior;
+            # subsequent416 recovery samples are measured by committed().
+            overhead=max(0.,self.times.estimate('recovery')-self.times.estimate('hot'))
+            for history in ('hot','short','long'):
+                self.fast_times.samples[history].clear()
+                for seconds in values:self.fast_times.observe(history,seconds+(overhead if history!='hot' else 0.))
         self.initial_period = config['rtc_initial_control_period_seconds']
         self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
