@@ -257,7 +257,7 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None,resident=False):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
@@ -272,7 +272,8 @@ class SourceStepBank:
         # Only one exact-length graph may execute at a time. Keep one maximum
         # KV allocation; each layer's selected prefix is still contiguous and
         # exact length (no attention padding or change to token positions).
-        capacity=max(lengths)
+        capacity=712 if resident else max(lengths)
+        self.resident=resident
         shared_keys=torch.zeros(18,1,1,capacity,256,device=noise.device,dtype=expert.keys.dtype)
         shared_values=torch.zeros_like(shared_keys)
         shared_mask=torch.ones(1,capacity,device=noise.device,dtype=torch.bool)
@@ -283,6 +284,31 @@ class SourceStepBank:
         # cuBLAS keeps workspaces keyed by CUDA stream beyond Python stream
         # lifetime. Resident adapters must reuse their capture stream across tasks.
         stream=stream if stream is not None else torch.cuda.Stream()
+        self._shared=(shared_keys,shared_values,shared_mask)
+        self._pool,self._stream=pool,stream
+        self._prepare(lengths,noise,beta,progress)
+
+    def prepare_resident(self,lengths,noise,*,beta,progress=None):
+        """Between episodes only: retain overlapping exact graphs, at most17."""
+        import torch
+        lengths=tuple(sorted(set(lengths)))
+        if not self.resident or not lengths or len(lengths)>17 or any(type(n) is not int or not 1<=n<=712 for n in lengths):
+            raise ValueError('Invalid resident graph bounds')
+        if any(a['beta']!=float(beta) for a in self.audits):
+            raise ValueError('Resident graph beta changed')
+        torch.cuda.synchronize()
+        self.entries={n:v for n,v in self.entries.items() if n in lengths}
+        retained=set(self.entries)
+        self.audits=[dict(a,reused=True) for a in self.audits if a['valid'] in retained]
+        self._prepare([n for n in lengths if n not in retained],noise,beta,progress)
+
+    def _prepare(self,lengths,noise,beta,progress):
+        import time
+        import torch
+        from perceptbudget.openpi_reference import sample_original_rtc
+        shared_keys,shared_values,shared_mask=self._shared
+        expert=self.fallback
+        pool,stream=self._pool,self._stream
         for valid in lengths:
             started=time.monotonic()
             bound=copy.copy(expert)

@@ -49,10 +49,18 @@ class OriginalOpenPiRTCAdapter:
             if progress is not None:progress(record)
         if getattr(self, '_step_bank_stream', None) is None:
             self._step_bank_stream = torch.cuda.Stream()
-        self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
-            stream=self._step_bank_stream,
-            max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,
-            progress=report)
+        resident=self.config.get('m4_acceptance_group')=='m3'
+        bank=getattr(self,'_resident_step_bank',None) if resident else None
+        if bank is not None:
+            bank.prepare_resident(lengths,noise,beta=self.beta,progress=report)
+            self.step_bank=bank
+        else:
+            options=dict(resident=True) if resident else {}
+            self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
+                stream=self._step_bank_stream,
+                max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,
+                progress=report,**options)
+            if resident:self._resident_step_bank=self.step_bank
         return dict(passed=True,backend='source_order_step_graph',
             prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
             storage=getattr(self.step_bank,'storage_record',None),
@@ -225,6 +233,7 @@ class OriginalOpenPiRTCAdapter:
         used_graph = self.graph is not None or used_step_bank
         self.graph = None
         self.step_bank = None
+        self._resident_step_bank = None
         self.graph_expert = self.fallback_expert = None
         self.expert = None
         gc.collect()
