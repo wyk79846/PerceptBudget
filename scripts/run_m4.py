@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Three-task screen is for the M3 candidate')
@@ -74,9 +75,16 @@ def main():
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
-        from perceptbudget.closed_loop import compiled_environments
-        with compiled_environments(args.run_dir,pending_tasks,cfg):
-            pass
+        if args.environment_cache_from:
+            from perceptbudget.m4_acceptance import copy_precompiled_environment_cache,precompiled_environments
+            reused=copy_precompiled_environment_cache(args.environment_cache_from,args.run_dir,pending_tasks,cfg)
+            with precompiled_environments(args.run_dir,pending_tasks,cfg):
+                pass
+            print('ENVIRONMENT_CACHE_REUSED='+json.dumps(reused),flush=True)
+        else:
+            from perceptbudget.closed_loop import compiled_environments
+            with compiled_environments(args.run_dir,pending_tasks,cfg):
+                pass
         print('ENVIRONMENT_PREPARATION=completed',flush=True)
         return 0
     if args.worker:
@@ -126,6 +134,7 @@ def main():
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
                 if args.acceptance_group in ('m3','m3_fast'):preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
                 if args.reuse_preparation:preparation.append('--reuse-preparation')
+                if args.environment_cache_from:preparation.extend(['--environment-cache-from',str(args.environment_cache_from)])
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
                 if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])

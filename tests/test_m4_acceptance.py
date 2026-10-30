@@ -131,6 +131,33 @@ def test_resident_environment_only_loads_validated_binary(tmp_path,monkeypatch):
         with precompiled_environments(tmp_path,[['libero_10',3]],{}):pass
 
 
+def test_reuse_environment_cache_requires_exact_passed_manifest_and_links_models(tmp_path):
+    from perceptbudget.m4_acceptance import copy_precompiled_environment_cache
+    source=tmp_path/'source';source.mkdir();destination=tmp_path/'destination';destination.mkdir()
+    manifest={'fingerprint':'same'}
+    (source/'run.json').write_text(json.dumps({'config_snapshot':{
+        'm4_acceptance_group':'m3_fast','m4_acceptance_manifest':manifest}}))
+    cases=[dict(suite='libero_spatial',task_id=0,passed=True),
+           dict(suite='libero_object',task_id=3,passed=True)]
+    (source/'environment_cache.json').write_text(json.dumps(dict(
+        status='passed',frozen=True,cases=cases)))
+    models=source/'environment_models';models.mkdir()
+    for i in range(2):(models/(str(i)+'.mjb')).write_bytes(b'model'+bytes([i]))
+    result=copy_precompiled_environment_cache(source,destination,
+        [('libero_spatial',0),('libero_object',3)],
+        {'m4_acceptance_group':'m3_fast','m4_acceptance_manifest':manifest})
+    assert result['models']==2 and result['hardlinks']==2 and result['copies']==0
+    assert (destination/'environment_cache.json').is_file()
+    assert (destination/'environment_models'/'0.mjb').stat().st_ino==(models/'0.mjb').stat().st_ino
+    with pytest.raises(ValueError,match='exactly these tasks'):
+        copy_precompiled_environment_cache(source,tmp_path/'wrong-tasks',
+            [('libero_spatial',0)],{'m4_acceptance_group':'m3_fast','m4_acceptance_manifest':manifest})
+    with pytest.raises(ValueError,match='manifest'):
+        copy_precompiled_environment_cache(source,tmp_path/'wrong-manifest',
+            [('libero_spatial',0),('libero_object',3)],
+            {'m4_acceptance_group':'m3_fast','m4_acceptance_manifest':{'fingerprint':'other'}})
+
+
 def test_calibrated_start_requires_unchanged_state_and_task():
     import numpy as np
     from perceptbudget.m4_acceptance import calibrated_start

@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
+    parser.add_argument('--environment-cache-from',type=Path,help='Reuse an already passed, identical task environment preflight')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     if args.first_tasks!=12 and (args.candidate not in ('m3','m3_fast') or not args.baseline_run):
@@ -53,6 +54,7 @@ def main():
     if args.m3_eta_ms!=25 and args.candidate not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     if args.m3_reference and args.candidate!='m3_fast':parser.error('M3 reference is for m3_fast')
     if args.m3_reference and not args.m3_reference.is_file():parser.error('M3 reference file missing')
+    if args.environment_cache_from and not args.environment_cache_from.is_dir():parser.error('Environment cache source must be a completed M4 run directory')
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
     task_plan=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
     continuation=None
@@ -83,6 +85,7 @@ def main():
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
             if group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.reuse_preparation:command.append('--reuse-preparation')
+            if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:

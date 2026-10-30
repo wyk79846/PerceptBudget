@@ -81,6 +81,43 @@ def manifest(config):
     return fixed
 
 
+def copy_precompiled_environment_cache(source, destination, tasks, config):
+    """Reuse an already passed, task-identical MuJoCo binary preflight."""
+    import os
+    import shutil
+
+    source=Path(source).resolve();destination=Path(destination).resolve()
+    if source==destination:
+        raise ValueError('Environment cache source and destination must differ')
+    metadata=json.loads((source/'run.json').read_text())
+    saved=metadata.get('config_snapshot',{})
+    for key in ('m4_acceptance_group','m4_acceptance_manifest'):
+        if saved.get(key)!=config.get(key):
+            raise ValueError('Environment cache configuration mismatch: '+key)
+    report=json.loads((source/'environment_cache.json').read_text())
+    expected={tuple(t) for t in tasks}
+    cases=report.get('cases',[])
+    actual={(c.get('suite'),c.get('task_id')) for c in cases}
+    if (report.get('status')!='passed' or not report.get('frozen') or actual!=expected
+            or len(cases)!=len(expected) or not all(c.get('passed') for c in cases)):
+        raise ValueError('Require a passed environment cache for exactly these tasks')
+    src_models=source/'environment_models'
+    model_files=list(src_models.glob('*.mjb'))
+    if not model_files or len(model_files)>len(expected) or any(p.stat().st_size==0 for p in model_files):
+        raise ValueError('Environment cache has missing or invalid binary models')
+    if (destination/'environment_cache.json').exists() or (destination/'environment_models').exists():
+        raise FileExistsError('Destination already contains an environment cache')
+    counts={'hardlinks':0,'copies':0}
+    def link_or_copy(src,dst):
+        try:
+            os.link(src,dst);counts['hardlinks']+=1
+        except OSError:
+            shutil.copy2(src,dst);counts['copies']+=1
+    shutil.copytree(src_models,destination/'environment_models',copy_function=link_or_copy)
+    shutil.copy2(source/'environment_cache.json',destination/'environment_cache.json')
+    return dict(source=str(source),models=len(model_files),**counts)
+
+
 def configure_baseline(config):
     from perceptbudget.closed_loop import configure_fixed_baseline
     configure_fixed_baseline(config, 30)
