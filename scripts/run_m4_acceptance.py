@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run fixed q30 once, then current M4; optionally reuse the saved q30 group."""
+"""Compare original M3 or current M4 against a reusable fixed-q30 task set."""
 import argparse
 import json
 import subprocess
@@ -37,21 +37,23 @@ def validate_baseline(source,fixed):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
+    parser.add_argument('--candidate',choices=('joint','m3'),default='joint',help='Compare original M3 or current M4 against the same q30 tasks')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
     continuation=None
     if args.resume_joint:
+        if args.candidate!='joint':parser.error('--resume-joint is only for the joint candidate')
         if not args.baseline_run:parser.error('Joint continuation requires --baseline-run')
         from perceptbudget.m4_acceptance import resume_joint
         continuation=resume_joint(args.resume_joint,dict(cfg,m4_settings=json.loads((ROOT/'m4.json').read_text())))
     if args.baseline_run:validate_baseline(args.baseline_run,fixed)
-    groups=['joint'] if args.baseline_run else ['q30','joint']
+    groups=[args.candidate] if args.baseline_run else ['q30',args.candidate]
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else 12*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
-            model_loads=len(groups),joint_version=POLICY_REVISION,signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
+            model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else 'original_m3_D_joint_eta25',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed),'M4','paired-acceptance',repo_root=ROOT)

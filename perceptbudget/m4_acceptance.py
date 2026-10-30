@@ -89,6 +89,20 @@ def configure_baseline(config):
     return 30
 
 
+def configure_m3(config, settings):
+    """Frozen M3 D logic, using the25ms margin selected in its final report."""
+    from perceptbudget.m3_comparison import configure_group
+    config['m3_formal_signal']='events_only'
+    configure_group(config,'D_joint')
+    config.update(m4_enabled=False,m4_policy_revision='not_applicable_original_m3',
+                  m2_visual_fast_enabled=False,m3_dvac_enabled=False)
+    config.pop('m4_settings',None)
+    config.pop('m4_fast_prompt_capacity',None)
+    settings['mode']='deadline_dvfs'
+    settings['timing'].update(maximum_action_offset=50,maximum_observation_age_seconds=None,
+        safety_margin_seconds=.025,margin_updates=False)
+
+
 def resume_joint(source, config):
     """Retain all audited completed outcomes and run only missing tasks."""
     import copy
@@ -162,6 +176,10 @@ def summarize(directory, sources):
     import numpy as np
     from perceptbudget.experiment import _write_json_atomically
     directory = Path(directory)
+    if set(sources) not in ({'q30','joint'},{'q30','m3'}):
+        raise ValueError('Require q30 and one complete candidate group')
+    candidate='m3' if 'm3' in sources else 'joint'
+    comparison_groups=('q30',candidate)
     rows, cases = [], {}
     for group, source in sources.items():
         record = json.loads((Path(source)/'summary.json').read_text())
@@ -180,9 +198,9 @@ def summarize(directory, sources):
             cases.setdefault((row['suite'], row['task_id']), {})[group] = (row, requests[0], item)
     pairs = []
     for (suite, tid), groups in cases.items():
-        if set(groups) != set(GROUPS):
+        if set(groups) != set(comparison_groups):
             raise ValueError('Missing paired result')
-        a, b = groups['q30'], groups['joint']
+        a, b = groups['q30'], groups[candidate]
         inputs_equal = (a[0]['initial']['initial_hashes'] == b[0]['initial']['initial_hashes']
                         and all(np.array_equal(a[1][key], b[1][key])
                                 for key in ('observation_raw_state', 'model_state'))
@@ -200,14 +218,14 @@ def summarize(directory, sources):
     _write_json_atomically(directory/'comparison.json', result)
     with (directory/'comparison.csv').open('w', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
-    lines = ['# M4固定任务验收', '', '|集合|任务|组别|结果|步数|任务时间s|整任务能量J|断供步数|',
+    lines = ['# '+('M3同任务对照' if candidate=='m3' else 'M4固定任务验收'), '', '|集合|任务|组别|结果|步数|任务时间s|整任务能量J|断供步数|',
              '|---|---:|---|---|---:|---:|---:|---:|']
     for r in rows:
         lines.append(f"|{r['suite']}|{r['task_id']}|{r['group']}|{r['outcome']}|{r['steps']}|{r['task_seconds']:.3f}|{r['total_energy_j']:.3f}|{r['underflow_steps']}|")
     lines += ['', '能量包含结束时在途推理收尾；任务时间与含收尾时间均保存在CSV。', '',
               '|集合|组别|成功/尝试|平均尝试能量J|成功任务平均时间s|', '|---|---|---:|---:|---:|']
     for suite in (*SUITES, 'all'):
-        for group in GROUPS:
+        for group in comparison_groups:
             subset=[r for r in rows if r['group']==group and (suite=='all' or r['suite']==suite)]
             if not subset: continue
             success=[r for r in subset if r['outcome']=='success']

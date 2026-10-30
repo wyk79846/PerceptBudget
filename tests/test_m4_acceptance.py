@@ -50,16 +50,17 @@ def test_task_local_prefixes_do_not_depend_on_task0_history():
         with pytest.raises(ValueError):visual_prefixes(full,valid,48)
 
 
-def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path):
+@pytest.mark.parametrize('candidate',['joint','m3'])
+def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path,candidate):
     sources={}
-    for group,q in [('q30',30),('joint',5)]:
+    for group,q in [('q30',30),(candidate,5)]:
         parent=tmp_path/group;run=parent/'episode';(run/'rtc').mkdir(parents=True)
         (run/'run.json').write_text(json.dumps({'config_snapshot':{'candidate_q':[q]}}))
         (run/'summary.json').write_text(json.dumps({'episode':{
             'real_seconds':1,'including_drain_seconds':1.1,
             'including_drain_power':{'total_energy_mj':1000 if group=='q30' else 500},'underflow_steps':[]}}))
         request=dict(observation_raw_state=[1],model_state=[2],actions_raw=[[3]],rtc_solver_inputs={'noise':[[4]]})
-        if group=='joint':request['actions_raw']=[[3.01]]
+        if group!='q30':request['actions_raw']=[[3.01]]
         request_path(run).write_text(json.dumps([request]))
         episode=dict(suite='libero_spatial',task_id=0,run=str(run),steps=10,
             outcome='success' if group=='q30' else 'timeout',initial={'initial_hashes':{'image':'same'}})
@@ -72,6 +73,21 @@ def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path
     assert pair['initial_raw_max_abs']>0
     assert not pair['both_success'] and pair['energy_saving_percent'] is None
     assert len(result['rows'])==2 and (out/'comparison.csv').exists()
+
+
+def test_m3_comparator_uses_original_d_joint_with_no_m4_or_fast():
+    from perceptbudget.m4_acceptance import configure_m3
+    cfg=dict(m4_enabled=True,m4_settings={'not_used':True},m4_fast_prompt_capacity=20)
+    settings={'timing':{}}
+    configure_m3(cfg,settings)
+    assert cfg['m4_enabled'] is False and 'm4_settings' not in cfg
+    assert not cfg['m2_visual_fast_enabled'] and not cfg['m3_dvac_enabled']
+    assert cfg['m3_action_events_enabled'] and cfg['m3_dvfs_policy']=='joint'
+    assert cfg['m3_formal_group']=='D_joint' and cfg['m3_scheduler_mode']=='deadline_dvfs'
+    assert not cfg['m3_hold_high_clocks']
+    assert settings['timing']['safety_margin_seconds']==.025
+    assert settings['timing']['maximum_action_offset']==50
+    assert settings['timing']['maximum_observation_age_seconds'] is None
 
 
 def test_resident_environment_only_loads_validated_binary(tmp_path,monkeypatch):

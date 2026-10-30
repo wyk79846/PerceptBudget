@@ -12,7 +12,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suites',nargs='+',choices=('libero_spatial','libero_object','libero_goal','libero_10'),default=['libero_spatial'])
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
-    parser.add_argument('--acceptance-group',choices=('q30','joint'),help='Fixed four-suite/three-task acceptance group')
+    parser.add_argument('--acceptance-group',choices=('q30','joint','m3'),help='Fixed four-suite/three-task acceptance group')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
@@ -42,6 +42,9 @@ def main():
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
             cfg.update(m4_enabled=False,m3_hold_high_clocks=True)
+        if args.acceptance_group=='m3':
+            from perceptbudget.m4_acceptance import configure_m3
+            configure_m3(cfg,settings)
     continuation=None
     if args.resume_from:
         if args.acceptance_group!='joint':parser.error('Resume is only available for joint acceptance')
@@ -50,11 +53,11 @@ def main():
         cfg['m3_resume_plan']=continuation
     pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
     if args.dry_run:
-        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='disabled' if args.acceptance_group=='q30' else 'pool2_agent_no_state',
+        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='pool2_agent_no_state' if cfg['m4_enabled'] else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
-            compute_profiles=['baseline'] if args.acceptance_group=='q30' else ['baseline','gpu_emc'],
-            policies=1 if args.acceptance_group=='q30' else 10,
-            source='fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
+            policies=10 if cfg['m4_enabled'] else 1,
+            source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, eta25ms' if args.acceptance_group=='m3' else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -78,7 +81,7 @@ def main():
             run=Path(row['run']);audit=clock_audit(run)
             _write_json_atomically(run/'m4_clock_audit.json',audit);audits.append(audit)
             if not audit['passed']:raise RuntimeError('M4 frequency/power/restore audit failed')
-        result.update(mode='m4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits)
+        result.update(mode='m3_frozen_joint' if args.acceptance_group=='m3' else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
     subprocess.run(['sudo','-v'],check=True)
