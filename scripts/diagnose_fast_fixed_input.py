@@ -55,7 +55,14 @@ def main():
             from flash_rt.subgraphs.pi05.context_action import enable
             from flash_rt.api import VLAModel
             enable(model);base._infer_actions(model,snapshot,task['instruction'],cfg['H'],{})
-            pooled=VLAModel(wrist_frontend(model._pipe,torch,fast_kind='pool2_agent',no_state=False),'torch')
+            # Both conditions share one fixed-capacity context. Only actual
+            # valid prefix tokens attend; no padding token enters the expert.
+            # Avoid the legacy state=None exact-length pipeline reconstruction.
+            import types
+            frontend=wrist_frontend(model._pipe,torch,fast_kind='pool2_agent',no_state=False)
+            def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
+            frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
+            pooled=VLAModel(frontend,'torch')
             enable(pooled);base._infer_actions(pooled,snapshot,task['instruction'],cfg['H'],{})
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
@@ -69,6 +76,8 @@ def main():
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
                 pl=frontend._pipe.pipeline
+                expected=(512 if name.startswith('Full') else 320)+frontend._pipe.current_prompt_len
+                if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
                 adapter.expert.refresh_context(pl.attn.enc_K,pl.attn.enc_V,valid)
                 actions,norms=sample_original_rtc(adapter.expert,noise.clone(),previous.clone(),solver['delay'],solver['executed'],beta=cfg['rtc_beta'],author_order=True)
                 out=actions.detach().cpu().numpy().copy();outputs[name]=out
