@@ -26,8 +26,47 @@ def decode_raw(raw,stats,profile=None):
     return x[...,:7]
 
 
+def audit_service_formula(formula,decision,costs,previous_mode):
+    """Independent V4 reconstruction; Continue is not inference energy."""
+    errors=[]
+    def test(ok,name):
+        if not ok:errors.append(name)
+    def close(a,b):return abs(a-b)<1e-7
+    now=decision['decision_monotonic'];end=decision['deadline'];eta=decision['margin_seconds']
+    period=decision['estimated_control_period_seconds'];profile=decision['current_profile']
+    cap=formula.get('latest_start_cap');rows=formula['candidates']
+    test(len(rows)==2 and [r['mode'] for r in rows]==['Full','Fast'],'candidate_set')
+    require_full=not formula['observation_step'] or decision.get('fast_full_only',False) or decision['reason']=='action_event'
+    for r in rows:
+        mode=r['mode'];entry='gpu_emc' if mode=='Fast' else profile
+        cell=max((c for c in costs['service'][mode].values() if c['from_profile']==entry),key=lambda c:c['energy_j'])
+        steps=math.ceil((r['service_seconds']+eta)/period-1e-9) if mode=='Fast' else 0
+        bound=cap-steps*period if cap is not None and mode=='Fast' else cap
+        raw=end-r['service_seconds']-eta;latest=min(raw,bound) if bound is not None else raw
+        wait=max(0.,latest-now);down=costs.get('transitions',{}).get('down',{})
+        down_time=down.get('max_readback_seconds',down.get('seconds',0.))
+        low_ok=mode!='Fast' or profile=='gpu_emc' or wait>=decision.get('minimum_low_idle_seconds',.2)+down_time
+        allowed=mode=='Full' or not require_full and previous_mode!='Fast' and low_ok
+        test(r['quality_allowed']==allowed and r['low_continue_admissible']==low_ok,'quality_filter')
+        test(r['entry_profile']==entry and r['compute_profile']=='baseline','service_entry_and_compute_state')
+        test(close(r['latest_start'],latest) and close(r['formula_latest_start'],raw) and r['advance_steps']==steps,'fast_advance_once')
+        test(r['feasible']==(latest>=now-1e-9),'feasibility_filter')
+        test(close(r['energy_j'],cell['energy_j']) and close(r['service_energy_j'],cell['energy_j']) and r['energy_scope']=='complete_service_only','service_energy_only')
+        test(r['continue_before']['activity']==r['continue_after']['activity']=='Continue' and close(r['continue_before']['seconds'],wait)
+             and r['continue_after'].get('forecast') is False,'continue_separate')
+        test(r['additional_transition_energy_j']==0.,'recovery_once')
+    eligible=[r for r in rows if r['quality_allowed'] and r['feasible']]
+    chosen=min(eligible,key=lambda r:(r['service_energy_j'],r['mode']!='Full')) if eligible else rows[0]
+    test(formula['mode']==chosen['mode'] and formula['selected']==chosen,'chosen_service')
+    test(formula['reason']==('feasible_minimum_service_energy' if eligible else 'deadline_unreachable'),'fallback')
+    test(close(decision['service_seconds'],chosen['service_seconds']) and close(decision['latest_start'],chosen['latest_start']),'selected_budget_applied')
+    return errors
+
+
 def audit_fast_formula(formula, decision, costs, previous_mode):
     """Independently recompute the recorded two-mode deadline/energy ledger."""
+    if formula.get('policy')=='m3_service_ledger_fast_advance_v4':
+        return audit_service_formula(formula,decision,costs,previous_mode)
     failures=[]
     def test(ok,name):
         if not ok:failures.append(name)
@@ -148,7 +187,7 @@ def audit(run):
     if cfg.get('m4_enabled') and mode_histories is not None:
         mode_histories={key:[value] for key,value in cfg['rtc_initial_delays_by_compute'].items()}
     service_history=None
-    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3'):
+    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3','m3_service_ledger_fast_advance_v4'):
         service_history={'Full':{h:list(v) for h,v in cfg['m3_service_samples'].items()},
             'Fast':{h:list(cfg['m3_fast_cost_model']['service']['Fast'][h]['samples_seconds'])
                     for h in ('hot','short','long')}}
@@ -198,9 +237,10 @@ def audit(run):
                 if not origin:
                     expected_choice='Full'
                 else:
-                    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3'):
+                    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3','m3_service_ledger_fast_advance_v4'):
                         formula=decision['m3_fast_formula']
-                        if cfg.get('m3_fast_policy')=='m3_full_fast_execution_window_v3':
+                        if cfg.get('m3_fast_policy') in ('m3_full_fast_execution_window_v3','m3_service_ledger_fast_advance_v4'):
+                            check('fast_advance_policy_bound_to_config',bool(cfg.get('m3_fast_advance'))==(formula.get('policy')=='m3_service_ledger_fast_advance_v4'),pid)
                             check('full_only_flag_bound_to_config',decision.get('fast_full_only',False)==bool(cfg.get('m3_fast_full_only',False)),pid)
                             check('full_reserve_flag_bound_to_config',decision.get('fast_reserve_full',False)==bool(cfg.get('m3_fast_reserve_full',False)),pid)
                             window=decision['fast_execution_window']
@@ -217,7 +257,7 @@ def audit(run):
                             check('fast_reserved_full_budget_from_history',abs(decision['fast_full_reserve_service_seconds']-recovery_q)<1e-8,pid)
                         for proposal in formula['candidates']:
                             samples=service_history[proposal['mode']]
-                            h=decision['service_budget_history']
+                            h='recovery' if proposal['mode']=='Fast' and cfg.get('m3_fast_advance') else decision['service_budget_history']
                             histories=[h] if h!='recovery' else ['hot','short','long','recovery']
                             quantile=max(sorted(samples[x])[math.ceil(len(samples[x])*probability)-1]
                                          for x in histories if samples[x])
@@ -347,6 +387,8 @@ def audit(run):
                     latest_submit=old['observation_step']+cfg['H']-delay
                     guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
+                    if cfg.get('m3_fast_advance') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
+                        prefix_start-=math.ceil((d['service_seconds']+d['margin_seconds'])/period-1e-9)*period
                     check('m3_rtc_prefix_bound_inputs',d['rtc_delay_steps']==delay
                           and d['rtc_latest_submit_step']==latest_submit
                           and d['rtc_submit_guard_steps']==guard,pid)

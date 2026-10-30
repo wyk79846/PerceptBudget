@@ -45,7 +45,7 @@ def main():
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse an already passed, identical task environment preflight')
-    parser.add_argument('--fast-reserve-full',action='store_true',help='Advance Fast submission by one complete Full budget plus margin, rounded to control steps')
+    parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete Fast recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()

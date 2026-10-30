@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
-    parser.add_argument('--fast-reserve-full',action='store_true',help='Advance Fast submission by one complete Full budget plus margin, rounded to control steps')
+    parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
@@ -59,7 +59,9 @@ def main():
         if args.acceptance_group in ('m3','m3_fast'):
             from perceptbudget.m4_acceptance import configure_m3,configure_m3_fast
             (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
-            cfg['m3_fast_reserve_full']=args.fast_reserve_full
+            cfg['m3_fast_reserve_full']=False
+            cfg['m3_fast_advance']=args.fast_reserve_full
+            if args.fast_reserve_full:cfg['m3_fast_policy']='m3_service_ledger_fast_advance_v4'
             cfg['m3_fast_full_only']=args.full_only
             settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
             cfg['m3_replay_eta_ms']=args.m3_eta_ms
@@ -103,12 +105,14 @@ def main():
         result=recording_session(cfg,settings,args.run_dir,CLEANUP_GATE)
         # Audit selected compute frequency, not M3's fixed high-frequency assumption.
         from perceptbudget.m4_acceptance import clock_audit
-        audits=[]
+        audits=[];service_ledgers=[]
+        from perceptbudget.service_ledger import write_run_ledger
         for row in result['episodes']:
             run=Path(row['run']);audit=clock_audit(run)
             _write_json_atomically(run/'m4_clock_audit.json',audit);audits.append(audit)
             if not audit['passed']:raise RuntimeError('M4 frequency/power/restore audit failed')
-        result.update(mode=('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits)
+            service_ledgers.append(write_run_ledger(run,forbid_hot_fast=bool(cfg.get('m3_fast_advance'))))
+        result.update(mode=('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
     subprocess.run(['sudo','-v'],check=True)

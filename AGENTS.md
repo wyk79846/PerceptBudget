@@ -1,3 +1,5 @@
+> 2026-10-30 待闭环复测：`--fast-advance` 启用 v4。Continue 单独实测记账；Fast仅低频Continue后恢复高频执行，禁止连续Fast；原RTC提交边界减Fast恢复到提交预算（含eta，向上取整步数）。默认未带该标志仍为v3。75项相关CPU检查通过，新v4尚无GPU闭环结果。
+
 > 2026-10-30 当前主线：从M3重接Full/Fast（m3_full_fast_execution_window_v3）。Full/Fast均高频计算，低频仅Continue。每份已提交动作在首次调度时固定“恢复高频至Full提交”的执行窗，窗内事件不重复触发，窗外事件提前Full；普通缓冲刷新按时限及同窗能量比较，Fast后下一次刷新必须Full。旧v2已归档archive/m3-fast-v2-before-rebuild-20261030。75项相关CPU测试通过，新版GPU闭环尚未执行。
 
 # 项目协作与当前状态

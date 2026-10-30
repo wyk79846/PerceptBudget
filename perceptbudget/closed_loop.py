@@ -210,6 +210,7 @@ class DeadlineRuntime:
         self.fast_selection=bool(config.get('m3_fast_enabled'))
         self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
+        self.fast_advance=bool(config.get('m3_fast_advance',False))
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -260,6 +261,8 @@ class DeadlineRuntime:
             self.clocks.close()
 
     def requested(self, request):
+        if self.fast_advance and request.get('m3_fast_choice',{}).get('mode')=='Fast' and self.recovering_plan is None:
+            raise RuntimeError('Fast requires LOW Continue followed by recovery; hot Fast forbidden')
         if request['observation_step'] and self.plan:
             request['m3_timing'] = dict(self.plan)
             request['m3_timing']['actual_request_monotonic'] = request['observation_monotonic']
@@ -408,7 +411,7 @@ class DeadlineRuntime:
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
         if self.fast_selection:
-            self.plan.update(fast_policy='m3_full_fast_execution_window_v3',
+            self.plan.update(fast_policy='m3_service_ledger_fast_advance_v4' if self.fast_advance else 'm3_full_fast_execution_window_v3',
                 fast_full_only=self.fast_full_only,
                 minimum_low_idle_seconds=self.settings.get('minimum_low_idle_seconds',.2),
                 fast_reserve_full=self.fast_reserve_full,
@@ -426,7 +429,7 @@ class DeadlineRuntime:
                 quiet_since=max(quiet_since,self.clocks.last_change['observed_match_monotonic'])
             formula=choose_mode(self.plan,observation_step=step,previous_mode=self.fast_last_mode,
                 cost_model=self.fast_cost_model,quiet_age_seconds=max(0.,now-quiet_since),
-                quantiles={'Full':self.times.estimate(budget_history),'Fast':self.fast_times.estimate(budget_history)},
+                quantiles={'Full':self.times.estimate(budget_history),'Fast':self.fast_times.estimate('recovery' if self.fast_advance else budget_history)},
                 latest_start_cap=rtc_latest_start)
             selected=formula['selected']
             self.plan.update(m3_fast_formula=formula,service_seconds=selected['service_seconds'],
@@ -455,6 +458,10 @@ class DeadlineRuntime:
                 self.recovering_plan = dict(decision)
                 self.clocks.switch('baseline')
             return dict(decision,start_now=False,clock_wait=decision['start_now'])
+        if self.fast_advance and decision.get('m3_fast_formula',{}).get('mode')=='Fast':
+            if not decision['start_now']:
+                self.clocks.switch('gpu_emc')
+            return decision
         recovery_reserve=(self.times.estimate('recovery')-self.times.estimate('hot')) if self.dvfs_policy=='joint' else 0.
         low_wait = decision['latest_start']-decision['decision_monotonic']-recovery_reserve
         if not decision['start_now'] and low_wait >= self.settings['minimum_low_idle_seconds']:

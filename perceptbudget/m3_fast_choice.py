@@ -61,6 +61,10 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
     current M3 state; replan when that state changes. Complete service costs
     already include any measured recovery, so no second transition is charged.
     """
+    if decision.get('fast_policy')=='m3_service_ledger_fast_advance_v4':
+        from perceptbudget.m3_service_choice import choose_service
+        return choose_service(decision,observation_step=observation_step,previous_mode=previous_mode,
+            cost_model=cost_model,quantiles=quantiles,quiet_age_seconds=quiet_age_seconds,latest_start_cap=latest_start_cap)
     from perceptbudget.m4_candidates import hold_energy
     now=decision['decision_monotonic'];deadline=decision['deadline']
     eta=decision['margin_seconds'];profile=decision['current_profile']
