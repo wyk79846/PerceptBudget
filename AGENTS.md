@@ -1,8 +1,4 @@
-> 2026-10-31 可选416温和压缩已接入：`--candidate m3_fast --fast-advance --fast-selective416`，Fast保留state。原生上下文图固定输入核对通过，尚待Long6闭环。30步限制与夹爪准入均已撤回。见docs/SELECTIVE416.md；FlashRT源码未改。
-
-> 2026-10-30 待闭环复测：`--fast-advance` 启用 v4。Continue 单独实测记账；Fast仅低频Continue后恢复高频执行，禁止连续Fast；原RTC提交边界减Fast恢复到提交预算（含eta，向上取整步数）。默认未带该标志仍为v3。75项相关CPU检查通过，新v4尚无GPU闭环结果。
-
-> 2026-10-30 当前主线：从M3重接Full/Fast（m3_full_fast_execution_window_v3）。Full/Fast均高频计算，低频仅Continue。每份已提交动作在首次调度时固定“恢复高频至Full提交”的执行窗，窗内事件不重复触发，窗外事件提前Full；普通缓冲刷新按时限及同窗能量比较，Fast后下一次刷新必须Full。旧v2已归档archive/m3-fast-v2-before-rebuild-20261030。75项相关CPU测试通过，新版GPU闭环尚未执行。
+> 2026-10-31 当前：恢复320-token Fast（外部64＋腕部256，Fast无state、Full带state）。416保留为归档实验/显式开关，不能默认启用。旧q5连续Full/Fast交替作为质量参考；动态入口仍为`--candidate m3_fast --fast-advance`，不要添加416、30步限制或夹爪门槛。主线转向关键阶段判断，参考本地PACE；先离线验证，不恢复之前失败的谷底参数，也不启动新闭环。见docs/KEY_PHASE_NEXT.md。
 
 # 项目协作与当前状态
 

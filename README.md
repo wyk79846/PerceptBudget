@@ -1,11 +1,14 @@
-> 2026-10-30 当前主线：从M3重接Full/Fast（m3_full_fast_execution_window_v3）。Full/Fast均高频计算，低频仅Continue。每份已提交动作在首次调度时固定“恢复高频至Full提交”的执行窗，窗内事件不重复触发，窗外事件提前Full；普通缓冲刷新按时限及同窗能量比较，Fast后下一次刷新必须Full。旧v2已归档archive/m3-fast-v2-before-rebuild-20261030。75项相关CPU测试通过，新版GPU闭环尚未执行。
+# 当前工作：恢复320 Fast，改进关键阶段判断
 
-## M4联合调度小测（待设备验证）
+Fast恢复为外部64＋腕部256视觉token、不带state；Full保持512＋state。416实验不作为默认。旧q5连续交替参考入口：
 
-入口：`python -u scripts/run_m4.py`，默认Spatial task0一次、一次模型加载。
-`--dry-run`只查看计划；通过单任务检查后再用`--suites libero_spatial libero_object libero_goal`扩展。
-完整候选包含一次刷新和同窗口等待，Continue计入后续Full；Full/Fast按计算频率分别记录RTC延迟。
-结果统一放在任务产出/perceptbudget/M4，未修改FlashRT或M3默认配置。
+```bash
+python scripts/eval_expert_recompute.py --mixed-pooled-alternation --fast-no-state --cross-suite --dry-run
+```
+
+动态调度候选：`scripts/run_m4_ssh.sh --candidate m3_fast --fast-advance`，附原有baseline-run等参数；不要加`--fast-selective416`。当前先依据[PACE论文](../任务指导与相关参考/PACE_2606.00537v3.pdf)核查关键阶段，不自动启动上述测试。
+
+具体下一步见[关键阶段改进](docs/KEY_PHASE_NEXT.md)。以下为项目与历史阶段说明，新工作以本节为准。
 
 # PerceptBudget
 

@@ -102,3 +102,12 @@ def test_execution_window_is_frozen_and_does_not_swallow_future_events():
     runtime.fast_last_mode='Fast'
     assert runtime.decide(now=.25,step=5,queue=queue,rows=[],inflight=False,
         rtc_delay_steps=8)['m3_fast_formula']['mode']=='Full'
+
+
+def test_restore320_overwrites_previous416_experiment():
+    cfg=dict(m3_fast_selective416=True,m2_fast_no_state=False)
+    settings=dict(timing={})
+    configure_m3_fast(cfg,settings)
+    assert cfg['m3_fast_selective416'] is False
+    assert cfg['m2_fast_no_state'] is True
+    assert cfg['m4_fast_prompt_capacity']==20
