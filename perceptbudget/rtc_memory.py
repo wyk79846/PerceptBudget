@@ -66,8 +66,11 @@ def release_unused_native_expert(model,torch):
             del pl.weights[name]
     # Context capture only executes vision+encoder. Disabled native decode
     # graphs retain handles, but their private buffers/styles are never replayed.
+    # Prompt setup updates decoder_rope_weights before every context replay;
+    # retain that small buffer even though the decoder itself is disabled.
     decoder_buffers={name:buf.nbytes for name,buf in getattr(pl,'bufs',{}).items()
-        if name.startswith('decoder_') or name in ('diffusion_noise','rtc_prev_action_chunk',
+        if (name.startswith('decoder_') and name!='decoder_rope_weights')
+        or name in ('diffusion_noise','rtc_prev_action_chunk',
             'rtc_prefix_weights','rtc_guidance_weight','x_normed_buf','gate_buf')}
     for name in decoder_buffers:
         del pl.bufs[name]

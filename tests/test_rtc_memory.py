@@ -47,7 +47,8 @@ def test_context_only_cleanup_releases_decoder_buffers_and_precomputed_styles():
         _decoder_only_graph=object(),
         weights={'encoder_x': 1, 'decoder_action_in_proj_w': 2,
                  'precomputed': precomputed},
-        bufs={'vision_x': Buffer(128), 'decoder_style_attn': Buffer(256),
+        bufs={'vision_x': Buffer(128), 'decoder_rope_weights': Buffer(32),
+              'decoder_style_attn': Buffer(256),
               'decoder_style_ffn': Buffer(512), 'diffusion_noise': Buffer(64),
               'x_normed_buf': Buffer(16), 'gate_buf': Buffer(24),
               'encoder_gate_buf': Buffer(40)},
@@ -62,7 +63,7 @@ def test_context_only_cleanup_releases_decoder_buffers_and_precomputed_styles():
         result = release_unused_native_expert(model, torch)
 
     assert pl._context_graph is context
-    assert set(pl.bufs) == {'vision_x', 'encoder_gate_buf'}
+    assert set(pl.bufs) == {'vision_x', 'encoder_gate_buf', 'decoder_rope_weights'}
     assert 'precomputed' not in pl.weights
     assert pipe._precomputed_styles == {}
     assert result['released_buffer_names'] == [
