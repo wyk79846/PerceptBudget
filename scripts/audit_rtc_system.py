@@ -50,6 +50,13 @@ def audit_fast_formula(formula, decision, costs, previous_mode):
         cell=max(entry,key=lambda c:c['energy_j'])
         latest=end-r['service_seconds']-eta
         if cap is not None:latest=min(latest,cap)
+        base_latest=latest
+        reserve_steps=0
+        if mode=='Fast' and decision.get('fast_reserve_full',False):
+            reserve_steps=math.ceil((decision['fast_full_reserve_service_seconds']+eta)/decision['estimated_control_period_seconds']-1e-9)
+            latest-=reserve_steps*decision['estimated_control_period_seconds']
+        if decision.get('fast_reserve_full',False):
+            test(r.get('full_reserve_steps')==reserve_steps and close(r.get('base_latest_start',float('inf')),base_latest),'full_reservation')
         start=max(now,latest);before=start-now;after=max(0.,end-start-cell['mean_seconds'])
         energy=hold(profile,formula['quiet_age_seconds'],before)+cell['energy_j']+hold('baseline',0.,after)
         test(close(r['latest_start'],latest) and close(r['formula_latest_start'],end-r['service_seconds']-eta),'mode_latest_start')
@@ -179,6 +186,7 @@ def audit(run):
                         formula=decision['m3_fast_formula']
                         if cfg.get('m3_fast_policy')=='m3_full_fast_execution_window_v3':
                             check('full_only_flag_bound_to_config',decision.get('fast_full_only',False)==bool(cfg.get('m3_fast_full_only',False)),pid)
+                            check('full_reserve_flag_bound_to_config',decision.get('fast_reserve_full',False)==bool(cfg.get('m3_fast_reserve_full',False)),pid)
                             window=decision['fast_execution_window']
                             check('fast_window_belongs_to_current_chunk',previous is not None and window['prediction_id']==previous['prediction_id'],pid)
                             expected_end=window['start_step']+math.ceil((window['full_recovery_seconds']+window['margin_seconds'])/window['period_seconds']-1e-9)
@@ -187,6 +195,10 @@ def audit(run):
                             check('fast_excluded_events_inside_window',all(e['target_step']<=expected_end for e in decision['fast_ignored_events']),pid)
                         errors=audit_fast_formula(formula,decision,cfg['m3_fast_cost_model'],previous_mode)
                         probability=cfg['m3_timing']['service_quantile']
+                        if decision.get('fast_reserve_full',False):
+                            full_samples=service_history['Full']
+                            recovery_q=max(sorted(v)[math.ceil(len(v)*probability)-1] for v in full_samples.values() if v)
+                            check('fast_reserved_full_budget_from_history',abs(decision['fast_full_reserve_service_seconds']-recovery_q)<1e-8,pid)
                         for proposal in formula['candidates']:
                             samples=service_history[proposal['mode']]
                             h=decision['service_budget_history']
@@ -325,6 +337,8 @@ def audit(run):
                     check('m3_start_constraint',d['start_constraint']==(
                           'rtc_prefix' if prefix_start<expected_start else 'service_deadline'),pid)
                     expected_start=min(expected_start,prefix_start)
+                if d.get('fast_reserve_full') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
+                    expected_start-=math.ceil((d['fast_full_reserve_service_seconds']+d['margin_seconds'])/d['estimated_control_period_seconds']-1e-9)*d['estimated_control_period_seconds']
                 check('m3_service_and_margin_subtracted_once',bool(d)
                       and abs(d['latest_start']-expected_start)<1e-8,pid)
                 check('m3_nonnegative_wait_and_due',(d.get('wait_seconds',-1)>=0 if cfg.get('m4_enabled') else d.get('wait_seconds')==0)

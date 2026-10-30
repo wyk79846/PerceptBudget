@@ -54,6 +54,15 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
             raise ValueError('Invalid measured service budget')
         raw_latest=deadline-q-eta
         latest=min(raw_latest,latest_start_cap) if latest_start_cap is not None else raw_latest
+        base_latest=latest
+        reserve_steps=0
+        if mode=='Fast' and decision.get('fast_reserve_full',False):
+            period=decision['estimated_control_period_seconds']
+            full_budget=decision['fast_full_reserve_service_seconds']
+            if not math.isfinite(full_budget) or full_budget<=0 or not math.isfinite(period) or period<=0:
+                raise ValueError('Full reservation requires positive service budget and control period')
+            reserve_steps=math.ceil((full_budget+eta)/period-1e-9)
+            latest-=reserve_steps*period
         start=max(now,latest)
         quality=(mode=='Full' or not requires_full and previous_mode!='Fast')
         feasible=latest>=now-1e-9 and start+mean<=deadline+1e-9
@@ -63,12 +72,14 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
         proposals.append(dict(mode=mode,quality_allowed=quality,feasible=feasible,
             quality_reason=('full_only_ablation' if decision.get('fast_full_only',False) else 'full_required_by_event' if requires_full else 'validated_single_fast_then_full'),
             service_seconds=q,mean_service_seconds=mean,latest_start=latest,
-            formula_latest_start=raw_latest,prepare_start=start,window_end=deadline,
+            formula_latest_start=raw_latest,base_latest_start=base_latest,
+            full_reserve_steps=reserve_steps,full_reserve_seconds=reserve_steps*decision['estimated_control_period_seconds'],
+            prepare_start=start,window_end=deadline,
             wait_seconds=before,tail_seconds=after,wait_energy_j=wait_energy,
             service_energy_j=energy,tail_energy_j=tail_energy,
             additional_transition_energy_j=0.,recovery_included=profile!='baseline',
             energy_j=wait_energy+energy+tail_energy,
-            start_constraint='rtc_prefix' if latest<raw_latest else 'service_deadline'))
+            start_constraint='rtc_prefix' if base_latest<raw_latest else 'service_deadline'))
     available=[p for p in proposals if p['quality_allowed'] and p['feasible']]
     if available:
         chosen=min(available,key=lambda p:(p['energy_j'],p['mode']!='Full'))

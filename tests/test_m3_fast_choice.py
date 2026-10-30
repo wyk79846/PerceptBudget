@@ -91,3 +91,32 @@ def test_full_only_ablation_filters_fast_before_timing_selection():
     assert result['mode']=='Full'
     assert result['candidates'][1]['quality_allowed'] is False
     assert result['selected']['service_seconds']==2.
+
+
+def test_reserve_advances_rtc_limited_fast_from_step39_to29():
+    d=decision(estimated_control_period_seconds=.05,margin_seconds=.025,
+        fast_reserve_full=True,fast_full_reserve_service_seconds=.475)
+    result=choose(d,latest_start_cap=1.95)
+    full,fast=result['candidates']
+    assert result['mode']=='Fast'
+    assert fast['base_latest_start']==pytest.approx(39*.05)
+    assert fast['full_reserve_steps']==10
+    assert fast['latest_start']==pytest.approx(29*.05)
+    assert full['full_reserve_steps']==0 and full['latest_start']==pytest.approx(1.95)
+    assert fast['start_constraint']=='rtc_prefix'
+    from scripts.audit_rtc_system import audit_fast_formula
+    applied=dict(d,service_seconds=fast['service_seconds'],latest_start=fast['latest_start'])
+    assert audit_fast_formula(result,applied,model(),'Full')==[]
+    result['candidates'][1]['full_reserve_steps']=9
+    assert 'full_reservation' in audit_fast_formula(result,applied,model(),'Full')
+
+
+def test_reserve_rounds_up_and_infeasible_fast_falls_back_to_full():
+    d=decision(estimated_control_period_seconds=.05,fast_reserve_full=True,
+        fast_full_reserve_service_seconds=.48)
+    result=choose(d,latest_start_cap=.4)
+    assert result['candidates'][1]['full_reserve_steps']==12
+    assert not result['candidates'][1]['feasible']
+    assert result['mode']=='Full' and result['reason']=='feasible_minimum_energy'
+    result=choose(d,previous_mode='Fast')
+    assert result['mode']=='Full' and not result['candidates'][1]['quality_allowed']
