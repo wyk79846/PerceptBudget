@@ -410,6 +410,7 @@ class DeadlineRuntime:
         if self.fast_selection:
             self.plan.update(fast_policy='m3_full_fast_execution_window_v3',
                 fast_full_only=self.fast_full_only,
+                minimum_low_idle_seconds=self.settings.get('minimum_low_idle_seconds',.2),
                 fast_reserve_full=self.fast_reserve_full,
                 fast_full_reserve_service_seconds=self.times.estimate('recovery'),
                 fast_execution_window=fast_window,fast_ignored_events=ignored_events)

@@ -132,3 +132,35 @@ def test_missed_reservation_never_reintroduces_fast_through_emergency_fallback()
     selected=result['selected']
     assert audit_fast_formula(result,dict(d,service_seconds=selected['service_seconds'],
         latest_start=selected['latest_start']),model(),'Full')==[]
+
+
+def test_continue_tail_prices_both_transitions_once_and_keeps_short_wait_high():
+    from perceptbudget.m3_fast_choice import continue_energy
+    costs=model();costs['continue_energy_model']='measured_roundtrip_v1'
+    costs['waits']={'baseline':[10.]*4,'gpu_emc':[2.]*4}
+    costs['transitions']={
+        'down':dict(source='baseline',seconds=.25,energy_j=1.),
+        'up':dict(source='gpu_emc',seconds=.25,energy_j=1.)}
+    short=continue_energy(costs,.3)
+    assert short['path']=='high_hold' and short['energy_j']==pytest.approx(3.)
+    long=continue_energy(costs,1.)
+    assert long['activity']=='Continue' and long['path']=='low_hold_roundtrip'
+    assert long['low_seconds']==pytest.approx(.5)
+    assert long['energy_j']==pytest.approx(3.)  # 1J down + .5s*2W +1J up.
+    assert sum(long[k] for k in ('down_seconds','low_seconds','up_seconds'))==pytest.approx(1.)
+    costs['transitions']['down']['energy_j']=20.
+    assert continue_energy(costs,1.)['path']=='high_hold'
+
+
+def test_independent_audit_checks_continue_tail_instead_of_assuming_high_hold():
+    from scripts.audit_rtc_system import audit_fast_formula
+    costs=model();costs['continue_energy_model']='measured_roundtrip_v1'
+    costs['transitions']={
+        'down':dict(source='baseline',seconds=.25,energy_j=.2),
+        'up':dict(source='gpu_emc',seconds=.25,energy_j=.2)}
+    d=decision(fast_reserve_full=True,fast_full_reserve_service_seconds=.5)
+    result=choose(d,costs)
+    selected=result['selected'];applied=dict(d,service_seconds=selected['service_seconds'],latest_start=selected['latest_start'])
+    assert audit_fast_formula(result,applied,costs,'Full')==[]
+    result['candidates'][1]['tail_activity']='Fast'
+    assert 'continue_tail_plan' in audit_fast_formula(result,applied,costs,'Full')

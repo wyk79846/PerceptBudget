@@ -6,7 +6,7 @@ def load_cost_model(config):
     """Reuse measured data, not the former M4 search or its candidate templates."""
     import json
     from pathlib import Path
-    from perceptbudget.m4_costs import load_service_costs
+    from perceptbudget.m4_costs import load_service_costs,load_transitions
     from perceptbudget.m4_candidates import wait_model
     rows=load_service_costs(config)
     service={mode:{} for mode in ('Full','Fast')}
@@ -17,8 +17,40 @@ def load_cost_model(config):
                 mean_seconds=r['mean_service_seconds'],samples_seconds=r['service_samples_seconds'],
                 from_profile=r['from_profile'],source=r['source'])
     waits=wait_model(json.loads(Path(config['wait_cost_source']).read_text()))
+    measured=load_transitions(config['directional_cost_source'])
+    transitions={'down':measured['baseline','gpu_emc'],'up':measured['gpu_emc','baseline']}
     return dict(service=service,waits=waits,wait_source=config['wait_cost_source'],
+                continue_energy_model='measured_roundtrip_v1',transitions=transitions,
                 scope='Fixed high-frequency compute; measured complete service includes recovery')
+
+
+def continue_energy(costs, seconds, *, minimum_low_seconds=.2):
+    """Price a Continue interval, including measured down/up preparation windows.
+
+    Both candidates start and end high. The 250ms measured preparation cells
+    already contain hold energy: their durations must not be charged twice.
+    This is a cost forecast, not a promise about unobserved future events.
+    """
+    from perceptbudget.m4_candidates import hold_energy
+    high=hold_energy(costs['waits'],'baseline',0.,seconds)
+    result=dict(activity='Continue',path='high_hold',seconds=seconds,
+        hold_energy_j=high,transition_energy_j=0.,energy_j=high)
+    if costs.get('continue_energy_model')!='measured_roundtrip_v1':return result
+    down,up=(costs['transitions'][k] for k in ('down','up'))
+    low_seconds=seconds-down['seconds']-up['seconds']
+    if low_seconds<minimum_low_seconds:return result
+    def transition_energy(cell,age):
+        reference=cell.get('reference_quiet_age_seconds',0.)
+        extra=max(0.,hold_energy(costs['waits'],cell['source'],age,cell['seconds'])-
+                  hold_energy(costs['waits'],cell['source'],reference,cell['seconds']))
+        return cell['energy_j']+extra
+    switching=transition_energy(down,0.)+transition_energy(up,down['seconds']+low_seconds)
+    holding=hold_energy(costs['waits'],'gpu_emc',down['seconds'],low_seconds)
+    if switching+holding<high:
+        result=dict(activity='Continue',path='low_hold_roundtrip',seconds=seconds,
+            down_seconds=down['seconds'],low_seconds=low_seconds,up_seconds=up['seconds'],
+            hold_energy_j=holding,transition_energy_j=switching,energy_j=switching+holding)
+    return result
 
 
 def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
@@ -68,14 +100,15 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
         feasible=latest>=now-1e-9 and start+mean<=deadline+1e-9
         before=max(0.,start-now);after=max(0.,deadline-start-mean)
         wait_energy=hold_energy(cost_model['waits'],profile,quiet_age_seconds,before)
-        tail_energy=hold_energy(cost_model['waits'],'baseline',0.,after)
+        tail=continue_energy(cost_model,after,minimum_low_seconds=decision.get('minimum_low_idle_seconds',.2))
+        tail_energy=tail['energy_j']
         proposals.append(dict(mode=mode,quality_allowed=quality,feasible=feasible,
             quality_reason=('full_only_ablation' if decision.get('fast_full_only',False) else 'full_required_by_event' if requires_full else 'validated_single_fast_then_full'),
             service_seconds=q,mean_service_seconds=mean,latest_start=latest,
             formula_latest_start=raw_latest,base_latest_start=base_latest,
             full_reserve_steps=reserve_steps,full_reserve_seconds=reserve_steps*decision['estimated_control_period_seconds'],
             prepare_start=start,window_end=deadline,
-            wait_seconds=before,tail_seconds=after,wait_energy_j=wait_energy,
+            wait_seconds=before,tail_seconds=after,tail_activity='Continue',continue_plan=tail,wait_energy_j=wait_energy,
             service_energy_j=energy,tail_energy_j=tail_energy,
             additional_transition_energy_j=0.,recovery_included=profile!='baseline',
             energy_j=wait_energy+energy+tail_energy,

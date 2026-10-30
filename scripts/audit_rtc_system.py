@@ -58,14 +58,29 @@ def audit_fast_formula(formula, decision, costs, previous_mode):
         if decision.get('fast_reserve_full',False):
             test(r.get('full_reserve_steps')==reserve_steps and close(r.get('base_latest_start',float('inf')),base_latest),'full_reservation')
         start=max(now,latest);before=start-now;after=max(0.,end-start-cell['mean_seconds'])
-        energy=hold(profile,formula['quiet_age_seconds'],before)+cell['energy_j']+hold('baseline',0.,after)
+        tail_energy=hold('baseline',0.,after)
+        tail_path='high_hold'
+        if costs.get('continue_energy_model')=='measured_roundtrip_v1':
+            down,up=(costs['transitions'][k] for k in ('down','up'))
+            low_seconds=after-down['seconds']-up['seconds']
+            if low_seconds>=decision.get('minimum_low_idle_seconds',.2):
+                transition=0.
+                for t,age in ((down,0.),(up,down['seconds']+low_seconds)):
+                    adjustment=max(0.,hold(t['source'],age,t['seconds'])-hold(t['source'],t.get('reference_quiet_age_seconds',0.),t['seconds']))
+                    transition+=t['energy_j']+adjustment
+                low_energy=transition+hold('gpu_emc',down['seconds'],low_seconds)
+                if low_energy<tail_energy:tail_energy,tail_path=low_energy,'low_hold_roundtrip'
+            plan=r.get('continue_plan',{})
+            test(r.get('tail_activity')=='Continue' and plan.get('activity')=='Continue' and plan.get('path')==tail_path
+                 and close(plan.get('energy_j',float('inf')),tail_energy),'continue_tail_plan')
+        energy=hold(profile,formula['quiet_age_seconds'],before)+cell['energy_j']+tail_energy
         test(close(r['latest_start'],latest) and close(r['formula_latest_start'],end-r['service_seconds']-eta),'mode_latest_start')
         test(close(r['window_end'],end) and close(formula['window_start'],now)
              and close(r['prepare_start'],start) and close(r['wait_seconds'],before)
              and close(r['tail_seconds'],after) and close(r['mean_service_seconds'],cell['mean_seconds']),'same_window')
         test(close(r['energy_j'],energy) and close(r['service_energy_j'],cell['energy_j'])
              and close(r['wait_energy_j'],hold(profile,formula['quiet_age_seconds'],before))
-             and close(r['tail_energy_j'],hold('baseline',0.,after))
+             and close(r['tail_energy_j'],tail_energy)
              and r['additional_transition_energy_j']==0.,'absolute_energy_once')
         quality=mode=='Full' or not require_full and previous_mode!='Fast'
         test(r['quality_allowed']==quality,'quality_filter')
