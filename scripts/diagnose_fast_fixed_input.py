@@ -50,6 +50,12 @@ def main():
             raw=np.asarray(r['observation_raw_state'],np.float32)
             stats=load_libero_norm_stats(cfg['norm_stats_path'])
             snapshot=dict(images=[image_input(frame[:,:256]),image_input(frame[:,256:])],raw_state=raw,state=normalize_state(raw,stats))
+            if not np.array_equal(snapshot['state'],np.asarray(r['model_state'],np.float32)):
+                raise ValueError('Recorded state normalization differs')
+            import hashlib
+            hashes=[hashlib.sha256(x.tobytes()).hexdigest() for x in snapshot['images']]
+            if hashes!=r['context_refresh']['image_input_sha256']:raise ValueError('Recorded image preprocessing differs')
+            result['input_checks']=dict(images_exact=True,state_exact=True)
             task=base._load_tasks([source['screen']['task_ids'][0]],[source['screen']['suites'][0]])[0]
             model=base._load_and_check_model(cfg,torch);result['model_loads']=1
             from flash_rt.subgraphs.pi05.context_action import enable
@@ -62,6 +68,7 @@ def main():
             frontend=wrist_frontend(model._pipe,torch,fast_kind='pool2_agent',no_state=False)
             def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
             frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
+            model._pipe._set_prompt_per_length=types.MethodType(fixed_prompt,model._pipe)
             pooled=VLAModel(frontend,'torch')
             enable(pooled);base._infer_actions(pooled,snapshot,task['instruction'],cfg['H'],{})
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
@@ -71,13 +78,18 @@ def main():
             noise=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
             previous=torch.tensor(solver['previous_raw'],device='cuda',dtype=torch.float32)
             outputs={}
-            for name,frontend,state in [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_repeat',model,True)]:
+            for name,frontend,state in [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]:
                 adapter.model=frontend;adapter.pipe=frontend._pipe;adapter.pipeline=frontend._pipe.pipeline
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
                 pl=frontend._pipe.pipeline
                 expected=(512 if name.startswith('Full') else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
+                if not name.startswith('Full'):
+                    from scripts.diagnose_pool_parity import pool_check
+                    layout=pool_check(pl,torch,np,'agent')
+                    result.setdefault('pooling_checks',{})[name]=layout
+                    if layout['mismatched_elements']:raise ValueError('Native pooling differs from CPU reference')
                 adapter.expert.refresh_context(pl.attn.enc_K,pl.attn.enc_V,valid)
                 actions,norms=sample_original_rtc(adapter.expert,noise.clone(),previous.clone(),solver['delay'],solver['executed'],beta=cfg['rtc_beta'],author_order=True)
                 out=actions.detach().cpu().numpy().copy();outputs[name]=out
@@ -90,6 +102,10 @@ def main():
                     action7_max_abs=float(np.max(np.abs(diff))))
                 result['cases'][name]['vs_recorded_raw_max_abs']=float(np.max(np.abs(out-np.asarray(r['actions_raw']))))
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
+            result['factorial_pairs']={}
+            for a,b in [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]:
+                delta=outputs[a][:,:7]-outputs[b][:,:7]
+                result['factorial_pairs'][a+'_vs_'+b]=dict(all_action7_rmse=float(np.sqrt(np.mean(delta**2))),next10_executable_action7_rmse=float(np.sqrt(np.mean(delta[solver['delay']:solver['delay']+10]**2))))
             np.savez(run/'actions.npz',**outputs)
             if result['cases']['Full_repeat']['action7_max_abs']>1e-4:raise ValueError('Full repeat changed after pooled cases')
             result.update(status='completed',passed=True)
