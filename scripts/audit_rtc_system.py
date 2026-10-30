@@ -72,6 +72,7 @@ def audit_fast_formula(formula, decision, costs, previous_mode):
         test(r['feasible']==(latest>=now-1e-9 and start+cell['mean_seconds']<=end+1e-9),'feasibility_filter')
     allowed=[r for r in rows if r['quality_allowed'] and r['feasible']]
     chosen=(min(allowed,key=lambda r:(r['energy_j'],r['mode']!='Full')) if allowed else
+            next(r for r in rows if r['mode']=='Full') if decision.get('fast_reserve_full',False) else
             min((r for r in rows if r['quality_allowed']),key=lambda r:r['service_seconds']))
     test(formula['mode']==chosen['mode'] and formula['selected']==chosen,'chosen_minimum')
     test(formula['reason']==('feasible_minimum_energy' if allowed else 'deadline_unreachable'),'missed_deadline_recorded')

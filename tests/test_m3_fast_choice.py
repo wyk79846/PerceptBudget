@@ -120,3 +120,15 @@ def test_reserve_rounds_up_and_infeasible_fast_falls_back_to_full():
     assert result['mode']=='Full' and result['reason']=='feasible_minimum_energy'
     result=choose(d,previous_mode='Fast')
     assert result['mode']=='Full' and not result['candidates'][1]['quality_allowed']
+
+
+def test_missed_reservation_never_reintroduces_fast_through_emergency_fallback():
+    d=decision(deadline=.2,estimated_control_period_seconds=.05,
+        fast_reserve_full=True,fast_full_reserve_service_seconds=.48)
+    result=choose(d)
+    assert not any(c['feasible'] for c in result['candidates'])
+    assert result['mode']=='Full' and result['reason']=='deadline_unreachable'
+    from scripts.audit_rtc_system import audit_fast_formula
+    selected=result['selected']
+    assert audit_fast_formula(result,dict(d,service_seconds=selected['service_seconds'],
+        latest_start=selected['latest_start']),model(),'Full')==[]

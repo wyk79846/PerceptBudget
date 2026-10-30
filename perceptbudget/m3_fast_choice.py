@@ -87,7 +87,8 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
     else:
         # Record the missed timing constraint; do not label the fallback feasible
         # or extend the old action horizon. Existing underflow handling remains.
-        chosen=min((p for p in proposals if p['quality_allowed']),key=lambda p:p['service_seconds'])
+        chosen=(next(p for p in proposals if p['mode']=='Full') if decision.get('fast_reserve_full',False) else
+                min((p for p in proposals if p['quality_allowed']),key=lambda p:p['service_seconds']))
         status='deadline_unreachable'
     return dict(observation_step=observation_step,mode=chosen['mode'],reason=status,selected=chosen,candidates=proposals,
         window_start=now,window_end=deadline,margin_seconds=eta,
