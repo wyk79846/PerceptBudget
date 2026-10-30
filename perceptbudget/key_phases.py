@@ -1,0 +1,62 @@
+"""Engineering PACE-inspired phase hints from decoded commands, not true speed.
+
+Only pronounced low regions associated with a predicted gripper/turn event
+become protected intervals. This is not an additional refresh trigger.
+"""
+import math
+from statistics import median
+from perceptbudget.action_events import EventConfig,detect_events,_actions
+
+
+def intervals(actions,config=None):
+    config=config or EventConfig()
+    actions=_actions(actions)
+    if len(actions)<3:return []
+    amplitude=[math.sqrt(sum(v*v for v in a[:3])) for a in actions]
+    smooth=[median(amplitude[max(0,i-1):min(len(actions),i+2)]) for i in range(len(actions))]
+    runs=[]
+    for i,value in enumerate(smooth):
+        if runs and runs[-1][2]==value:runs[-1][1]=i
+        else:runs.append([i,i,value])
+    peaks=[];valleys=[]
+    for i,(start,stop,value) in enumerate(runs):
+        left=runs[i-1][2] if i else None
+        right=runs[i+1][2] if i+1<len(runs) else None
+        if (left is None or value>left) and (right is None or value>right):peaks.append((start+stop)//2)
+        if left is not None and value<left and (right is None or value<right):valleys.append((start+stop)//2)
+    events=[e for e in detect_events(actions,config) if e['kind'] in ('gripper_close','gripper_open','turn')]
+    phases=[]
+    for valley in valleys:
+        left=next((p for p in reversed(peaks) if p<valley),None)
+        right=next((p for p in peaks if p>valley),None)
+        if left is None:continue
+        shoulder=min(smooth[left],smooth[right]) if right is not None else smooth[left]
+        if shoulder<config.minimum_motion or smooth[valley]>shoulder*config.slowdown_ratio:continue
+        stop=right+1 if right is not None else len(actions)
+        anchors=[dict(kind=e['kind'],offset=e['offset']) for e in events if left<=e['offset']<stop]
+        if not anchors:continue
+        phase=dict(start_offset=left,stop_offset=stop,valley_offsets=[valley],anchors=anchors,
+                   minimum_command_norm=smooth[valley],shoulder_command_norm=shoulder,
+                   end_observed=right is not None)
+        if phases and phase['start_offset']<phases[-1]['stop_offset']:
+            old=phases[-1];old['stop_offset']=max(old['stop_offset'],stop)
+            old['valley_offsets']+=phase['valley_offsets']
+            old['anchors']=[dict(kind=k,offset=o) for k,o in sorted({(e['kind'],e['offset']) for e in old['anchors']+anchors})]
+            old['minimum_command_norm']=min(old['minimum_command_norm'],smooth[valley])
+            old['end_observed'] &= phase['end_observed']
+        else:phases.append(phase)
+    return phases
+
+
+def absolute_intervals(actions,origin,config=None):
+    return [dict(p,start_step=origin+p['start_offset'],stop_step=origin+p['stop_offset']) for p in intervals(actions,config)]
+
+
+def coverage(phases,*,step,now,latest_start,period,horizon,prediction_id):
+    # Include acquisition/inference: a Fast observation taken during precision
+    # manipulation may affect later actions even if its result arrives later.
+    begin=step+math.floor(max(0.,latest_start-now)/period+1e-9)
+    stop=begin+horizon
+    overlaps=[p for p in phases if p['start_step']<stop and begin<p['stop_step']]
+    return dict(prediction_id=prediction_id,start_step=begin,stop_step=stop,allowed=not overlaps,
+                overlaps=overlaps,scope='forecast request through maximum action coverage; includes perception/inflight; future chunk unknown')

@@ -40,7 +40,14 @@ def choose_service(decision, *, observation_step, previous_mode, cost_model,
         down_seconds=down.get('max_readback_seconds',down.get('seconds',0.))
         low_admission=(mode!='Fast' or profile=='gpu_emc' or
                        wait>=decision.get('minimum_low_idle_seconds',.2)+down_seconds)
-        quality=mode=='Full' or (not require_full and previous_mode!='Fast' and low_admission)
+        phase_gate=None
+        if mode=='Fast' and decision.get('fast_phase_guard') is not None:
+            from perceptbudget.key_phases import coverage
+            guard=decision['fast_phase_guard']
+            phase_gate=coverage(guard['intervals'],step=observation_step,now=now,latest_start=latest,period=period,
+                horizon=guard['horizon'],prediction_id=guard['prediction_id'])
+        quality=mode=='Full' or (not require_full and previous_mode!='Fast' and low_admission
+            and (phase_gate is None or phase_gate['allowed']))
         feasible=latest>=now-1e-9
         # Waiting is a separate ledger. A HIGH->LOW transition forecast is not
         # fabricated here: the runtime logs and meters that interval separately.
@@ -58,6 +65,7 @@ def choose_service(decision, *, observation_step, previous_mode, cost_model,
                 forecast_energy_j=waiting,scope='current-state hold forecast; excluded from service ranking'),
             continue_after=dict(activity='Continue',forecast=False,reason='new chunk not observed; meter actual runtime'),
             recovery_included=entry_state=='gpu_emc',additional_transition_energy_j=0.))
+        if phase_gate is not None:candidates[-1]['key_phase_gate']=phase_gate
     feasible=[c for c in candidates if c['quality_allowed'] and c['feasible']]
     chosen=min(feasible,key=lambda c:(c['service_energy_j'],c['mode']!='Full')) if feasible else candidates[0]
     return dict(policy=POLICY,mode=chosen['mode'],selected=chosen,candidates=candidates,

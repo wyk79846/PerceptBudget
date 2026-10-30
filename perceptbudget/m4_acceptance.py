@@ -131,7 +131,7 @@ def configure_m3(config, settings):
     from perceptbudget.m3_comparison import configure_group
     config['m3_formal_signal']='events_only'
     configure_group(config,'D_joint')
-    config.update(m4_enabled=False,m3_fast_enabled=False,m4_policy_revision='not_applicable_original_m3',
+    config.update(m4_enabled=False,m3_fast_enabled=False,m3_fast_key_phases=False,m4_policy_revision='not_applicable_original_m3',
                   m2_visual_fast_enabled=False,m3_dvac_enabled=False)
     config.pop('m3_fast_cost_model',None)
     config.pop('m3_fast_policy',None)

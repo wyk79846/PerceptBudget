@@ -46,7 +46,18 @@ def audit_service_formula(formula,decision,costs,previous_mode):
         wait=max(0.,latest-now);down=costs.get('transitions',{}).get('down',{})
         down_time=down.get('max_readback_seconds',down.get('seconds',0.))
         low_ok=mode!='Fast' or profile=='gpu_emc' or wait>=decision.get('minimum_low_idle_seconds',.2)+down_time
-        allowed=mode=='Full' or not require_full and previous_mode!='Fast' and low_ok
+        phase_allowed=True
+        if mode=='Fast' and decision.get('fast_phase_guard') is not None:
+            guard=decision['fast_phase_guard']
+            begin=formula['observation_step']+math.floor(max(0.,latest-now)/period+1e-9)
+            stop=begin+guard['horizon']
+            overlaps=[p for p in guard['intervals'] if p['start_step']<stop and begin<p['stop_step']]
+            phase_allowed=not overlaps
+            gate=r.get('key_phase_gate',{})
+            test(gate.get('start_step')==begin and gate.get('stop_step')==stop
+                 and gate.get('prediction_id')==guard['prediction_id'] and gate.get('overlaps')==overlaps
+                 and gate.get('allowed')==phase_allowed,'key_phase_forecast_overlap')
+        allowed=mode=='Full' or not require_full and previous_mode!='Fast' and low_ok and phase_allowed
         test(r['quality_allowed']==allowed and r['low_continue_admissible']==low_ok,'quality_filter')
         test(r['entry_profile']==entry and r['compute_profile']=='baseline','service_entry_and_compute_state')
         test(close(r['latest_start'],latest) and close(r['formula_latest_start'],raw) and r['advance_steps']==steps,'fast_advance_once')
@@ -257,6 +268,15 @@ def audit(run):
                             check('fast_execution_window_end',window['end_step']==expected_end,pid)
                             check('fast_critical_outside_committed_window',decision.get('critical_step') is None or decision['critical_step']>expected_end,pid)
                             check('fast_excluded_events_inside_window',all(e['target_step']<=expected_end for e in decision['fast_ignored_events']),pid)
+                        if cfg.get('m3_fast_key_phases'):
+                            from perceptbudget.key_phases import absolute_intervals
+                            from perceptbudget.action_events import EventConfig
+                            guard=decision.get('fast_phase_guard',{})
+                            phase_source=by_id[previous['prediction_id']]
+                            expected=absolute_intervals(phase_source['actions'],phase_source['observation_step'],EventConfig(**cfg['m3_events']))
+                            check('key_phases_bound_to_active_chunk',guard.get('prediction_id')==previous['prediction_id']
+                                  and guard.get('intervals')==expected
+                                  and guard.get('horizon')==cfg['m3_timing']['maximum_action_offset'],pid)
                         errors=audit_fast_formula(formula,decision,cfg['m3_fast_cost_model'],previous_mode)
                         probability=cfg['m3_timing']['service_quantile']
                         if decision.get('fast_reserve_full',False):

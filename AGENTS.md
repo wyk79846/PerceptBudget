@@ -1,4 +1,4 @@
-> 2026-10-31 当前：恢复320-token Fast（外部64＋腕部256，Fast无state、Full带state）。416保留为归档实验/显式开关，不能默认启用。旧q5连续Full/Fast交替作为质量参考；动态入口仍为`--candidate m3_fast --fast-advance`，不要添加416、30步限制或夹爪门槛。主线转向关键阶段判断，参考本地PACE；先离线验证，不恢复之前失败的谷底参数，也不启动新闭环。见docs/KEY_PHASE_NEXT.md。
+> 2026-10-31 当前：320 Fast（无state）已恢复；新增实验开关`--fast-key-phases`（配合`--candidate m3_fast --fast-advance`）。只改Fast准入，不新增刷新触发，不改RTC/调频；每chunk按运动峰谷和夹爪/转向确认关键区间，检查预计感知及执行覆盖是否相交。81项相关测试通过、旧日志离线完成，未新GPU闭环。先Long6一次，不扩12。416、30步限制、持续闭爪禁Fast均非当前候选。详见docs/KEY_PHASE_NEXT.md。
 
 # 项目协作与当前状态
 

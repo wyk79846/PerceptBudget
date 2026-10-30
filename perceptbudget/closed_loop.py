@@ -211,6 +211,8 @@ class DeadlineRuntime:
         self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
         self.fast_advance=bool(config.get('m3_fast_advance',False))
+        self.key_phase_guard=bool(config.get('m3_fast_key_phases',False))
+        if self.key_phase_guard and not self.fast_advance:raise ValueError('Key phases require V4 Fast policy')
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -288,6 +290,9 @@ class DeadlineRuntime:
             self.fast_last_mode=request['m3_fast_choice']['mode']
             self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
+        if getattr(self,'key_phase_guard',False):
+            from perceptbudget.key_phases import absolute_intervals
+            self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
         signal=request.get('dvac',{})
         prefix=signal.get('prefix_actions') if self.dvac_enabled else None
         self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
@@ -419,6 +424,9 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
+        if getattr(self,'key_phase_guard',False) and current is not None:
+            self.plan['fast_phase_guard']=dict(prediction_id=item[1],horizon=self.settings['maximum_action_offset'],
+                intervals=current.get('key_phases',[]))
         if self.fast_selection:
             self.plan.update(fast_policy='m3_service_ledger_fast_advance_v4' if self.fast_advance else 'm3_full_fast_execution_window_v3',
                 fast_full_only=self.fast_full_only,
@@ -456,6 +464,11 @@ class DeadlineRuntime:
                 raise RuntimeError('Frequency must stay high during Full inference')
             return decision
         if self.recovering_plan is not None:
+            if (getattr(self,'key_phase_guard',False)
+                    and self.recovering_plan.get('m3_fast_formula',{}).get('mode')=='Fast'
+                    and decision.get('m3_fast_formula',{}).get('candidates',[{},{}])[1].get('key_phase_gate',{}).get('allowed') is False):
+                self.recovering_plan=None
+                return dict(decision,start_now=False,clock_wait=True)
             if self.clocks.profile=='baseline' and self.clocks.pending is None:
                 self.plan = dict(self.recovering_plan,start_now=True,wait_seconds=0.,inflight=False)
                 return self.plan

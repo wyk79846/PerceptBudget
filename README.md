@@ -6,7 +6,7 @@ Fast恢复为外部64＋腕部256视觉token、不带state；Full保持512＋sta
 python scripts/eval_expert_recompute.py --mixed-pooled-alternation --fast-no-state --cross-suite --dry-run
 ```
 
-动态调度候选：`scripts/run_m4_ssh.sh --candidate m3_fast --fast-advance`，附原有baseline-run等参数；不要加`--fast-selective416`。当前先依据[PACE论文](../任务指导与相关参考/PACE_2606.00537v3.pdf)核查关键阶段，不自动启动上述测试。
+动态调度候选：`scripts/run_m4_ssh.sh --candidate m3_fast --fast-advance`，附原有baseline-run等参数；不要加`--fast-selective416`。新增`--fast-key-phases`实验开关，仅限制Fast准入，尚待Long6单次闭环；不新增刷新触发。依据[PACE论文](../任务指导与相关参考/PACE_2606.00537v3.pdf)核查关键阶段，不自动启动上述测试。
 
 具体下一步见[关键阶段改进](docs/KEY_PHASE_NEXT.md)。以下为项目与历史阶段说明，新工作以本节为准。
 
