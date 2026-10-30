@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--source-run',type=Path,required=True)
     parser.add_argument('--observation-step',type=int,default=64)
     parser.add_argument('--selective416',action='store_true',help='Test production selective416 frontend with state')
+    parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     args=parser.parse_args()
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
@@ -78,6 +79,12 @@ def main():
             adapter.bootstrap(snapshot,task['instruction'],{})
             noise=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
             previous=torch.tensor(solver['previous_raw'],device='cuda',dtype=torch.float32)
+            if args.resident_check:
+                if not args.selective416:raise ValueError('Resident check requires selective416')
+                full_valid=512+model._pipe.current_prompt_len
+                adapter._dual_bank_preparing=True
+                try:adapter.prepare_step_bank([full_valid,full_valid-96])
+                finally:adapter._dual_bank_preparing=False
             outputs={}
             conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.selective416 else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
             for name,frontend,state in conditions:
@@ -111,6 +118,15 @@ def main():
                     next10_executable_arm6_rmse=float(np.sqrt(np.mean(diff[start:start+10,:6]**2))),
                     action7_max_abs=float(np.max(np.abs(diff))))
                 result['cases'][name]['vs_recorded_raw_max_abs']=float(np.max(np.abs(out-np.asarray(r['actions_raw']))))
+                if args.resident_check:
+                    bound,graph=adapter.step_bank.select(valid)
+                    if graph is None:raise ValueError('Missing resident graph')
+                    bound.refresh_context(pl.attn.enc_K,pl.attn.enc_V,valid)
+                    graph_raw,_=graph.replay(noise,previous,solver['delay'],solver['executed'])
+                    graph_out=graph_raw.detach().cpu().numpy().copy()
+                    result['cases'][name]['resident_vs_reference_max_abs']=float(np.max(np.abs(graph_out-out)))
+                    result['cases'][name]['resident_vs_recorded_max_abs']=float(np.max(np.abs(graph_out-np.asarray(r['actions_raw']))))
+                    if result['cases'][name]['resident_vs_reference_max_abs']>1e-4:raise ValueError('Resident graph differs from reference on real input')
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
             result['factorial_pairs']={}
             for a,b in ([('Full','Fast_state')] if args.selective416 else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]):
