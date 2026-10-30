@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
+    parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
@@ -27,6 +28,7 @@ def main():
     if args.first_tasks!=12 and args.acceptance_group!='m3':parser.error('Three-task screen is for the M3 candidate')
     if args.task_indices and (args.acceptance_group!='m3' or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
+    if args.m3_eta_ms!=25 and args.acceptance_group!='m3':parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['experimental_setup_reuse']=args.reuse_preparation
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
@@ -52,6 +54,8 @@ def main():
         if args.acceptance_group=='m3':
             from perceptbudget.m4_acceptance import configure_m3
             configure_m3(cfg,settings)
+            settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
+            cfg['m3_replay_eta_ms']=args.m3_eta_ms
             settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
             cfg['m3_comparison_tasks']=settings['calibration_tasks']
     continuation=None
@@ -63,10 +67,10 @@ def main():
     pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
     if args.dry_run:
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='pool2_agent_no_state' if cfg['m4_enabled'] else 'disabled',
-            eta_ms=None if args.acceptance_group=='q30' else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
+            eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group=='m3' else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, eta25ms' if args.acceptance_group=='m3' else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group=='m3' else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -109,6 +113,7 @@ def main():
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);clock_preflight(run)
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
+            if args.acceptance_group=='m3':command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
@@ -119,6 +124,7 @@ def main():
             if args.acceptance_group:
                 preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
+                if args.acceptance_group=='m3':preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
                 if args.reuse_preparation:preparation.append('--reuse-preparation')
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])

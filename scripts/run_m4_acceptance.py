@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
+    parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
@@ -48,6 +49,7 @@ def main():
         parser.error('Three-task screen requires --candidate m3 and --baseline-run')
     if args.task_indices and (args.candidate!='m3' or not args.baseline_run or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3, saved baseline, default first-tasks and unique indices')
+    if args.m3_eta_ms!=25 and args.candidate!='m3':parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
     task_plan=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
     continuation=None
@@ -61,7 +63,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
-            model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else 'original_m3_D_joint_eta25',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
+            model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'original_m3_D_joint_eta{args.m3_eta_ms}',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed,m4_comparison_tasks=task_plan),'M4','paired-acceptance',repo_root=ROOT)
@@ -76,6 +78,7 @@ def main():
             print('START '+group+' log='+str(log),flush=True)
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
+            if group=='m3':command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
