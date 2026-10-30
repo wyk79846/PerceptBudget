@@ -36,7 +36,7 @@ def audit_service_formula(formula,decision,costs,previous_mode):
     period=decision['estimated_control_period_seconds'];profile=decision['current_profile']
     cap=formula.get('latest_start_cap');rows=formula['candidates']
     test(len(rows)==2 and [r['mode'] for r in rows]==['Full','Fast'],'candidate_set')
-    require_full=not formula['observation_step'] or decision.get('fast_full_only',False) or decision['reason']=='action_event'
+    require_full=not formula['observation_step'] or decision.get('fast_full_only',False) or decision['reason']=='action_event' or decision.get('fast_gripper_gate',{}).get('allowed') is False
     for r in rows:
         mode=r['mode'];entry='gpu_emc' if mode=='Fast' else profile
         cell=max((c for c in costs['service'][mode].values() if c['from_profile']==entry),key=lambda c:c['energy_j'])
@@ -362,6 +362,13 @@ def audit(run):
                         originals=[e for e in events if e['event']=='m3_decision'
                                    and e.get('decision_monotonic')==d['decision_monotonic']]
                         original_step=min(e['step'] for e in originals)
+                        if cfg.get('m3_fast_gripper_gate'):
+                            threshold=cfg['m3_events'].get('gripper_threshold',.2)
+                            prior=[x for x in events if x.get('event')=='control_step' and x['step']<original_step and x.get('source') is not None and abs(x['action'][6])>=threshold]
+                            last=max(prior,key=lambda x:x['step']) if prior else None
+                            state='unknown' if last is None else 'closed' if last['action'][6]>0 else 'open'
+                            expected_gate=dict(state=state,allowed=state=='open',last_command_step=None if last is None else last['step'],last_command=None if last is None else float(last['action'][6]),threshold=threshold)
+                            check('fast_gripper_gate_from_executed_commands',d.get('fast_gripper_gate')==expected_gate,pid)
                         now=d['decision_monotonic'];period=d['estimated_control_period_seconds']
                         limits=[(now+d['admitted_remaining_actions']*period,'buffer')]
                         signals=[(now+(d[key]-original_step)*period,reason)
