@@ -4,6 +4,7 @@ import gc
 import json
 import math
 import os
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -328,9 +329,17 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if cleanup_gate:
         record['render_buffer_cleanup'] = install_render_buffer_cleanup(
             shared_egl=gate_record.get('candidate') == 'hard_reset_shared_egl')
+    setup_started=time.monotonic()
+    def stage_progress(stage):
+        row=dict(stage=stage,elapsed_seconds=round(time.monotonic()-setup_started,3))
+        record.setdefault('stage_timings',[]).append(row)
+        print('resident_stage='+json.dumps(row),flush=True)
+        save()
     def mem(stage):
         cleanup(torch)
         value = memory_record(torch, stage)
+        value['elapsed_seconds']=time.monotonic()-setup_started
+        print('resident_stage='+json.dumps(dict(stage=stage,elapsed_seconds=round(value['elapsed_seconds'],3))),flush=True)
         record['memory'].append(value)
         save()
         if value['available_mib'] < 900:
@@ -385,10 +394,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 task = base._load_tasks([tid], [suite])[0]
                 env = base._make_env(env_class, task)
                 env._pb_lock_fixtures = True
+                stage_progress('environment_created')
                 observation, calibration = calibrate(env, task, np)
+                stage_progress('environment_calibrated')
                 prepared_start=(dict(observation=observation,physics=env.env.sim.get_state().flatten().copy(),
                                      suite=task['suite'],task_id=task['task_id'])
-                    if cfg.get('m4_acceptance_group')=='joint' else None)
+                    if cfg.get('m4_acceptance_group') in ('joint','m3') else None)
                 current_view = 'full' if dvac_paired else views[0]
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)
@@ -435,6 +446,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 adapter.config = cfg
                 if cfg.get('m4_enabled'):
                     adapter.select_next_mode('Full')
+                stage_progress('model_ready')
                 first = {}
                 adapter.bootstrap(prepared, task['instruction'], first)
                 num_views = 2 if kind == 'full' else 1
@@ -455,10 +467,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     record.setdefault('visual_prefix_coverage', []).append(dict(suite=suite,task_id=tid,**coverage))
                 cfg['source_step_prefixes'] = lengths
                 graph = adapter.prepare_step_bank(lengths, progress=lambda r: mem('prefix_'+str(r['valid'])))
+                stage_progress('graph_bank_ready')
                 record['graph_audits'].append(dict(suite=suite, task_id=tid, **graph))
                 previous = np.asarray(first['actions_raw'], dtype=np.float32)[5:]
                 timing = timed(torch, lambda: adapter.predict(prepared, task['instruction'], previous,
                                        delay=5, executed=5, request={}), count=3)
+                stage_progress('inference_calibrated')
                 cfg['rtc_initial_delay_steps'] = math.ceil(timing['median_ms']/1000/calibration['median_seconds'])
                 if split_delay_comparison:
                     adapter.bootstrap(prepared,task['instruction'],{})

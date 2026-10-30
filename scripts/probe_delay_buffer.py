@@ -287,8 +287,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     if prepared_start is None:
         observation, hz = base._prepare_env_episode(env, task, np)
     else:
-        if config.get('m4_acceptance_group')!='joint' or not config.get('m4_reuse_calibrated_start'):
-            raise ValueError('Prepared start is restricted to explicit M4 joint acceptance')
+        if config.get('m4_acceptance_group') not in ('joint','m3') or not config.get('m4_reuse_calibrated_start'):
+            raise ValueError('Prepared start is restricted to explicit M3/M4 acceptance')
         from perceptbudget.m4_acceptance import calibrated_start
         observation,hz=calibrated_start(env,task,prepared_start,np)
     assert hz == 20
