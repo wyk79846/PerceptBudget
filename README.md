@@ -138,3 +138,5 @@ M4中断续测：`run_m4_acceptance.py --baseline-run <已完成q30组> --resume
 SSH断开后继续M4测试：先`tmux new -s pb-m4-v2`，在会话内运行`bash scripts/run_m4_ssh.sh --baseline-run <已完成q30组>`。脚本只在tmux普通用户终端下运行；sudo交互授权一次并每60秒续期，退出后结束续期，不改sudoers。按Ctrl+B再D离开；`tmux attach -t pb-m4-v2`返回。总日志在启动时打印的/tmp/perceptbudget-m4-ssh-时间.log，各回合记录仍在M4输出目录。已改变策略的v2需新跑joint12，不能resume旧策略回合。
 
 M3同12任务对照：在tmux中执行`bash scripts/run_m4_ssh.sh --candidate m3 --baseline-run <已完成q30组>`。复用验收与SSH入口，实际关闭m4_enabled、调用原DeadlineRuntime及D_joint规则，只使用Full/Continue，Full计算高频、Continue可低频；机制一原阈值、H50/N5/state200/RTC不变，余量采用M3阶段报告已选定25ms。12回合/一次加载，结果以m3标签与q30比较，产物集中在M4验收目录以便同任务对照；不改归档的M3报告、m3.json默认50ms或FlashRT。
+
+M3先看前三个任务：上述SSH命令追加`--first-tasks 3`，只预检/执行Spatial task0/3/6，复用q30同三任务并生成配对表；不重测q30，不自动扩为12。

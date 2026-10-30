@@ -38,10 +38,14 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
     parser.add_argument('--candidate',choices=('joint','m3'),default='joint',help='Compare original M3 or current M4 against the same q30 tasks')
+    parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if args.first_tasks!=12 and (args.candidate!='m3' or not args.baseline_run):
+        parser.error('Three-task screen requires --candidate m3 and --baseline-run')
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
+    task_plan=fixed['tasks'][:args.first_tasks]
     continuation=None
     if args.resume_joint:
         if args.candidate!='joint':parser.error('--resume-joint is only for the joint candidate')
@@ -51,12 +55,12 @@ def main():
     if args.baseline_run:validate_baseline(args.baseline_run,fixed)
     groups=[args.candidate] if args.baseline_run else ['q30',args.candidate]
     if args.dry_run:
-        print(json.dumps(dict(manifest=fixed,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else 12*len(groups)),
+        print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
             model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else 'original_m3_D_joint_eta25',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
-    session=create_run(dict(cfg,m4_acceptance_manifest=fixed),'M4','paired-acceptance',repo_root=ROOT)
+    session=create_run(dict(cfg,m4_acceptance_manifest=fixed,m4_comparison_tasks=task_plan),'M4','paired-acceptance',repo_root=ROOT)
     print('session_dir='+str(session),flush=True)
     _write_json_atomically(session/'fixed_manifest.json',fixed)
     sources={'q30':str(args.baseline_run.resolve())} if args.baseline_run else {}
@@ -67,7 +71,7 @@ def main():
             index=session/(group+'_index.json');log=session/(group+'.log')
             print('START '+group+' log='+str(log),flush=True)
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
-                '--acceptance-group',group,'--result-index',str(index)]
+                '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:
                 code=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT).returncode
@@ -76,7 +80,7 @@ def main():
             if code:raise RuntimeError(group+' failed; inspect '+str(log)+'; completed episodes remain saved')
             if group=='q30':validate_baseline(sources[group],fixed)
             print('DONE '+group+' run='+sources[group],flush=True)
-        result=summarize(session,sources)
+        result=summarize(session,sources,task_plan=task_plan)
         _write_json_atomically(session/'summary.json',result)
         print('M4_ACCEPTANCE_STATUS=completed',flush=True)
     except BaseException as exc:

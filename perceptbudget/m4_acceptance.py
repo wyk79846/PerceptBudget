@@ -171,7 +171,7 @@ def clock_audit(run):
                 compute_windows=checks, restored='RESTORED' in lines)
 
 
-def summarize(directory, sources):
+def summarize(directory, sources, *, task_plan=None):
     """Keep failures; compare energy savings only for paired successful tasks."""
     import numpy as np
     from perceptbudget.experiment import _write_json_atomically
@@ -180,12 +180,20 @@ def summarize(directory, sources):
         raise ValueError('Require q30 and one complete candidate group')
     candidate='m3' if 'm3' in sources else 'joint'
     comparison_groups=('q30',candidate)
+    expected={tuple(t) for t in task_plan} if task_plan is not None else None
+    if expected is not None and (not expected or len(expected)!=len(task_plan)):
+        raise ValueError('Require distinct comparison tasks')
     rows, cases = [], {}
     for group, source in sources.items():
         record = json.loads((Path(source)/'summary.json').read_text())
         if record['status'] != 'completed':
             raise ValueError('Incomplete group: '+group)
+        if group==candidate and expected is not None and (
+                {(r['suite'],r['task_id']) for r in record['episodes']}!=expected
+                or len(record['episodes'])!=len(expected)):
+            raise ValueError('Candidate task list does not match the explicit comparison plan')
         for row in record['episodes']:
+            if expected is not None and (row['suite'],row['task_id']) not in expected:continue
             run = Path(row['run'])
             data = json.loads((run/'summary.json').read_text())['episode']
             requests = json.loads(request_path(run).read_text())

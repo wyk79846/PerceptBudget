@@ -73,6 +73,15 @@ def test_report_reads_actual_q_and_does_not_call_failure_energy_savings(tmp_path
     assert pair['initial_raw_max_abs']>0
     assert not pair['both_success'] and pair['energy_saving_percent'] is None
     assert len(result['rows'])==2 and (out/'comparison.csv').exists()
+    baseline_file=sources['q30']/'summary.json'
+    baseline=json.loads(baseline_file.read_text())
+    baseline['episodes'].append(dict(baseline['episodes'][0],suite='libero_object',run='/excluded-baseline-task'))
+    baseline_file.write_text(json.dumps(baseline))
+    subset=tmp_path/'subset';subset.mkdir()
+    screened=summarize(subset,sources,task_plan=[['libero_spatial',0]])
+    assert len(screened['rows'])==2 and len(screened['pairs'])==1
+    with pytest.raises(ValueError,match='task list'):
+        summarize(subset,sources,task_plan=[['libero_spatial',3]])
 
 
 def test_m3_comparator_uses_original_d_joint_with_no_m4_or_fast():
