@@ -208,6 +208,7 @@ class DeadlineRuntime:
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
+        self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -407,6 +408,7 @@ class DeadlineRuntime:
                          candidate_event_kinds=critical_kinds)
         if self.fast_selection:
             self.plan.update(fast_policy='m3_full_fast_execution_window_v3',
+                fast_full_only=self.fast_full_only,
                 fast_execution_window=fast_window,fast_ignored_events=ignored_events)
         self.plan.update(rtc_delay_steps=rtc_delay_steps,rtc_latest_submit_step=rtc_latest_submit,
                          rtc_submit_guard_steps=rtc_guard_steps,start_constraint='service_deadline')

@@ -44,7 +44,7 @@ def audit_fast_formula(formula, decision, costs, previous_mode):
     # decision stores the chunk's current observation step through the caller.
     step=formula['observation_step']
     critical_time=now+(critical-step)*decision['estimated_control_period_seconds'] if critical is not None else None
-    require_full=(not step or decision['reason']=='action_event' or critical_time is not None and critical_time<=end+1e-9)
+    require_full=(decision.get('fast_full_only',False) or not step or decision['reason']=='action_event' or critical_time is not None and critical_time<=end+1e-9)
     for r in rows:
         mode=r['mode'];entry=[c for c in costs['service'][mode].values() if c['from_profile']==profile]
         cell=max(entry,key=lambda c:c['energy_j'])
@@ -178,6 +178,7 @@ def audit(run):
                     if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3'):
                         formula=decision['m3_fast_formula']
                         if cfg.get('m3_fast_policy')=='m3_full_fast_execution_window_v3':
+                            check('full_only_flag_bound_to_config',decision.get('fast_full_only',False)==bool(cfg.get('m3_fast_full_only',False)),pid)
                             window=decision['fast_execution_window']
                             check('fast_window_belongs_to_current_chunk',previous is not None and window['prediction_id']==previous['prediction_id'],pid)
                             expected_end=window['start_step']+math.ceil((window['full_recovery_seconds']+window['margin_seconds'])/window['period_seconds']-1e-9)

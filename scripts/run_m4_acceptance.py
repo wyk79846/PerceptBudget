@@ -45,8 +45,10 @@ def main():
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse an already passed, identical task environment preflight')
+    parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if args.full_only and args.candidate!='m3_fast':parser.error('--full-only requires m3_fast')
     if args.first_tasks!=12 and (args.candidate not in ('m3','m3_fast') or not args.baseline_run):
         parser.error('Three-task screen requires --candidate m3 and --baseline-run')
     if args.task_indices and (args.candidate not in ('m3','m3_fast') or not args.baseline_run or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
@@ -68,7 +70,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
-            model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
+            full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed,m4_comparison_tasks=task_plan),'M4','paired-acceptance',repo_root=ROOT)
@@ -84,6 +86,7 @@ def main():
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
             if group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
+            if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])

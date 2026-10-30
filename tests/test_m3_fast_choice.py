@@ -84,3 +84,10 @@ def test_independent_audit_rejects_forged_energy_or_selected_budget():
     assert 'absolute_energy_once' in audit_fast_formula(changed,applied,c,'Full')
     applied['service_seconds']+=.1
     assert 'selected_budget_applied' in audit_fast_formula(result,applied,c,'Full')
+
+
+def test_full_only_ablation_filters_fast_before_timing_selection():
+    result=choose(decision(fast_full_only=True))
+    assert result['mode']=='Full'
+    assert result['candidates'][1]['quality_allowed'] is False
+    assert result['selected']['service_seconds']==2.

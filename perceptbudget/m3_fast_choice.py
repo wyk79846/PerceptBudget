@@ -39,7 +39,7 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
     critical=decision.get('critical_step')
     critical_deadline=(now+(critical-observation_step)*decision['estimated_control_period_seconds']
                        if critical is not None else None)
-    requires_full=(observation_step==0 or decision['reason']=='action_event'
+    requires_full=(decision.get('fast_full_only',False) or observation_step==0 or decision['reason']=='action_event'
                    or critical_deadline is not None and critical_deadline<=deadline+1e-9)
     proposals=[]
     for mode in ('Full','Fast'):
@@ -61,7 +61,7 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
         wait_energy=hold_energy(cost_model['waits'],profile,quiet_age_seconds,before)
         tail_energy=hold_energy(cost_model['waits'],'baseline',0.,after)
         proposals.append(dict(mode=mode,quality_allowed=quality,feasible=feasible,
-            quality_reason='full_required_by_event' if requires_full else 'validated_single_fast_then_full',
+            quality_reason=('full_only_ablation' if decision.get('fast_full_only',False) else 'full_required_by_event' if requires_full else 'validated_single_fast_then_full'),
             service_seconds=q,mean_service_seconds=mean,latest_start=latest,
             formula_latest_start=raw_latest,prepare_start=start,window_end=deadline,
             wait_seconds=before,tail_seconds=after,wait_energy_j=wait_energy,

@@ -20,12 +20,14 @@ def main():
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
+    parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.full_only and args.acceptance_group!='m3_fast':parser.error('--full-only requires m3_fast')
     if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Three-task screen is for the M3 candidate')
     if args.task_indices and (args.acceptance_group not in ('m3','m3_fast') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
@@ -55,6 +57,7 @@ def main():
         if args.acceptance_group in ('m3','m3_fast'):
             from perceptbudget.m4_acceptance import configure_m3,configure_m3_fast
             (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
+            cfg['m3_fast_full_only']=args.full_only
             settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
             cfg['m3_replay_eta_ms']=args.m3_eta_ms
             settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
@@ -71,7 +74,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -122,6 +125,7 @@ def main():
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
             if args.acceptance_group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
+            if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
