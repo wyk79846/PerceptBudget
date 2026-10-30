@@ -26,6 +26,13 @@ def decode_raw(raw,stats,profile=None):
     return x[...,:7]
 
 
+def phase_completion_matches(request,commit):
+    if request.get('m3_fast_choice',{}).get('mode')!='Full':return False
+    done=request.get('m3_timing',{}).get('key_phase_response_completed')
+    if commit is None:return done is None  # terminal drain, not a fulfilled response
+    return done==dict(prediction_id=request['prediction_id'],commit_step=commit['commit_step'],commit_monotonic=commit['commit_monotonic'])
+
+
 def audit_service_formula(formula,decision,costs,previous_mode):
     """Independent V4 reconstruction; Continue is not inference energy."""
     errors=[]
@@ -36,7 +43,7 @@ def audit_service_formula(formula,decision,costs,previous_mode):
     period=decision['estimated_control_period_seconds'];profile=decision['current_profile']
     cap=formula.get('latest_start_cap');rows=formula['candidates']
     test(len(rows)==2 and [r['mode'] for r in rows]==['Full','Fast'],'candidate_set')
-    require_full=not formula['observation_step'] or decision.get('fast_full_only',False) or decision['reason']=='action_event'
+    require_full=not formula['observation_step'] or decision.get('fast_full_only',False) or decision['reason'] in ('action_event','key_phase')
     for r in rows:
         mode=r['mode'];entry='gpu_emc' if mode=='Fast' else profile
         cell=max((c for c in costs['service'][mode].values() if c['from_profile']==entry),key=lambda c:c['energy_j'])
@@ -277,6 +284,17 @@ def audit(run):
                             check('key_phases_bound_to_active_chunk',guard.get('prediction_id')==previous['prediction_id']
                                   and guard.get('intervals')==expected
                                   and guard.get('horizon')==cfg['m3_timing']['maximum_action_offset'],pid)
+                        if cfg.get('m3_key_phase_response_policy')=='full_once_v1':
+                            check('key_phase_response_policy',decision.get('key_phase_response_policy')=='full_once_v1',pid)
+                            phases=decision.get('fast_phase_guard',{}).get('intervals',[])
+                            remaining=[p for p in phases if p['stop_step']>formula['observation_step']] if previous_mode=='Fast' else []
+                            expected_response=None
+                            if remaining:
+                                p=min(remaining,key=lambda p:(p['start_step'],p['stop_step']))
+                                expected_response=dict(prediction_id=previous['prediction_id'],start_step=p['start_step'],stop_step=p['stop_step'],target_step=max(formula['observation_step'],p['start_step']),state='active' if p['start_step']<=formula['observation_step'] else 'upcoming')
+                            check('key_phase_response_from_active_fast',decision.get('key_phase_response')==expected_response,pid)
+                            if expected_response:
+                                check('key_phase_response_completion_or_terminal_drain',phase_completion_matches(request,committed.get(pid)),pid)
                         errors=audit_fast_formula(formula,decision,cfg['m3_fast_cost_model'],previous_mode)
                         probability=cfg['m3_timing']['service_quantile']
                         if decision.get('fast_reserve_full',False):
@@ -405,6 +423,9 @@ def audit(run):
                             limits.append(min(x for x in signals if x[0]==boundary))
                         if age_limit is not None:
                             limits.append((old['observation_monotonic']+age_limit,'observation_age'))
+                        if d.get('key_phase_response'):
+                            target=d['key_phase_response']['target_step']
+                            limits.append((now+(target-original_step)*period,'key_phase'))
                         expected_deadline,expected_reason=min(limits)
                         check('m3_signal_deadline_and_hard_bounds',
                               abs(d['deadline']-expected_deadline)<1e-8 and d['reason']==expected_reason,pid)

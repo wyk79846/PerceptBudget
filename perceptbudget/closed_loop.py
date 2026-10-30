@@ -212,6 +212,8 @@ class DeadlineRuntime:
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
         self.fast_advance=bool(config.get('m3_fast_advance',False))
         self.key_phase_guard=bool(config.get('m3_fast_key_phases',False))
+        self.key_phase_response_policy=config.get('m3_key_phase_response_policy')
+        self.key_phase_response_enabled=self.key_phase_guard and self.key_phase_response_policy=='full_once_v1'
         if self.key_phase_guard and not self.fast_advance:raise ValueError('Key phases require V4 Fast policy')
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
@@ -289,7 +291,8 @@ class DeadlineRuntime:
         if self.fast_selection:
             self.fast_last_mode=request['m3_fast_choice']['mode']
             self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
-        self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
+        self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'],
+            context_mode=request.get('m3_fast_choice',{}).get('mode','Full'))
         if getattr(self,'key_phase_guard',False):
             from perceptbudget.key_phases import absolute_intervals
             self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
@@ -313,6 +316,8 @@ class DeadlineRuntime:
             self.open_probe_applied={k:plan[k] for k in ('prediction_id','commit_step','target_step','kind')}
         timing = request.get('m3_timing')
         if timing:
+            if timing.get('key_phase_response') and request.get('m3_fast_choice',{}).get('mode')=='Full':
+                timing['key_phase_response_completed']=dict(prediction_id=pid,commit_step=commit['commit_step'],commit_monotonic=commit['commit_monotonic'])
             service_start = timing.get('service_start_monotonic',request['observation_monotonic'])
             actual = commit['commit_monotonic']-service_start
             timing['actual_service_seconds'] = actual
@@ -391,12 +396,17 @@ class DeadlineRuntime:
         recovery = self.clocks is not None and (self.clocks.profile!='baseline' or self.clocks.pending is not None)
         age_limit=self.settings['maximum_observation_age_seconds']
         budget_history='recovery' if recovery and self.dvfs_policy=='joint' else 'hot'
+        phase_response=None
+        if getattr(self,'key_phase_response_enabled',False) and current is not None:
+            from perceptbudget.key_phases import full_response
+            phase_response=full_response(current.get('key_phases',[]),step=step,
+                prediction_id=item[1],mode=current.get('context_mode',self.fast_last_mode))
         plan = timing_plan(now=now,step=step,buffer_end_step=end,period=period,
             critical_step=critical,
             dvac_step=current.get('dvac_step') if current else None,
             observation_deadline=current['observation']+age_limit if current and age_limit is not None else None,
             service_seconds=self.times.estimate(budget_history),margin_seconds=self.margin.seconds,
-            signal_policy=self.signal_policy)
+            signal_policy=self.signal_policy,key_phase_step=phase_response['target_step'] if phase_response else None)
         rtc_latest_submit=None
         rtc_guard_steps=None
         rtc_latest_start=None
@@ -424,6 +434,8 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
+        if getattr(self,'key_phase_response_enabled',False):
+            self.plan.update(key_phase_response_policy=self.key_phase_response_policy,key_phase_response=phase_response)
         if getattr(self,'key_phase_guard',False) and current is not None:
             self.plan['fast_phase_guard']=dict(prediction_id=item[1],horizon=self.settings['maximum_action_offset'],
                 intervals=current.get('key_phases',[]))

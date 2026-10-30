@@ -1,7 +1,7 @@
 """Engineering PACE-inspired phase hints from decoded commands, not true speed.
 
 Only pronounced low regions associated with a predicted gripper/turn event
-become protected intervals. This is not an additional refresh trigger.
+become protected intervals. Active Fast chunks can request one Full response.
 """
 import math
 from statistics import median
@@ -60,3 +60,13 @@ def coverage(phases,*,step,now,latest_start,period,horizon,prediction_id):
     overlaps=[p for p in phases if p['start_step']<stop and begin<p['stop_step']]
     return dict(prediction_id=prediction_id,start_step=begin,stop_step=stop,allowed=not overlaps,
                 overlaps=overlaps,scope='forecast request through maximum action coverage; includes perception/inflight; future chunk unknown')
+
+
+def full_response(phases,*,step,prediction_id,mode):
+    """Only an active Fast chunk can create a one-Full response obligation."""
+    if mode!='Fast':return None
+    pending=[p for p in phases if p['stop_step']>step]
+    if not pending:return None
+    phase=min(pending,key=lambda p:(p['start_step'],p['stop_step']))
+    return dict(prediction_id=prediction_id,start_step=phase['start_step'],stop_step=phase['stop_step'],
+                target_step=max(step,phase['start_step']),state='active' if phase['start_step']<=step else 'upcoming')

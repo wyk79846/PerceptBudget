@@ -64,7 +64,7 @@ class TimingPlan:
 
 def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
                 margin_seconds=.05, critical_step=None, observation_deadline=None, dvac_step=None,
-                signal_policy='earliest'):
+                signal_policy='earliest',key_phase_step=None):
     """buffer_end_step is the caller's admitted exclusive end, not raw H.
 
     All deadlines use monotonic wall time. service_seconds already includes
@@ -92,6 +92,10 @@ def timing_plan(*, now, step, buffer_end_step, period, service_seconds,
         selected=(min if signal_policy=='earliest' else max)(t for t,_ in signals)
         # Preserve the original tie break, including event-coverage bookkeeping.
         limits.append(min(s for s in signals if s[0]==selected))
+    if key_phase_step is not None:
+        if type(key_phase_step) is not int or key_phase_step<step:
+            raise ValueError('Key phase boundary must be current or future')
+        limits.append((now+(key_phase_step-step)*period,'key_phase'))
     if observation_deadline is not None:
         if not math.isfinite(observation_deadline):
             raise ValueError('Observation deadline must be finite')

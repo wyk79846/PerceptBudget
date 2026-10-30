@@ -19,7 +19,7 @@ def choose_service(decision, *, observation_step, previous_mode, cost_model,
         raise ValueError('Unknown device state or previous service')
     if not all(math.isfinite(v) for v in (now,deadline,eta,period,quiet_age_seconds)) or period<=0 or min(eta,quiet_age_seconds)<0:
         raise ValueError('Invalid scheduling inputs')
-    require_full=bool(observation_step==0 or decision.get('fast_full_only') or decision['reason']=='action_event')
+    require_full=bool(observation_step==0 or decision.get('fast_full_only') or decision['reason'] in ('action_event','key_phase'))
     candidates=[]
     for mode in ('Full','Fast'):
         entry_state='gpu_emc' if mode=='Fast' else profile

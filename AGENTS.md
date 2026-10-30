@@ -1,4 +1,4 @@
-> 2026-10-31 当前：320 Fast（无state）已恢复；新增实验开关`--fast-key-phases`（配合`--candidate m3_fast --fast-advance`）。只改Fast准入，不新增刷新触发，不改RTC/调频；每chunk按运动峰谷和夹爪/转向确认关键区间，检查预计感知及执行覆盖是否相交。81项相关测试通过、旧日志离线完成，未新GPU闭环。先Long6一次，不扩12。416、30步限制、持续闭爪禁Fast均非当前候选。详见docs/KEY_PHASE_NEXT.md。
+> 2026-10-31 当前：320无state Fast，`--fast-key-phases`已补Full响应，版本`m3_key_phase_response_policy=full_once_v1`。当前Fast新预测若含未结束关键区间，未来边界按完整服务预算提前Full，已进入则立即请求；Full提交后不重复响应同一阶段。147项相关测试及真实110步调度重放通过，GPU闭环待原指令重测。旧无版本标记的准入实验仍可审计，416/30步/闭爪门槛不启用。见docs/KEY_PHASE_NEXT.md。
 
 # 项目协作与当前状态
 
