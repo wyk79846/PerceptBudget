@@ -211,9 +211,6 @@ class DeadlineRuntime:
         self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
         self.fast_advance=bool(config.get('m3_fast_advance',False))
-        self.fast_gripper_gate=bool(config.get('m3_fast_gripper_gate',False))
-        if self.fast_gripper_gate and not self.fast_advance:
-            raise ValueError('Gripper gate requires V4 Fast advance policy')
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -413,9 +410,6 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
-        if getattr(self,'fast_gripper_gate',False):
-            from perceptbudget.fast_gripper_gate import command_state
-            self.plan['fast_gripper_gate']=command_state(rows,self.events_config.gripper_threshold)
         if self.fast_selection:
             self.plan.update(fast_policy='m3_service_ledger_fast_advance_v4' if self.fast_advance else 'm3_full_fast_execution_window_v3',
                 fast_full_only=self.fast_full_only,
@@ -453,10 +447,6 @@ class DeadlineRuntime:
                 raise RuntimeError('Frequency must stay high during Full inference')
             return decision
         if self.recovering_plan is not None:
-            if (self.recovering_plan.get('m3_fast_formula',{}).get('mode')=='Fast'
-                    and decision.get('fast_gripper_gate',{}).get('allowed') is False):
-                self.recovering_plan=None
-                return dict(decision,start_now=False,clock_wait=True)
             if self.clocks.profile=='baseline' and self.clocks.pending is None:
                 self.plan = dict(self.recovering_plan,start_now=True,wait_seconds=0.,inflight=False)
                 return self.plan
