@@ -15,8 +15,9 @@ def compact(vision, merged_blocks):
     unit=torch.nn.functional.normalize(blocks,dim=-1,eps=1e-8)
     dispersion=(unit-unit.mean(dim=1,keepdim=True)).square().sum(dim=-1).mean(dim=1)
     order=torch.argsort(dispersion,stable=True)
-    selected=torch.zeros(64,device=x.device,dtype=torch.bool)
-    selected[order[:merged_blocks]]=True
+    # Inverse permutation avoids scalar indexed assignment, which is not
+    # CUDA-graph capturable on this device/PyTorch build.
+    selected=torch.argsort(order)<merged_blocks
     # Match native pooling's FP32 addition order and one BF16 cast.
     means=((blocks[:,0]+blocks[:,1]+blocks[:,2]+blocks[:,3])/4).to(vision.dtype)
     index=torch.arange(256,device=x.device)

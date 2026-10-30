@@ -76,6 +76,9 @@ def main():
                 pl.transformer_encoder(stream=pipe._graph_torch_stream.cuda_stream)
             for count in [512,416,320]:
                 geometry(count)
+                if count!=512:
+                    pl._gemms_autotuned=False
+                    pl.autotune_gemms()
                 encoders[count]=capture_graph(pl,pl._graph_stream,encode)
             geometry(512);pl.bufs['vision_x_pooled']=original_buffer
             release_unused_native_expert(model,torch)
@@ -86,6 +89,20 @@ def main():
             z=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
             prev=torch.tensor(solver['previous_raw'],device='cuda',dtype=torch.float32)
             outputs={};timings={c:[] for c in encoders};masks={}
+            # Capture the selector only, keeping real input dynamic. This removes
+            # Python dispatch of its many small kernels, not its GPU computation.
+            selector_graphs={};selector_outputs={}
+            with torch.cuda.stream(pipe._graph_torch_stream):
+                copy(raw_features.data_ptr(),pl.bufs['vision_x'].ptr.value,512*1152*2)
+                for count in [416,320]:
+                    for _ in range(3):compact(raw_features,(512-count)//3)
+                    pipe._graph_torch_stream.synchronize()
+                    graph=torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph,stream=pipe._graph_torch_stream):
+                        tokens,mask=compact(raw_features,(512-count)//3)
+                    selector_graphs[count]=graph;selector_outputs[count]=(tokens,mask)
+            result['selector_backend']='torch_cuda_graph_fixed_output_size'
+            result['encoder_shapes_autotuned']=[512,416,320]
             def context(count):
                 geometry(count);pl.bufs['vision_x_pooled']=packed
                 vision_graph.replay(pl._graph_stream)
@@ -94,7 +111,8 @@ def main():
                         copy(packed.ptr.value,pl.bufs['vision_x'].ptr.value,512*1152*2)
                     else:
                         copy(raw_features.data_ptr(),pl.bufs['vision_x'].ptr.value,512*1152*2)
-                        tokens,mask=compact(raw_features,(512-count)//3)
+                        selector_graphs[count].replay()
+                        tokens,mask=selector_outputs[count]
                         copy(packed.ptr.value,tokens.data_ptr(),count*1152*2)
                         masks[count]=mask
                     encoders[count].replay(pl._graph_stream)
@@ -152,8 +170,9 @@ def main():
         if pl is not None:
             pl.vision_seq_enc=512;pl.encoder_seq_len=512+pl.max_prompt_len;pl.total_kv=pl.encoder_seq_len+cfg['H']
             if 'original_buffer' in locals():pl.bufs['vision_x_pooled']=original_buffer
+        save()
         if adapter is not None:adapter.release_graph()
-        save();print('SELECTIVE_POOL_STATUS='+json.dumps(result),flush=True)
+        print('SELECTIVE_POOL_STATUS='+json.dumps(result),flush=True)
     return 0
 
 if __name__=='__main__':raise SystemExit(main())
