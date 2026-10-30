@@ -49,7 +49,7 @@ class OriginalOpenPiRTCAdapter:
             if progress is not None:progress(record)
         if getattr(self, '_step_bank_stream', None) is None:
             self._step_bank_stream = torch.cuda.Stream()
-        resident=self.config.get('m4_acceptance_group')=='m3' and self.config.get('experimental_setup_reuse',False)
+        resident=bool(getattr(self,'_dual_bank_preparing',False) or (self.config.get('m4_acceptance_group')=='m3' and self.config.get('experimental_setup_reuse',False)))
         bank=getattr(self,'_resident_step_bank',None) if resident else None
         if bank is not None:
             bank.prepare_resident(lengths,noise,beta=self.beta,progress=report)

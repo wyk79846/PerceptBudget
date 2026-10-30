@@ -390,7 +390,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     torch.cuda.synchronize()
                     adapter.step_bank = None
                     adapter.expert = root_expert
-                    mem('old_bank_released')
+                    mem('resident_banks_retained' if dual_visual else 'old_bank_released')
                 base._seed_process(7, np, torch)
                 task = base._load_tasks([tid], [suite])[0]
                 env = base._make_env(env_class, task)

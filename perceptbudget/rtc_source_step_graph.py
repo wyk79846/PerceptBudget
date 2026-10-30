@@ -110,6 +110,20 @@ class SourceStepGraph:
             self.outputs=self._step()
         torch.cuda.synchronize()
 
+    def release(self):
+        # Caller synchronizes before eviction; destroy native graph executables
+        # before dropping the tensors whose addresses they capture.
+        for name in ('full_graph','graph'):
+            graph=getattr(self,name,None)
+            if graph is not None:
+                graph.reset()
+                setattr(self,name,None)
+        self.outputs=None
+        self.full_outputs=None
+        self.context=None
+        self.expert=None
+        self.condition_cache=None
+
     def capture_full(self,pool=None,stream=None):
         """Capture all num_steps denoising iterations into one graph.
 
@@ -297,7 +311,13 @@ class SourceStepBank:
         if any(a['beta']!=float(beta) for a in self.audits):
             raise ValueError('Resident graph beta changed')
         torch.cuda.synchronize()
-        self.entries={n:v for n,v in self.entries.items() if n in lengths}
+        evicted=[n for n in self.entries if n not in lengths]
+        for n in evicted:
+            _,graph=self.entries.pop(n)
+            graph.release()
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
         retained=set(self.entries)
         self.audits=[dict(a,reused=True) for a in self.audits if a['valid'] in retained]
         self._prepare([n for n in lengths if n not in retained],noise,beta,progress)
@@ -332,6 +352,16 @@ class SourceStepBank:
             if progress is not None: progress(record)
             if not passed: raise RuntimeError('source-step bank parity failed')
             self.entries[valid]=(bound,graph)
+
+    def release(self):
+        import torch
+        torch.cuda.synchronize()
+        for _,graph in self.entries.values():
+            graph.release()
+        self.entries.clear()
+        self._shared=None
+        self._pool=None
+        self.fallback=None
 
     def select(self,valid):
         return self.entries.get(valid,(self.fallback,None))

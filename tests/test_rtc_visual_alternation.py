@@ -157,3 +157,29 @@ def test_two_full_one_fast_schedule_and_labeled_cli_plans():
         plan=json.loads(r.stdout)
         assert plan['episodes']==2 and plan['model_loads']==1 and plan['q']==5
         assert plan['fast_visual_mode']==mode and plan['full_per_fast']==ratio
+
+
+def test_task_switch_keeps_separate_bounded_full_fast_banks(monkeypatch):
+    from types import SimpleNamespace
+    from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    made=[]
+    def prepare(self,lengths,*,progress=None):
+        assert self._dual_bank_preparing
+        bank=self._resident_step_bank
+        if bank is None:
+            bank=SimpleNamespace(entries={},fallback='root');made.append(bank)
+        bank.entries={n:(n,'graph') for n in lengths}
+        self.step_bank=bank
+        return dict(passed=True,prepare_seconds=0.)
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
+    a=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    a.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))
+    a.config=dict(source_prefix_coverage_rule='h50_state8_tokenizer_bounds_v1',
+                  m2_visual_fast_mode='pool2_agent')
+    a.prepare_step_bank(list(range(653,670))+[340])
+    full,fast=a._dual_resident_banks
+    a.step_bank=None  # Production releases the public dispatch between tasks.
+    a.prepare_step_bank(list(range(649,666))+[335])
+    assert len(made)==2 and a._dual_resident_banks==(full,fast)
+    assert set(full.entries)==set(range(649,666)) and set(fast.entries)=={335}
+    assert a._resident_step_bank is None and not a._dual_bank_preparing

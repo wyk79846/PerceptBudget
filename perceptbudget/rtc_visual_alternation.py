@@ -60,14 +60,30 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         if getattr(self,'_shared_step_bank_pool',None) is None:
             self._shared_step_bank_pool=self.torch.cuda.graph_pool_handle()
         reports, banks = [], []
-        for family in (full, wrist):
-            reports.append(super().prepare_step_bank(family, progress=progress))
-            banks.append(self.step_bank)
+        cached=getattr(self,'_dual_resident_banks',(None,None))
+        self._dual_bank_preparing=True
+        try:
+            for family,bank in zip((full,wrist),cached):
+                self._resident_step_bank=bank
+                reports.append(super().prepare_step_bank(family, progress=progress))
+                banks.append(self.step_bank)
+        finally:
+            self._dual_bank_preparing=False
+            self._resident_step_bank=None
+        self._dual_resident_banks=tuple(banks)
         self.step_bank = DualGeometryBank(*banks)
         return dict(passed=True, backend='dual_geometry_source_order_step_graph',
             lengths=lengths, families=reports,
             prepare_seconds=sum(r['prepare_seconds'] for r in reports),
             limitation='Two independently bounded banks; no runtime graph capture')
+
+    def release_graph(self):
+        self.torch.cuda.synchronize()
+        for bank in getattr(self,'_dual_resident_banks',()):
+            bank.release()
+        self._dual_resident_banks=()
+        self._shared_step_bank_pool=None
+        return super().release_graph()
 
     def attach_wrist(self, model):
         geometry=visual_geometry(self.fast_mode())
