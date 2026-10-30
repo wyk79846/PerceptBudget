@@ -228,3 +228,33 @@ def test_dynamic_audit_accepts_disabled_age_cutoff_with_finite_chunk_limit(tmp_p
                   service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='buffer')
     events.append(dict(event='m3_decision',**decision));requests[1]['m3_timing']=dict(decision);save()
     assert audit(tmp_path)['passed']
+
+
+def test_m3_fast_guard_uses_both_modes_and_choice_is_bound_to_trace(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_fast_enabled=True,m4_enabled=False,
+        m3_action_events_enabled=True,m3_dvac_enabled=False,
+        m2_visual_alternation=True,m2_fast_no_state=True,m2_visual_fast_mode='pool2_agent',
+        m2_visual_fast_enabled=False,m2_split_delay=True,m2_delay_modes=['full','pool2_agent'],
+        rtc_initial_delays_by_mode={'full':5,'pool2_agent':20},
+        m3_scheduler_mode='deadline_high',
+        m3_timing={'maximum_action_offset':25,'maximum_observation_age_seconds':None})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    decision=dict(step=5,start_now=True,inflight=False,deadline=100.,latest_start=49.9,
+        service_seconds=.9,margin_seconds=.1,wait_seconds=0.,reason='action_event',
+        decision_monotonic=50.,estimated_control_period_seconds=.05,
+        rtc_delay_steps=20,rtc_latest_submit_step=5,rtc_submit_guard_steps=2,
+        path='high_frequency',start_constraint='rtc_prefix')
+    events.append(dict(event='m3_decision',**decision))
+    requests[1]['m3_timing']=dict(decision)
+    for r in requests:
+        r['m3_fast_choice']={'mode':'Full'}
+        r['m3_fast_decision']=({k:v for k,v in decision.items() if k!='step'} if r['prediction_id'] else {})
+        r['rtc_guidance']['state_in_prompt']=True
+        r['context_refresh']=dict(mode='full',current_images_encoded=True,current_state_encoded=True,
+            source_observation_step=r['observation_step'],source_prediction_id=r['prediction_id'],
+            num_views=2,visual_tokens=512,camera_indices=[0,1],vision_pool_factor=1)
+    save();assert audit(tmp_path)['passed']
+    requests[1]['m3_fast_decision']['service_seconds']=.2;save()
+    assert 'm3_fast_decision_bound_to_trace' in [f['check'] for f in audit(tmp_path)['failures']]

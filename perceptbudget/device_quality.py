@@ -202,8 +202,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     from perceptbudget.measurement import timed
     from perceptbudget.experiment import create_run, _write_json_atomically
 
-    dual_visual=visual_comparison or bool(config.get('m4_enabled'))
-    if config.get('m4_enabled'):visual_fast_mode='pool2_agent'
+    explicit_visual=bool(config.get('m4_enabled') or config.get('m3_fast_enabled'))
+    dual_visual=visual_comparison or explicit_visual
+    if explicit_visual:visual_fast_mode='pool2_agent'
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
     if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
@@ -246,7 +247,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
         cfg.update(m2_expert_recompute=False, m2_visual_alternation=True,
                    m2_visual_fast_enabled=False, m2_visual_fast_mode=visual_fast_mode,
                    m2_delay_modes=['full',visual_fast_mode])
-    if cfg.get('m4_enabled'):
+    if explicit_visual:
         from perceptbudget.m4_visual import M4ViewRTCAdapter as OriginalOpenPiRTCAdapter
         cfg['m2_fast_no_state']=True
     from perceptbudget.model import vision_pool_factor
@@ -373,7 +374,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     views=('full','kv_once') if single_insertion else ('full','kv_reuse_split') if paired_split else ('full','kv_reuse','kv_reuse_split') if split_delay_comparison else ('full','kv_reuse')
                 if dual_visual:
                     views=('full',visual_fast_mode+'_alternate')
-                if cfg.get('m4_enabled'):views=('full',)
+                if explicit_visual:views=('full',)
                 if dvac_paired:
                     from perceptbudget.closed_loop import comparison_variants
                     if cfg.get('m3_formal_comparison'):
@@ -445,7 +446,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if not gate.get('passed') or root_expert.provenance != gate['original_source_hashes']:
                         raise RuntimeError('Frozen source gate mismatch')
                 adapter.config = cfg
-                if cfg.get('m4_enabled'):
+                if explicit_visual:
                     adapter.select_next_mode('Full')
                 stage_progress('model_ready')
                 first = {}
@@ -456,7 +457,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    if cfg.get('m4_acceptance_group')=='joint':
+                    if cfg.get('m4_acceptance_group') in ('joint','m3_fast'):
                         from perceptbudget.m4_acceptance import visual_prefixes
                         lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'])
                     else:
@@ -500,16 +501,18 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 if dual_visual:
                     cfg['m2_visual_fast_enabled']=True
                     def wrist_probe():
-                        if cfg.get('m4_enabled'):adapter.select_next_mode('Fast')
+                        if explicit_visual:adapter.select_next_mode('Fast')
                         adapter._guided_requests=cfg.get('m2_full_per_fast',1)-1  # Calibration only.
                         request={'observation_step':5}
                         actions=adapter.predict(prepared,task['instruction'],previous,delay=5,executed=5,request=request)
                         if request['context_refresh']['mode']!=visual_fast_mode:
                             raise RuntimeError('Wrist delay calibration did not encode a new wrist context')
                         return actions
-                    wrist_timing=timed(torch,wrist_probe,count=3)
-                    cfg['m2_visual_fast_enabled']=False
-                    if cfg.get('m4_enabled'):adapter.select_next_mode('Full')
+                    try:
+                        wrist_timing=timed(torch,wrist_probe,count=3)
+                    finally:
+                        cfg['m2_visual_fast_enabled']=False
+                        if explicit_visual:adapter.select_next_mode('Full')
                     cfg['rtc_initial_delays_by_mode']={'full':cfg['rtc_initial_delay_steps'],
                         visual_fast_mode:math.ceil(wrist_timing['median_ms']/1000/calibration['median_seconds'])}
                     record.setdefault('mode_delay_calibrations', []).append(dict(suite=suite,task_id=tid,
@@ -598,7 +601,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         child_cfg['m2_single_reuse']=view=='kv_once'
                     if dual_visual:
                         child_cfg['m2_visual_fast_enabled']=view!='full'
-                        child_cfg['m2_split_delay']=view!='full' or cfg.get('m4_enabled',False)
+                        child_cfg['m2_split_delay']=view!='full' or explicit_visual
                     adapter.config = child_cfg
                     label = view if pool_factor == 1 else 'pool'+str(pool_factor)+'-'+cfg.get('m2_pool_view','both')
                     active = create_run(child_cfg, 'M4' if cfg.get('m4_enabled') or cfg.get('m4_acceptance_group') else 'M3' if record_only else 'M2',
@@ -635,7 +638,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             (r['inference_ended_monotonic']-r['inference_started_monotonic'])*1000
                             for r in requests[1:]])) if len(requests)>1 else None)
                     if dual_visual:
-                        result.update(episode_geometry(visual_fast_mode,view!='full' or cfg.get('m4_enabled',False)))
+                        result.update(episode_geometry(visual_fast_mode,view!='full' or explicit_visual))
                     info = initial_info(active, episode)
                     review = None
                     if dvac_paired and view!=views[0]:
@@ -664,7 +667,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         underflow_steps=len(episode['underflow_steps']), initial=info,
                         initial_pair_review=review, inference_median_ms=result['steady_inference_median_ms']))
                     if dual_visual:
-                        record['episodes'][-1].update(episode_geometry(visual_fast_mode,view!='full' or cfg.get('m4_enabled',False)))
+                        record['episodes'][-1].update(episode_geometry(visual_fast_mode,view!='full' or explicit_visual))
                     if record_only:
                         record['episodes'][-1]['action_events'] = str(active/'action_events.json')
                     record['status'] = 'running'

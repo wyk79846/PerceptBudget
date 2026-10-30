@@ -84,7 +84,7 @@ def manifest(config):
 def configure_baseline(config):
     from perceptbudget.closed_loop import configure_fixed_baseline
     configure_fixed_baseline(config, 30)
-    config.update(m4_enabled=False, m3_hold_high_clocks=True,
+    config.update(m4_enabled=False, m3_fast_enabled=False, m3_hold_high_clocks=True,
                   m2_visual_fast_enabled=False, m2_split_delay=False)
     return 30
 
@@ -94,13 +94,20 @@ def configure_m3(config, settings):
     from perceptbudget.m3_comparison import configure_group
     config['m3_formal_signal']='events_only'
     configure_group(config,'D_joint')
-    config.update(m4_enabled=False,m4_policy_revision='not_applicable_original_m3',
+    config.update(m4_enabled=False,m3_fast_enabled=False,m4_policy_revision='not_applicable_original_m3',
                   m2_visual_fast_enabled=False,m3_dvac_enabled=False)
     config.pop('m4_settings',None)
     config.pop('m4_fast_prompt_capacity',None)
     settings['mode']='deadline_dvfs'
     settings['timing'].update(maximum_action_offset=50,maximum_observation_age_seconds=None,
         safety_margin_seconds=.025,margin_updates=False)
+
+
+def configure_m3_fast(config, settings):
+    """Only visual selection is added to the original M3 timing/controller."""
+    configure_m3(config,settings)
+    config.update(m3_fast_enabled=True,m2_fast_no_state=True,m4_fast_prompt_capacity=20,
+        m3_fast_policy='events_full_otherwise_single_fast_v1')
 
 
 def resume_joint(source, config):
@@ -176,9 +183,9 @@ def summarize(directory, sources, *, task_plan=None):
     import numpy as np
     from perceptbudget.experiment import _write_json_atomically
     directory = Path(directory)
-    if set(sources) not in ({'q30','joint'},{'q30','m3'}):
+    if set(sources) not in ({'q30','joint'},{'q30','m3'},{'q30','m3_fast'}):
         raise ValueError('Require q30 and one complete candidate group')
-    candidate='m3' if 'm3' in sources else 'joint'
+    candidate=next(g for g in sources if g!='q30')
     comparison_groups=('q30',candidate)
     expected={tuple(t) for t in task_plan} if task_plan is not None else None
     if expected is not None and (not expected or len(expected)!=len(task_plan)):
@@ -201,7 +208,9 @@ def summarize(directory, sources, *, task_plan=None):
                         outcome=row['outcome'], steps=row['steps'],
                         task_seconds=data['real_seconds'], including_drain_seconds=data['including_drain_seconds'],
                         total_energy_j=data['including_drain_power']['total_energy_mj']/1000,
-                        underflow_steps=len(data['underflow_steps']), requests=len(requests), run=str(run))
+                        underflow_steps=len(data['underflow_steps']), requests=len(requests),
+                        full_requests=sum(r.get('context_refresh',{}).get('mode','full')=='full' for r in requests),
+                        fast_requests=sum(r.get('context_refresh',{}).get('mode','full')!='full' for r in requests),run=str(run))
             rows.append(item)
             cases.setdefault((row['suite'], row['task_id']), {})[group] = (row, requests[0], item)
     pairs = []
@@ -226,7 +235,7 @@ def summarize(directory, sources, *, task_plan=None):
     _write_json_atomically(directory/'comparison.json', result)
     with (directory/'comparison.csv').open('w', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
-    lines = ['# '+('M3同任务对照' if candidate=='m3' else 'M4固定任务验收'), '', '|集合|任务|组别|结果|步数|任务时间s|整任务能量J|断供步数|',
+    lines = ['# '+('M3同任务对照' if candidate in ('m3','m3_fast') else 'M4固定任务验收'), '', '|集合|任务|组别|结果|步数|任务时间s|整任务能量J|断供步数|',
              '|---|---:|---|---|---:|---:|---:|---:|']
     for r in rows:
         lines.append(f"|{r['suite']}|{r['task_id']}|{r['group']}|{r['outcome']}|{r['steps']}|{r['task_seconds']:.3f}|{r['total_energy_j']:.3f}|{r['underflow_steps']}|")
@@ -241,4 +250,41 @@ def summarize(directory, sources, *, task_plan=None):
             lines.append(f"|{suite}|{group}|{len(success)}/{len(subset)}|{sum(r['total_energy_j'] for r in subset)/len(subset):.3f}|{seconds}|")
     lines += ['', f"初始输入相同：{sum(p['initial_inputs_equal'] for p in pairs)}/{len(pairs)}；首次动作精确相同：{sum(p['initial_actions_exact'] for p in pairs)}/{len(pairs)}。", '', result['scope']]
     (directory/'comparison.md').write_text('\n'.join(lines)+'\n')
+    return result
+
+
+def summarize_m3_increment(directory, reference, candidate_result):
+    """Per-task comparison with the existing M3 first-measurement ledger."""
+    import numpy as np
+    directory,reference=Path(directory),Path(reference)
+    saved=json.loads(reference.read_text())
+    baseline={(r['suite'],r['task_id']):r for r in saved['rows'] if r['group']=='m3'}
+    rows=[]
+    for r in candidate_result['rows']:
+        if r['group']!='m3_fast':continue
+        a=baseline[(r['suite'],r['task_id'])]
+        old_cfg=json.loads((Path(a['run'])/'run.json').read_text())['config_snapshot']
+        new_cfg=json.loads((Path(r['run'])/'run.json').read_text())['config_snapshot']
+        old_episode=json.loads((Path(a['run'])/'summary.json').read_text())['episode']
+        new_episode=json.loads((Path(r['run'])/'summary.json').read_text())['episode']
+        old_first=json.loads(request_path(a['run']).read_text())[0]
+        new_first=json.loads(request_path(r['run']).read_text())[0]
+        same_inputs=(all(old_episode[k]==new_episode[k] for k in ('initial_sim_state_sha256','initial_frames_sha256'))
+            and all(np.array_equal(old_first[k],new_first[k]) for k in ('observation_raw_state','model_state'))
+            and np.array_equal(old_first['rtc_solver_inputs']['noise'],new_first['rtc_solver_inputs']['noise']))
+        same_timing=old_cfg['m3_timing']==new_cfg['m3_timing']
+        rows.append(dict(suite=r['suite'],task_id=r['task_id'],m3_outcome=a['outcome'],fast_outcome=r['outcome'],
+            m3_seconds=a['task_seconds'],fast_seconds=r['task_seconds'],m3_j=a['total_energy_j'],fast_j=r['total_energy_j'],
+            full_requests=r['full_requests'],fast_requests=r['fast_requests'],same_timing=same_timing,same_initial_inputs=same_inputs,
+            bootstrap_raw_max_abs=float(np.max(np.abs(np.asarray(old_first['actions_raw'])-np.asarray(new_first['actions_raw'])))),
+            m3_run=a['run'],candidate_run=r['run']))
+    result=dict(reference=str(reference),selection='M3 first measurements retained; repeated success does not replace failures',rows=rows)
+    from perceptbudget.experiment import _write_json_atomically
+    _write_json_atomically(directory/'m3_increment.json',result)
+    lines=['# M3 + Fast单项改动对照','','沿用M3首次结果，不挑选成功复测。历史M3跨批次；初始输入和数值计算可能存在差异，不能把每个差异归因于Fast。',
+        '', '|任务|M3|M3+Fast|时间s M3/新增|能量J M3/新增|Full/Fast次数|时限配置/初始输入相同|',
+        '|---|---|---|---|---|---|---|']
+    for r in rows:
+        lines.append(f"|{r['suite']} {r['task_id']}|{r['m3_outcome']}|{r['fast_outcome']}|{r['m3_seconds']:.3f}/{r['fast_seconds']:.3f}|{r['m3_j']:.3f}/{r['fast_j']:.3f}|{r['full_requests']}/{r['fast_requests']}|{r['same_timing']}/{r['same_initial_inputs']}|")
+    (directory/'m3_increment.md').write_text('\n'.join(lines)+'\n')
     return result

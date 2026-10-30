@@ -12,7 +12,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suites',nargs='+',choices=('libero_spatial','libero_object','libero_goal','libero_10'),default=['libero_spatial'])
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
-    parser.add_argument('--acceptance-group',choices=('q30','joint','m3'),help='Fixed four-suite/three-task acceptance group')
+    parser.add_argument('--acceptance-group',choices=('q30','joint','m3','m3_fast'),help='Fixed four-suite/three-task acceptance group')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='Use the first3 fixed tasks for an M3 screen')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
@@ -25,10 +25,10 @@ def main():
     parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
-    if args.first_tasks!=12 and args.acceptance_group!='m3':parser.error('Three-task screen is for the M3 candidate')
-    if args.task_indices and (args.acceptance_group!='m3' or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
+    if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Three-task screen is for the M3 candidate')
+    if args.task_indices and (args.acceptance_group not in ('m3','m3_fast') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
-    if args.m3_eta_ms!=25 and args.acceptance_group!='m3':parser.error('Margin override requires M3')
+    if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['experimental_setup_reuse']=args.reuse_preparation
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
@@ -51,9 +51,9 @@ def main():
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
             cfg.update(m4_enabled=False,m3_hold_high_clocks=True)
-        if args.acceptance_group=='m3':
-            from perceptbudget.m4_acceptance import configure_m3
-            configure_m3(cfg,settings)
+        if args.acceptance_group in ('m3','m3_fast'):
+            from perceptbudget.m4_acceptance import configure_m3,configure_m3_fast
+            (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
             settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
             cfg['m3_replay_eta_ms']=args.m3_eta_ms
             settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
@@ -66,11 +66,11 @@ def main():
         cfg['m3_resume_plan']=continuation
     pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
     if args.dry_run:
-        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='pool2_agent_no_state' if cfg['m4_enabled'] else 'disabled',
-            eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group=='m3' else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
+        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='pool2_agent_no_state' if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
+            eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group=='m3' else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            m3_fast_selection=bool(cfg.get('m3_fast_enabled')),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -94,7 +94,7 @@ def main():
             run=Path(row['run']);audit=clock_audit(run)
             _write_json_atomically(run/'m4_clock_audit.json',audit);audits.append(audit)
             if not audit['passed']:raise RuntimeError('M4 frequency/power/restore audit failed')
-        result.update(mode='m3_frozen_joint' if args.acceptance_group=='m3' else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits)
+        result.update(mode=('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
     subprocess.run(['sudo','-v'],check=True)
@@ -113,7 +113,7 @@ def main():
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);clock_preflight(run)
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
-            if args.acceptance_group=='m3':command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
+            if args.acceptance_group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
@@ -124,7 +124,7 @@ def main():
             if args.acceptance_group:
                 preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
-                if args.acceptance_group=='m3':preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
+                if args.acceptance_group in ('m3','m3_fast'):preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
                 if args.reuse_preparation:preparation.append('--reuse-preparation')
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])

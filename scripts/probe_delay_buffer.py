@@ -364,6 +364,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             'observation_raw_state': snapshot['raw_state'].tolist(),
             'queue_before_submit_actions': buffer_count(queue, step),
         }
+        if config.get('m3_fast_enabled'):
+            from perceptbudget.m3_fast_choice import choose_mode
+            decision=dict(scheduler.plan or {})
+            previous_mode=requests[-1]['m3_fast_choice']['mode'] if requests else 'Full'
+            request['m3_fast_decision']=decision
+            request['m3_fast_choice']=choose_mode(decision,observation_step=step,previous_mode=previous_mode)
+            rtc_adapter.select_next_mode(request['m3_fast_choice']['mode'])
         if scheduler is not None:
             scheduler.requested(request)
         selected_delay_queue=delay_queue
@@ -577,7 +584,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             due = refresh_due(step, anchor_step, q, refresh_policy)
             if scheduler is not None:
                 rtc_delay=delay_queue.estimate if delay_queue is not None else None
-                if config.get('m4_enabled') and mode_delay_queues:
+                if (config.get('m4_enabled') or config.get('m3_fast_enabled')) and mode_delay_queues:
                     rtc_delay=max(q.estimate for q in mode_delay_queues.values())
                 if config.get('rtc_fixed_delay_estimate') is not None:
                     rtc_delay=config['rtc_fixed_delay_estimate']

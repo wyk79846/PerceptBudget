@@ -48,7 +48,7 @@ def audit(run):
         if i:
             prior=requests[i-1];s=origin-prior['observation_step'];d=guide['delay_estimate_steps']
             check(guide['executed_steps']==s and 0<=d<=cfg['H']-s,f'pid{pid}: RTC s/d bounds')
-            check(guide['guidance_enabled'] and guide['state_in_prompt']==cfg['state_enabled'],f'pid{pid}: guidance/state flags')
+            check(guide['guidance_enabled'] and guide['state_in_prompt']==r.get('context_refresh',{}).get('current_state_encoded',cfg['state_enabled']),f'pid{pid}: guidance/state flags')
             check(prior['ready_monotonic']<=r['observation_monotonic'],f'pid{pid}: overlapping inference')
             if solver:
                 check(solver['delay']==d and solver['executed']==s,f'pid{pid}: solver delay/executed mismatch')

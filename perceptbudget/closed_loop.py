@@ -207,6 +207,7 @@ class DeadlineRuntime:
     """Action hints and denoising variance select time; RTC owns alignment."""
     def __init__(self, config):
         self.settings = config['m3_timing']
+        self.fast_selection=bool(config.get('m3_fast_enabled'))
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -308,7 +309,8 @@ class DeadlineRuntime:
             if self.settings.get('margin_updates'):
                 timing['margin_update'] = self.margin.observe(predicted=timing['service_seconds'],actual=actual,
                     start_lateness=max(0.,service_start-timing['latest_start']))
-            self.times.observe(timing.get('history','hot'), actual)
+            if not self.fast_selection or request.get('m3_fast_choice',{}).get('mode')=='Full':
+                self.times.observe(timing.get('history','hot'), actual)
 
     def admitted(self, item, step, now):
         if item is None:

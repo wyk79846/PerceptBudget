@@ -1,3 +1,5 @@
+> 2026-10-30 当前增量主线：`--candidate m3_fast`仅在M3原刷新/调频上加入Full/Fast选择（pool2_agent无state），25ms；`m4_enabled=False`，不启用旧M4能量搜索。默认M3不变，准备提速默认关闭。一次加载12任务，复用q30及M3首次记录，报告见 `../任务指导与相关参考/PerceptBudget_M4第一步_Fast单项验证_20261030.md`。尚未新GPU闭环，不宣称收益。
+
 ## M4联合调度小测（待设备验证）
 
 入口：`python -u scripts/run_m4.py`，默认Spatial task0一次、一次模型加载。

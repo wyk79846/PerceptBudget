@@ -111,6 +111,24 @@ def audit(run):
             visual=request.get('context_refresh',{})
             expected_mode=scheduled_visual_mode(pid,cfg.get('m2_visual_fast_mode','wrist'),
                 cfg.get('m2_visual_fast_enabled'),cfg.get('m2_full_per_fast',1))
+            if cfg.get('m3_fast_enabled'):
+                choice=request.get('m3_fast_choice',{})
+                declared=choice.get('mode')
+                previous_mode=by_id[pid-1].get('m3_fast_choice',{}).get('mode') if pid else 'Full'
+                decision=request.get('m3_fast_decision',{})
+                if origin:
+                    recorded={k:v for k,v in decisions.get(origin,{}).items() if k not in ('event','step')}
+                    check('m3_fast_decision_bound_to_trace',decision==recorded,pid)
+                if not origin:
+                    expected_choice='Full'
+                else:
+                    window=math.ceil((decision['service_seconds']+decision['margin_seconds'])/decision['estimated_control_period_seconds']-1e-9)
+                    critical=decision.get('critical_step')
+                    near=critical is not None and origin<=critical<=origin+window
+                    expected_choice='Full' if decision['reason']=='action_event' or near or previous_mode=='Fast' else 'Fast'
+                check('m3_fast_only_visual_change',not cfg.get('m4_enabled') and cfg.get('m3_action_events_enabled') and not cfg.get('m3_dvac_enabled'),pid)
+                check('m3_fast_explicit_choice',declared==expected_choice,pid)
+                expected_mode='full' if declared=='Full' else cfg['m2_visual_fast_mode']
             if cfg.get('m4_enabled'):
                 declared=request.get('m4_service_mode')
                 check('m4_explicit_service_mode',declared in ('Full','Fast'),pid)
@@ -220,7 +238,7 @@ def audit(run):
                                and e.get('decision_monotonic')==d.get('decision_monotonic')]
                     decision_step=min(e['step'] for e in originals)
                     period=d['estimated_control_period_seconds']
-                    delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') else g['delay_estimate_steps']
+                    delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') or cfg.get('m3_fast_enabled') else g['delay_estimate_steps']
                     latest_submit=old['observation_step']+cfg['H']-delay
                     guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
