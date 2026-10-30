@@ -376,9 +376,9 @@ def audit(run):
                 mode_histories[key]=(mode_histories[key]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         if service_history is not None and origin:
             timing=request['m3_timing'];mode=request['m3_fast_choice']['mode']
-            history=timing.get('history','hot')
-            actual=c['commit_monotonic']-timing.get('service_start_monotonic',request['observation_monotonic'])
-            service_history[mode][history]=(service_history[mode][history]+[actual])[-128:]
+            service_bucket=timing.get('history','hot')
+            service_seconds=c['commit_monotonic']-timing.get('service_start_monotonic',request['observation_monotonic'])
+            service_history[mode][service_bucket]=(service_history[mode][service_bucket]+[service_seconds])[-128:]
         previous=c
     underflows=[]
     for step,row in by_step.items():
