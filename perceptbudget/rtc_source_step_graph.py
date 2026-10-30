@@ -257,7 +257,7 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None,resident=False):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None,resident=False,pool=None):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
@@ -280,7 +280,7 @@ class SourceStepBank:
         self.storage_record=dict(shared_kv=True,capacity=capacity,
             kv_mib=2*shared_keys.numel()*shared_keys.element_size()/2**20,
             separate_kv_mib=2*18*sum(lengths)*256*shared_keys.element_size()/2**20)
-        pool=torch.cuda.graph_pool_handle()
+        pool=pool if pool is not None else torch.cuda.graph_pool_handle()
         # cuBLAS keeps workspaces keyed by CUDA stream beyond Python stream
         # lifetime. Resident adapters must reuse their capture stream across tasks.
         stream=stream if stream is not None else torch.cuda.Stream()

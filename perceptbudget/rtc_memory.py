@@ -64,9 +64,24 @@ def release_unused_native_expert(model,torch):
     for name in list(pl.weights):
         if name.startswith('decoder_'):
             del pl.weights[name]
+    # Context capture only executes vision+encoder. Disabled native decode
+    # graphs retain handles, but their private buffers/styles are never replayed.
+    decoder_buffers={name:buf.nbytes for name,buf in getattr(pl,'bufs',{}).items()
+        if name.startswith('decoder_') or name in ('diffusion_noise','rtc_prev_action_chunk',
+            'rtc_prefix_weights','rtc_guidance_weight','x_normed_buf','gate_buf')}
+    for name in decoder_buffers:
+        del pl.bufs[name]
+    precomputed=pl.weights.pop('precomputed',{})
+    precomputed_bytes=sum(getattr(value,'nbytes',0) for value in precomputed.values())
+    if hasattr(pipe,'_precomputed_styles'):
+        pipe._precomputed_styles={}
+    del precomputed
     pipe._pb_context_only=True
     gc.collect()
     torch.cuda.empty_cache()
     return dict(before=before,after=memory_record(torch,'after_native_expert_release'),
                 released_weight_mib=sum(sizes.values())/2**20,released_names=names,
+                released_buffer_mib=sum(decoder_buffers.values())/2**20,
+                released_precomputed_reference_mib=precomputed_bytes/2**20,
+                released_buffer_names=list(decoder_buffers),
                 limitation='native graph handles retained but disabled; context-only for this process')

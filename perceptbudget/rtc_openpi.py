@@ -56,6 +56,8 @@ class OriginalOpenPiRTCAdapter:
             self.step_bank=bank
         else:
             options=dict(resident=True) if resident else {}
+            if getattr(self,'_shared_step_bank_pool',None) is not None:
+                options['pool']=self._shared_step_bank_pool
             self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
                 stream=self._step_bank_stream,
                 max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,

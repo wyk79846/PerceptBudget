@@ -24,6 +24,7 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
         return dict(passed=True,prepare_seconds=1.,lengths=list(lengths))
     monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
     adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    adapter.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))
     adapter.config={'source_prefix_coverage_rule':'h50_state8_tokenizer_bounds_v1'}
     adapter._step_bank_stream=object()
     full=list(range(650,667)); wrist=list(range(394,411))

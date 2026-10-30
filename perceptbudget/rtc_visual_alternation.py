@@ -55,6 +55,10 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             raise ValueError('Require both exact geometry families, at most17 lengths each')
         if self.config.get('source_prefix_coverage_rule') != 'h50_state8_tokenizer_bounds_v1':
             raise ValueError('Dual context bank requires verified H50 state tokenizer bounds')
+        # Both geometries use the same frozen expert, one request at a time.
+        # Share scratch storage just as exact lengths already do within a bank.
+        if getattr(self,'_shared_step_bank_pool',None) is None:
+            self._shared_step_bank_pool=self.torch.cuda.graph_pool_handle()
         reports, banks = [], []
         for family in (full, wrist):
             reports.append(super().prepare_step_bank(family, progress=progress))
