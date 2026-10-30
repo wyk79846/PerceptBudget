@@ -365,11 +365,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             'queue_before_submit_actions': buffer_count(queue, step),
         }
         if config.get('m3_fast_enabled'):
-            from perceptbudget.m3_fast_choice import choose_mode
             decision=dict(scheduler.plan or {})
-            previous_mode=requests[-1]['m3_fast_choice']['mode'] if requests else 'Full'
+            formula=decision.get('m3_fast_formula')
+            if step and formula is None:raise RuntimeError('Full/Fast request has no evaluated deadline/energy plan')
             request['m3_fast_decision']=decision
-            request['m3_fast_choice']=choose_mode(decision,observation_step=step,previous_mode=previous_mode)
+            request['m3_fast_choice']=(dict(mode=formula['mode'],reason=formula['reason'])
+                if step else dict(mode='Full',reason='bootstrap_full'))
             rtc_adapter.select_next_mode(request['m3_fast_choice']['mode'])
         if scheduler is not None:
             scheduler.requested(request)

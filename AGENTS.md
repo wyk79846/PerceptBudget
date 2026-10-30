@@ -1,4 +1,4 @@
-> 2026-10-30 当前增量主线：`--candidate m3_fast`仅在M3原刷新/调频上加入Full/Fast选择（pool2_agent无state），25ms；`m4_enabled=False`，不启用旧M4能量搜索。默认M3不变，准备提速默认关闭。一次加载12任务，复用q30及M3首次记录，报告见 `../任务指导与相关参考/PerceptBudget_M4第一步_Fast单项验证_20261030.md`。尚未新GPU闭环，不宣称收益。
+> 2026-10-30 当前增量主线：`--candidate m3_fast`已改为Word公式版v2：保留M3动作前瞻/缓冲截止时刻与频率策略，分别用Full/Fast条件化完整服务分位数倒推准备时间，再比较同一截止窗口的绝对服务能量与保持能量。旧规则二选一已替换；`m4_enabled=False`，不接旧M4多频率/空闲搜索。Full带state，Fast为pool2_agent无state；25ms余量，准备提速默认关闭。仅CPU/离线算术检查通过，未新跑闭环。外部模型当前不用。
 
 # 项目协作与当前状态
 

@@ -215,6 +215,12 @@ class DeadlineRuntime:
             self.times.observe('recovery',seconds)
         self.margin = SafetyMargin(initial=self.settings['safety_margin_seconds'],
             floor=0. if config.get('m3_margin_scan') else .02)
+        self.fast_cost_model=config.get('m3_fast_cost_model')
+        self.fast_last_mode='Full'
+        self.fast_quiet_since=0.
+        if self.fast_selection:
+            self.fast_times=FullServiceTimes({h:self.fast_cost_model['service']['Fast'][h]['samples_seconds']
+                for h in ('hot','short','long')},probability=self.settings['service_quantile'])
         self.initial_period = config['rtc_initial_control_period_seconds']
         self.horizon = config.get('H')
         self.events, self.chunks, self.plan = [], {}, None
@@ -264,6 +270,9 @@ class DeadlineRuntime:
     def committed(self, request, commit):
         self.latest_signal_event=None
         pid, origin = request['prediction_id'], request['observation_step']
+        if self.fast_selection:
+            self.fast_last_mode=request['m3_fast_choice']['mode']
+            self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
         signal=request.get('dvac',{})
         prefix=signal.get('prefix_actions') if self.dvac_enabled else None
@@ -311,6 +320,8 @@ class DeadlineRuntime:
                     start_lateness=max(0.,service_start-timing['latest_start']))
             if not self.fast_selection or request.get('m3_fast_choice',{}).get('mode')=='Full':
                 self.times.observe(timing.get('history','hot'), actual)
+            else:
+                self.fast_times.observe(timing.get('history','hot'), actual)
 
     def admitted(self, item, step, now):
         if item is None:
@@ -384,6 +395,20 @@ class DeadlineRuntime:
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
             self.plan.update(latest_start=rtc_latest_start,wait_seconds=max(0.,rtc_latest_start-now),
                              start_now=rtc_latest_start<=now,start_constraint='rtc_prefix')
+        if self.fast_selection and not inflight and current is not None:
+            from perceptbudget.m3_fast_choice import choose_mode
+            quiet_since=self.fast_quiet_since
+            if self.clocks is not None and self.clocks.last_change:
+                quiet_since=max(quiet_since,self.clocks.last_change['observed_match_monotonic'])
+            formula=choose_mode(self.plan,observation_step=step,previous_mode=self.fast_last_mode,
+                cost_model=self.fast_cost_model,quiet_age_seconds=max(0.,now-quiet_since),
+                quantiles={'Full':self.times.estimate(budget_history),'Fast':self.fast_times.estimate(budget_history)},
+                latest_start_cap=rtc_latest_start)
+            selected=formula['selected']
+            self.plan.update(m3_fast_formula=formula,service_seconds=selected['service_seconds'],
+                latest_start=selected['latest_start'],wait_seconds=max(0.,selected['latest_start']-now),
+                start_now=selected['latest_start']<=now,start_constraint=selected['start_constraint'],
+                deadline_already_unreachable=now+selected['service_seconds']>self.plan['deadline'])
         return self.plan
 
     def control_clocks(self, decision, *, inflight):

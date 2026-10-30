@@ -96,6 +96,8 @@ def configure_m3(config, settings):
     configure_group(config,'D_joint')
     config.update(m4_enabled=False,m3_fast_enabled=False,m4_policy_revision='not_applicable_original_m3',
                   m2_visual_fast_enabled=False,m3_dvac_enabled=False)
+    config.pop('m3_fast_cost_model',None)
+    config.pop('m3_fast_policy',None)
     config.pop('m4_settings',None)
     config.pop('m4_fast_prompt_capacity',None)
     settings['mode']='deadline_dvfs'
@@ -107,7 +109,9 @@ def configure_m3_fast(config, settings):
     """Only visual selection is added to the original M3 timing/controller."""
     configure_m3(config,settings)
     config.update(m3_fast_enabled=True,m2_fast_no_state=True,m4_fast_prompt_capacity=20,
-        m3_fast_policy='events_full_otherwise_single_fast_v1')
+        m3_fast_policy='m3_two_mode_deadline_energy_v2')
+    from perceptbudget.m3_fast_choice import load_cost_model
+    config['m3_fast_cost_model']=load_cost_model(json.loads((Path(__file__).resolve().parents[1]/'m4.json').read_text()))
 
 
 def resume_joint(source, config):
