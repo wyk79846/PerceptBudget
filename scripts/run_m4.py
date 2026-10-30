@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
     parser.add_argument('--acceptance-group',choices=('q30','joint','m3'),help='Fixed four-suite/three-task acceptance group')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='Use the first3 fixed tasks for an M3 screen')
+    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
@@ -23,6 +24,8 @@ def main():
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args.first_tasks!=12 and args.acceptance_group!='m3':parser.error('Three-task screen is for the M3 candidate')
+    if args.task_indices and (args.acceptance_group!='m3' or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
+        parser.error('Explicit indices require M3, default first-tasks and unique indices')
     cfg=load_config(repo_root=ROOT);validate(cfg)
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
     from perceptbudget.m4_planner import POLICY_REVISION
@@ -47,7 +50,7 @@ def main():
         if args.acceptance_group=='m3':
             from perceptbudget.m4_acceptance import configure_m3
             configure_m3(cfg,settings)
-            settings['calibration_tasks']=fixed['tasks'][:args.first_tasks]
+            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
             cfg['m3_comparison_tasks']=settings['calibration_tasks']
     continuation=None
     if args.resume_from:
@@ -102,12 +105,14 @@ def main():
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
             if args.acceptance_group:command.extend(['--acceptance-group',args.acceptance_group])
             command.extend(['--first-tasks',str(args.first_tasks)])
+            if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if args.resume_from:command.extend(['--resume-from',str(args.resume_from)])
             from scripts.profile_clock_screen import monitored_worker
             if args.acceptance_group:
                 preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
+                if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
                 if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])
                 with (run/'environment_preparation.log').open('w') as log:
                     prepared=monitored_worker(preparation,log)

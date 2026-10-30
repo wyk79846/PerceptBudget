@@ -39,13 +39,16 @@ def main():
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
     parser.add_argument('--candidate',choices=('joint','m3'),default='joint',help='Compare original M3 or current M4 against the same q30 tasks')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
+    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     if args.first_tasks!=12 and (args.candidate!='m3' or not args.baseline_run):
         parser.error('Three-task screen requires --candidate m3 and --baseline-run')
+    if args.task_indices and (args.candidate!='m3' or not args.baseline_run or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
+        parser.error('Explicit indices require M3, saved baseline, default first-tasks and unique indices')
     cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
-    task_plan=fixed['tasks'][:args.first_tasks]
+    task_plan=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
     continuation=None
     if args.resume_joint:
         if args.candidate!='joint':parser.error('--resume-joint is only for the joint candidate')
@@ -72,6 +75,7 @@ def main():
             print('START '+group+' log='+str(log),flush=True)
             command=[cfg['python_executable'],'-u',str(ROOT/'scripts/run_m4.py'),
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
+            if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:
                 code=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT).returncode
