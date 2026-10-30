@@ -82,4 +82,4 @@ def choose_mode(decision, *, observation_step, previous_mode='Full', cost_model,
         window_start=now,window_end=deadline,margin_seconds=eta,
         current_profile=profile,quiet_age_seconds=quiet_age_seconds,
         latest_start_cap=latest_start_cap,previous_mode=previous_mode,
-        requires_full=requires_full,policy='m3_two_mode_deadline_energy_v2')
+        requires_full=requires_full,policy=decision.get('fast_policy','m3_two_mode_deadline_energy_v2'))

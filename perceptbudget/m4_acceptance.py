@@ -146,7 +146,7 @@ def configure_m3_fast(config, settings):
     """Only visual selection is added to the original M3 timing/controller."""
     configure_m3(config,settings)
     config.update(m3_fast_enabled=True,m2_fast_no_state=True,m4_fast_prompt_capacity=20,
-        m3_fast_policy='m3_two_mode_deadline_energy_v2')
+        m3_fast_policy='m3_full_fast_execution_window_v3')
     from perceptbudget.m3_fast_choice import load_cost_model
     config['m3_fast_cost_model']=load_cost_model(json.loads((Path(__file__).resolve().parents[1]/'m4.json').read_text()))
 

@@ -125,7 +125,7 @@ def audit(run):
     if cfg.get('m4_enabled') and mode_histories is not None:
         mode_histories={key:[value] for key,value in cfg['rtc_initial_delays_by_compute'].items()}
     service_history=None
-    if cfg.get('m3_fast_policy')=='m3_two_mode_deadline_energy_v2':
+    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3'):
         service_history={'Full':{h:list(v) for h,v in cfg['m3_service_samples'].items()},
             'Fast':{h:list(cfg['m3_fast_cost_model']['service']['Fast'][h]['samples_seconds'])
                     for h in ('hot','short','long')}}
@@ -175,8 +175,15 @@ def audit(run):
                 if not origin:
                     expected_choice='Full'
                 else:
-                    if cfg.get('m3_fast_policy')=='m3_two_mode_deadline_energy_v2':
+                    if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3'):
                         formula=decision['m3_fast_formula']
+                        if cfg.get('m3_fast_policy')=='m3_full_fast_execution_window_v3':
+                            window=decision['fast_execution_window']
+                            check('fast_window_belongs_to_current_chunk',previous is not None and window['prediction_id']==previous['prediction_id'],pid)
+                            expected_end=window['start_step']+math.ceil((window['full_recovery_seconds']+window['margin_seconds'])/window['period_seconds']-1e-9)
+                            check('fast_execution_window_end',window['end_step']==expected_end,pid)
+                            check('fast_critical_outside_committed_window',decision.get('critical_step') is None or decision['critical_step']>expected_end,pid)
+                            check('fast_excluded_events_inside_window',all(e['target_step']<=expected_end for e in decision['fast_ignored_events']),pid)
                         errors=audit_fast_formula(formula,decision,cfg['m3_fast_cost_model'],previous_mode)
                         probability=cfg['m3_timing']['service_quantile']
                         for proposal in formula['candidates']:

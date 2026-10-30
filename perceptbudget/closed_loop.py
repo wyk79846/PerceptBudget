@@ -346,6 +346,21 @@ class DeadlineRuntime:
         visible = [e for e in self.events if step <= e['target_step'] < end]
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
+        fast_window=None
+        ignored_events=[]
+        if self.fast_selection and current is not None:
+            # Freeze once per committed chunk: never slide the exclusion window
+            # forward on every tick and swallow a previously actionable event.
+            fast_window=current.get('fast_execution_window')
+            if fast_window is None:
+                seconds=self.times.estimate('recovery')+self.margin.seconds
+                fast_window=dict(prediction_id=item[1],start_step=step,start_monotonic=now,
+                    full_recovery_seconds=seconds-self.margin.seconds,
+                    margin_seconds=self.margin.seconds,period_seconds=period,
+                    end_step=step+math.ceil(seconds/period-1e-9))
+                current['fast_execution_window']=fast_window
+            ignored_events=[dict(e) for e in candidates if e['target_step']<=fast_window['end_step']]
+            candidates=[e for e in candidates if e['target_step']>fast_window['end_step']]
         critical = min((e['target_step'] for e in candidates), default=None)
         critical_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical})
         if self.signal_policy=='latest':
@@ -390,6 +405,9 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
+        if self.fast_selection:
+            self.plan.update(fast_policy='m3_full_fast_execution_window_v3',
+                fast_execution_window=fast_window,fast_ignored_events=ignored_events)
         self.plan.update(rtc_delay_steps=rtc_delay_steps,rtc_latest_submit_step=rtc_latest_submit,
                          rtc_submit_guard_steps=rtc_guard_steps,start_constraint='service_deadline')
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
