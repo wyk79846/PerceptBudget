@@ -444,6 +444,8 @@ def audit(run):
                 source=by_step[step]['source']
                 old=by_id[previous['prediction_id']]
                 limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
+                if m3 and old.get('m3_fast_choice',{}).get('mode')=='Fast' and cfg.get('m3_fast_max_offset') is not None:
+                    limit=min(limit,cfg['m3_fast_max_offset'])
                 exhausted=(step>=old['observation_step']+limit or (age_limit is not None and
                     by_step[step]['action_start_monotonic']>=old['observation_monotonic']+age_limit))
                 check('old_actions_during_inference',source is None if exhausted else
@@ -471,6 +473,8 @@ def audit(run):
             check('sequential_action_timestamps',by_step[step-1]['action_end_monotonic']<=row['tick_monotonic'],step)
         check('commit_before_action',active['commit_monotonic']<=row['action_start_monotonic'],step)
         limit=cfg['m3_timing']['maximum_action_offset'] if m3 else cfg['H']
+        if m3 and request.get('m3_fast_choice',{}).get('mode')=='Fast' and cfg.get('m3_fast_max_offset') is not None:
+            limit=min(limit,cfg['m3_fast_max_offset'])
         if offset>=limit or (age_limit is not None and row['action_start_monotonic']>=
                 request['observation_monotonic']+age_limit):
             underflows.append(step)

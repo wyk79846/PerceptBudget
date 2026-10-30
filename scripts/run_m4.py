@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete recovery-to-commit budget plus margin, rounded to control steps')
+    parser.add_argument('--fast-max-offset',type=int,choices=range(1,51),help='Fast observation-relative action coverage; inference consumption counts toward this limit')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
@@ -29,6 +30,7 @@ def main():
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args.fast_reserve_full and (args.acceptance_group!='m3_fast' or args.full_only):parser.error('--fast-reserve-full requires m3_fast without --full-only')
+    if args.fast_max_offset is not None and (args.acceptance_group!='m3_fast' or args.full_only):parser.error('--fast-max-offset requires m3_fast without --full-only')
     if args.full_only and args.acceptance_group!='m3_fast':parser.error('--full-only requires m3_fast')
     if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Three-task screen is for the M3 candidate')
     if args.task_indices and (args.acceptance_group not in ('m3','m3_fast') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
@@ -61,6 +63,7 @@ def main():
             (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
             cfg['m3_fast_reserve_full']=False
             cfg['m3_fast_advance']=args.fast_reserve_full
+            if args.fast_max_offset is not None:cfg['m3_fast_max_offset']=args.fast_max_offset
             if args.fast_reserve_full:cfg['m3_fast_policy']='m3_service_ledger_fast_advance_v4'
             cfg['m3_fast_full_only']=args.full_only
             settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
@@ -79,7 +82,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            fast_max_offset=args.fast_max_offset,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -133,6 +136,7 @@ def main():
                 '--task-id',str(args.task_id),'--suites',*args.suites]
             if args.acceptance_group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.fast_reserve_full:command.append('--fast-reserve-full')
+            if args.fast_max_offset is not None:command.extend(['--fast-max-offset',str(args.fast_max_offset)])
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')
