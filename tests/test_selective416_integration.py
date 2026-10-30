@@ -44,3 +44,17 @@ def test416_uses_own_latency_calibration_and_recovery_prior():
     runtime=DeadlineRuntime(cfg)
     assert abs(runtime.fast_times.estimate('hot')-.42)<1e-9
     assert abs(runtime.fast_times.estimate('recovery')-.62)<1e-9
+
+
+def test_worker_explicit_setup_keeps416_state_and_removes_stateless_capacity():
+    from perceptbudget.rtc_visual_alternation import configure_explicit_inputs,FreshViewRTCAdapter
+    cfg=dict(m3_fast_selective416=True,m2_fast_no_state=True,m4_fast_prompt_capacity=20)
+    configure_explicit_inputs(cfg)
+    assert cfg['m2_fast_no_state'] is False
+    assert 'm4_fast_prompt_capacity' not in cfg
+    adapter=object.__new__(FreshViewRTCAdapter);adapter.config=cfg
+    snapshot=dict(images=['external','wrist'],state=[.1]*32,raw_state=[.1]*8)
+    assert adapter.context_inputs(snapshot,'selective416')['state']==snapshot['state']
+    legacy=dict(m2_fast_no_state=False,m4_fast_prompt_capacity=20)
+    configure_explicit_inputs(legacy)
+    assert legacy['m2_fast_no_state'] is True and legacy['m4_fast_prompt_capacity']==20

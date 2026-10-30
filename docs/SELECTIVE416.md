@@ -11,3 +11,7 @@ shared_visual_context增加416前端；rtc_visual_alternation增加几何/请求
 调度保持M3基础与V4提前规则。Fast的初始hot时延取新候选现场校准，恢复初始估计加已有Full测得的recovery-hot差，随后真实提交更新Fast独立恢复历史。旧320 M2能量只作初始排序参考，配置明确标注；不是416已测服务能量，不据此声称收益。最终比较实测全任务能量，Continue仍单独积分。
 
 验证：CUDA小内核对随机/同分输入选块及输出与参考逐元素相同；接入上下文图在Long6第140步，与独立CPU参考特征差0，416有效前缀568，Full重复动作差0。原生图固定输入证据：M4/20261030T171416.568107Z-fast-fixed-input-c90ba91a；前10步相对Full动作RMSE0.04485，非闭环成功率。77项相关测试（含新增时延初始值用例）通过。闭环尚待sudo用户终端执行。
+
+## 首次闭环入口修复
+
+20261030T172122.759615Z首次闭环在准备Fast前端时中止，未执行任务。原因是resident_quality显式视觉分支残留m2_fast_no_state=True，覆盖CLI的416带state配置；原生前端因此正确拒绝stateless selective416。已将worker输入绑定集中到configure_explicit_inputs：416保留state并移除stateless容量，旧320保持原行为。补充回归测试覆盖该worker配置及context_inputs实际保留state。该失败run不计任务失败。频率预检restored=True，runtime_clocks日志RESTORED。修复后仍需原指令重新闭环。

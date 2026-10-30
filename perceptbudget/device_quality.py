@@ -249,7 +249,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                    m2_delay_modes=['full',visual_fast_mode])
     if explicit_visual:
         from perceptbudget.m4_visual import M4ViewRTCAdapter as OriginalOpenPiRTCAdapter
-        cfg['m2_fast_no_state']=True
+        from perceptbudget.rtc_visual_alternation import configure_explicit_inputs
+        configure_explicit_inputs(cfg)
     from perceptbudget.model import vision_pool_factor
     pool_factor = vision_pool_factor(cfg)
     from perceptbudget.mixed_view_pool import visual_tokens

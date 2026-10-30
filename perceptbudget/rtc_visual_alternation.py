@@ -12,6 +12,13 @@ def visual_geometry(mode):
                 vision_pool_factor=2 if mode.startswith('pool2') or mode=='selective416' else 1)
 
 
+def configure_explicit_inputs(config):
+    """Worker-level binding; retain state for416, preserve legacy320 behavior."""
+    config['m2_fast_no_state']=not config.get('m3_fast_selective416',False)
+    if config.get('m3_fast_selective416'):
+        config.pop('m4_fast_prompt_capacity',None)
+
+
 def scheduled_visual_mode(prediction_id, fast_mode, enabled, full_per_fast=1):
     if type(full_per_fast) is not int or full_per_fast not in (1,2):
         raise ValueError('Use one or two Full requests per Fast')
