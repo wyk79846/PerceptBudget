@@ -1,10 +1,10 @@
 """Resident banks retain exact overlapping shapes without accumulating tasks."""
 import pytest
-import torch
 from perceptbudget.rtc_source_step_graph import SourceStepBank
 
 
 def test_resident_keeps_overlap_and_builds_only_missing(monkeypatch):
+    import torch
     monkeypatch.setattr(torch.cuda,'synchronize',lambda:None)
     bank=SourceStepBank.__new__(SourceStepBank)
     bank.resident=True

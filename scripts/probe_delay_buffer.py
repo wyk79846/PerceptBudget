@@ -707,7 +707,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if stop is None:
             stop = time.monotonic()
         try:
-            if config.get('m3_formal_comparison') and future is not None and status!='invalid':
+            if request_watchdog is not None and future is not None and status!='invalid':
                 from perceptbudget.watchdog import finish_watched_request
                 finish_watched_request(future,current_request,request_watchdog)
         finally:
