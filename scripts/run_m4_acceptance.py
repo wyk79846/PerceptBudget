@@ -46,12 +46,10 @@ def main():
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse an already passed, identical task environment preflight')
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete Fast recovery-to-commit budget plus margin, rounded to control steps')
-    parser.add_argument('--fast-max-offset',type=int,choices=range(1,51),help='Fast observation-relative action coverage; inference consumption counts toward this limit')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
     if args.fast_reserve_full and (args.candidate!='m3_fast' or args.full_only):parser.error('--fast-reserve-full requires m3_fast without --full-only')
-    if args.fast_max_offset is not None and (args.candidate!='m3_fast' or args.full_only):parser.error('--fast-max-offset requires m3_fast without --full-only')
     if args.full_only and args.candidate!='m3_fast':parser.error('--full-only requires m3_fast')
     if args.first_tasks!=12 and (args.candidate not in ('m3','m3_fast') or not args.baseline_run):
         parser.error('Three-task screen requires --candidate m3 and --baseline-run')
@@ -91,7 +89,6 @@ def main():
                 '--acceptance-group',group,'--result-index',str(index),'--first-tasks',str(args.first_tasks)]
             if group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
             if args.fast_reserve_full:command.append('--fast-reserve-full')
-            if args.fast_max_offset is not None:command.extend(['--fast-max-offset',str(args.fast_max_offset)])
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])

@@ -211,9 +211,6 @@ class DeadlineRuntime:
         self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
         self.fast_advance=bool(config.get('m3_fast_advance',False))
-        self.fast_max_offset=config.get('m3_fast_max_offset')
-        if self.fast_max_offset is not None and (not self.fast_selection or type(self.fast_max_offset) is not int or not 1<=self.fast_max_offset<=config['H']):
-            raise ValueError('Fast offset limit requires enabled Fast and integer within H')
         self.events_config = EventConfig(**config['m3_events'])
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
@@ -281,8 +278,7 @@ class DeadlineRuntime:
         if self.fast_selection:
             self.fast_last_mode=request['m3_fast_choice']['mode']
             self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
-        self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'],
-            context_mode=request.get('m3_fast_choice',{}).get('mode','Full'))
+        self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'])
         signal=request.get('dvac',{})
         prefix=signal.get('prefix_actions') if self.dvac_enabled else None
         self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
@@ -337,10 +333,7 @@ class DeadlineRuntime:
             return False
         chunk = self.chunks[item[1]]
         age_limit=self.settings['maximum_observation_age_seconds']
-        limit=self.settings['maximum_action_offset']
-        if chunk.get('context_mode')=='Fast' and getattr(self,'fast_max_offset',None) is not None:
-            limit=min(limit,self.fast_max_offset)
-        return (step < chunk['origin']+limit and
+        return (step < chunk['origin']+self.settings['maximum_action_offset'] and
                 (age_limit is None or now < chunk['observation']+age_limit))
 
     def decide(self, *, now, step, queue, rows, inflight, rtc_delay_steps=None):
@@ -407,8 +400,6 @@ class DeadlineRuntime:
                          estimated_control_period_seconds=period, critical_step=critical,
                          dvac_step=current.get('dvac_step') if current else None,
                          action_events_enabled=self.action_events_enabled, dvac_enabled=self.dvac_enabled,
-                         fast_max_offset=getattr(self,'fast_max_offset',None),
-                         active_context_mode=current.get('context_mode','Full') if current else None,
                          inflight=inflight, path='low_continue_recovery' if recovery else 'high_frequency',
                          current_profile=self.clocks.profile if self.clocks else 'baseline',
                          covered_event_count=len(self.covered_events),
