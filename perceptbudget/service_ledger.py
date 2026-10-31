@@ -22,7 +22,9 @@ def build_ledger(episode, requests, *, max_gap_seconds=.3, forbid_hot_fast=False
             raise ValueError('Hot Fast violates selected policy')
         a=max(start,a);b=min(stop,b)
         if b<a:raise ValueError('Invalid service interval')
-        services.append((a,b,('Recovery ' if recovery else 'Hot ')+mode,request['prediction_id']))
+        label=('Recovery ' if recovery else 'Hot ')+mode
+        if request.get('m3_full_frequency')=='gpu_emc':label='Low Full'
+        services.append((a,b,label,request['prediction_id']))
     windows=[];cursor=start
     for a,b,label,pid in sorted(services):
         if a<cursor-1e-8:raise ValueError('Overlapping services would double count energy')

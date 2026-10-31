@@ -313,6 +313,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                            for mode in config.get('m2_delay_modes', ('full','expert_only'))}
     if config.get('m4_enabled') and mode_delay_queues is not None:
         mode_delay_queues={key:DelayQueue(value,config['rtc_delay_buffer_size']) for key,value in config['rtc_initial_delays_by_compute'].items()}
+    frequency_delay_queues=None
+    if config.get('m3_low_full'):
+        if delay_queue is None or mode_delay_queues is not None:
+            raise ValueError('Low Full requires paper RTC without visual mode delay queues')
+        frequency_delay_queues=dict(baseline=delay_queue,
+            gpu_emc=DelayQueue(config['m3_low_full_initial_delay'],config['rtc_delay_buffer_size']))
     current_request = None
     missed_triggers, underflows = [], []
     from perceptbudget.critical_wait import PhaseWait
@@ -336,6 +342,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if config.get('m4_enabled'):
             from perceptbudget.m4_runtime import M4Runtime
             scheduler=M4Runtime(config,rtc_adapter)
+        elif config.get('m3_low_full'):
+            from perceptbudget.m3_low_full import LowFullRuntime
+            scheduler=LowFullRuntime(config)
         else:
             scheduler = DeadlineRuntime(config)
         scheduler.start_clocks(run_dir)
@@ -379,6 +388,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if scheduler is not None:
             scheduler.requested(request)
         selected_delay_queue=delay_queue
+        if frequency_delay_queues is not None:
+            selected_delay_queue=frequency_delay_queues[request['m4_compute_profile']]
+            request['full_delay_profile']=request['m4_compute_profile']
         if mode_delay_queues is not None:
             mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
             request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']=mode
@@ -423,7 +435,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'control_period_estimate_seconds': period_estimate,
                 'predicted_inference_seconds': rtc_adapter.latency_estimate_seconds,
                 'old_chunk_origin_step': old_origin,
-                'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'mode_history_max' if mode_delay_queues is not None else 'history_max' if delay_queue is not None else 'latency'),
+                'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'frequency_history_max' if frequency_delay_queues is not None else 'mode_history_max' if mode_delay_queues is not None else 'history_max' if delay_queue is not None else 'latency'),
             }
             if delay_queue is not None:
                 request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
@@ -483,6 +495,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
             if delay_queue is not None and not current_request.get('delay_queue_observed'):
                 observed_queue=delay_queue
+                if frequency_delay_queues is not None:
+                    observed_queue=frequency_delay_queues[current_request['m4_compute_profile']]
                 if mode_delay_queues is not None:
                     mode=current_request['context_refresh' if config.get('m2_visual_alternation') else 'kv_recompute']['mode']
                     if mode!=current_request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']:
@@ -589,6 +603,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             due = refresh_due(step, anchor_step, q, refresh_policy)
             if scheduler is not None:
                 rtc_delay=delay_queue.estimate if delay_queue is not None else None
+                if frequency_delay_queues is not None:
+                    rtc_delay=max(q.estimate for q in frequency_delay_queues.values())
                 if (config.get('m4_enabled') or config.get('m3_fast_enabled')) and mode_delay_queues:
                     rtc_delay=max(q.estimate for q in mode_delay_queues.values())
                 if config.get('rtc_fixed_delay_estimate') is not None:

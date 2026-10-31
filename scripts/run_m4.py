@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
+    parser.add_argument('--low-full',action='store_true',help='M3 only: measured energy/deadline selection of Full compute frequency; no Fast')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
@@ -34,6 +35,7 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.low_full and args.acceptance_group!='m3':parser.error('--low-full requires M3 without Fast')
     if args.phase_refresh and args.acceptance_group!='m3':parser.error('--phase-refresh requires M3')
     if args.first_refresh_step is not None and args.acceptance_group!='m3':parser.error('--first-refresh-step requires M3')
     if args.critical_wait_phases and not args.critical_wait:parser.error('--critical-wait-phases requires --critical-wait')
@@ -47,6 +49,7 @@ def main():
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
     if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
+    cfg['m3_low_full']=args.low_full
     cfg['m3_phase_refresh']=args.phase_refresh
     cfg['m3_first_refresh_step']=args.first_refresh_step
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
@@ -89,6 +92,12 @@ def main():
             cfg['m3_replay_eta_ms']=args.m3_eta_ms
             settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
             cfg['m3_comparison_tasks']=settings['calibration_tasks']
+    if args.low_full:
+        import math
+        from perceptbudget.m3_low_full import load_costs
+        cfg['m3_low_full_costs']=load_costs(m4)
+        low=max(c['p95_service_seconds'] for c in cfg['m3_low_full_costs']['cells'] if c['profile']=='gpu_emc')
+        cfg['m3_low_full_initial_delay']=math.ceil((low+.05)/.05)
     continuation=None
     if args.resume_from:
         if args.acceptance_group!='joint':parser.error('Resume is only available for joint acceptance')
@@ -99,9 +108,9 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast=('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
-            compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
+            compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            low_full=args.low_full,phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -161,6 +170,7 @@ def main():
             if args.critical_wait_phases:command.append('--critical-wait-phases')
             if args.first_refresh_step is not None:command.extend(['--first-refresh-step',str(args.first_refresh_step)])
             if args.phase_refresh:command.append('--phase-refresh')
+            if args.low_full:command.append('--low-full')
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')

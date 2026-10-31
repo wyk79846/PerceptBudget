@@ -200,6 +200,8 @@ def audit(run):
         check('single_fast_committed',1 in committed)
         check('single_fast_actually_executed',any(r.get('source',{}).get('prediction_id')==1 for r in controls))
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
+    frequency_histories=({'baseline':[cfg['rtc_initial_delay_steps']],
+        'gpu_emc':[cfg['m3_low_full_initial_delay']]} if cfg.get('m3_low_full') else None)
     mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in cfg.get('m2_delay_modes', ('full','expert_only'))}
                     if cfg.get('m2_split_delay') else None)
     if cfg.get('m4_enabled') and mode_histories is not None:
@@ -391,6 +393,43 @@ def audit(run):
             if m3:
                 d=decisions.get(origin,{})
                 t=request.get('m3_timing',{})
+                if cfg.get('m3_low_full'):
+                    profile=request.get('m4_compute_profile')
+                    check('m3_full_profile_declared',profile in ('baseline','gpu_emc')
+                          and request.get('m3_full_frequency')==profile,pid)
+                    formula=t.get('low_full_formula')
+                    if formula:
+                        from perceptbudget.m4_candidates import hold_energy
+                        costs=cfg['m3_low_full_costs']
+                        now=t['decision_monotonic'];end=t['deadline']-t['margin_seconds']
+                        for row in formula['candidates']:
+                            cell=next(c for c in costs['cells'] if c['profile']==row['profile']
+                                and c['history']==row['history'] and c['from_profile']=='gpu_emc')
+                            cap=formula['rtc_low_cap'] if row['profile']=='gpu_emc' else row['latest_start']
+                            latest=min(end-row['service_seconds'],cap)
+                            before=max(0.,latest-now)
+                            tail=max(0.,end-(now+before+cell['mean_service_seconds']))
+                            energy=(hold_energy(costs['waits'],'gpu_emc',formula['quiet_age_seconds'],before)
+                                +cell['mean_absolute_service_energy_j']+hold_energy(costs['waits'],row['profile'],0.,tail))
+                            check('m3_full_common_window_energy',abs(row['energy_j']-energy)<1e-8
+                                and abs(row['latest_start']-latest)<1e-8
+                                and row['feasible']==(latest>=now-1e-9),pid)
+                        choices=[r for r in formula['candidates'] if r['quality_allowed'] and r['feasible']]
+                        chosen=min(choices,key=lambda r:(r['energy_j'],r['profile']!='baseline')) if choices else formula['candidates'][0]
+                        check('m3_full_minimum_feasible_energy',formula['selected']==chosen
+                            and chosen['profile']==profile,pid)
+                    if profile=='gpu_emc':
+                        from perceptbudget.key_phases import absolute_intervals
+                        from perceptbudget.action_events import EventConfig,detect_events
+                        ec=EventConfig(**cfg.get('m3_events',{}))
+                        phases=absolute_intervals(old['actions'],old['observation_step'],ec)
+                        qlow=t['service_seconds'];period=t['estimated_control_period_seconds']
+                        imminent=[e for e in detect_events(old['actions'],ec)
+                            if 0<=(old['observation_step']+e['offset']-origin)*period<=qlow+t['margin_seconds']]
+                        check('m3_low_full_only_ordinary_stage',bool(formula) and formula['ordinary']
+                            and old['prediction_id']!=0 and t['reason']!='action_event'
+                            and not any(p['start_step']<=origin<p['stop_step'] for p in phases)
+                            and not imminent,pid)
                 check('m3_request_minimum_interval',origin>=max(old['observation_step']+q,previous['commit_step']),pid)
                 check('m3_request_triggered_by_recorded_deadline',
                       d.get('start_now') is True and d.get('inflight') is False
@@ -421,6 +460,7 @@ def audit(run):
                           and d.get('dvac_enabled')==expected_variance,pid)
                     expected_policy='independent' if group=='C_independent' else 'joint'
                     expected_budget='recovery' if group=='D_joint' and d.get('path')=='low_continue_recovery' else 'hot'
+                    if cfg.get('m3_low_full') and request.get('m4_compute_profile')=='gpu_emc':expected_budget='low'
                     check('formal_device_service_budget',d.get('dvfs_policy')==expected_policy
                           and d.get('service_budget_history')==expected_budget,pid)
                 if 'signal_policy' in d:
@@ -457,6 +497,7 @@ def audit(run):
                     decision_step=min(e['step'] for e in originals)
                     period=d['estimated_control_period_seconds']
                     delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') or cfg.get('m3_fast_enabled') else g['delay_estimate_steps']
+                    if frequency_histories is not None:delay=max(max(v) for v in frequency_histories.values())
                     latest_submit=old['observation_step']+cfg['H']-delay
                     guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
@@ -499,6 +540,12 @@ def audit(run):
             elif cfg.get('rtc_paper_schedule'):
                 estimate=cfg.get('rtc_fixed_delay_estimate')
                 expected_history=history
+                if frequency_histories is not None:
+                    profile=request.get('m4_compute_profile')
+                    check('full_frequency_delay_profile',profile in frequency_histories
+                          and request.get('full_delay_profile')==profile
+                          and g.get('delay_estimate_mode')=='frequency_history_max',pid)
+                    expected_history=frequency_histories.get(profile,[])
                 if mode_histories is not None:
                     mode=request.get('context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute',{}).get('mode')
                     check('planned_delay_mode_matches_execution',request.get('planned_context_mode' if cfg.get('m2_visual_alternation') else 'planned_kv_mode')==mode,pid)
@@ -537,6 +584,9 @@ def audit(run):
                       source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
             history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
+            if frequency_histories is not None:
+                profile=request['m4_compute_profile']
+                frequency_histories[profile]=(frequency_histories[profile]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
             if mode_histories is not None:
                 mode=request['context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute']['mode']
                 key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') else mode
