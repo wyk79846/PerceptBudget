@@ -37,7 +37,7 @@ def validate_baseline(source,fixed):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
-    parser.add_argument('--candidate',choices=('joint','m3','m3_fast'),default='joint',help='Compare original M3 or current M4 against the same q30 tasks')
+    parser.add_argument('--candidate',choices=('joint','m3','m3_fast'),default='m3',help='Default: frozen M3; Fast and joint scheduling require explicit selection')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
     parser.add_argument('--m3-reference',type=Path,help='Existing combined M3 result JSON for an additional per-task comparison')
