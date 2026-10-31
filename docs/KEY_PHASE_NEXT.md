@@ -54,3 +54,7 @@ Full512视觉token＋state；Fast外部64＋腕部256=320、不带state，仍每
 新的运行快照显式记录m3_key_phase_response_policy=full_once_v1；历史准入版无该字段，审计按旧机制处理。FlashRT、压缩、state、RTC、频率配置和阈值未改。使用上一条同样含--fast-key-phases的命令重测Long6一次即可，新GPU闭环尚未执行。
 
 终止时尚未提交的末次Full响应按既有收尾处理，不伪造“完成响应”；审计允许唯一末次在途请求，并核对已提交响应的完成记录。
+
+## 当前12任务安排
+
+用户授权完整12任务：Spatial/Object/Goal/Long各0/3/6，seed7/init0，full_once_v1＋320无state Fast，关闭416/30步/夹爪门槛。复用q30历史3987e0c4及M3汇总1d3cd769，当前候选只跑一次、整批1模型。环境缓存用已通过完整12任务的d33224be，不用Long6单任务缓存。清单与dry-run已核对12回合/1load；须普通终端sudo密码，尚未启动本批。先前Long6结果已记录ab9862a3，不能因新功能实际执行就视作任务质量改善。
