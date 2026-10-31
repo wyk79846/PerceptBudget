@@ -47,11 +47,13 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse an already passed, identical task environment preflight')
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete Fast recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
+    parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
     parser.add_argument('--fast-key-phases',action='store_true',help='Experimental320 key-phase protection and one Full response')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if args.critical_wait_phases and not args.critical_wait:parser.error('--critical-wait-phases requires --critical-wait')
     if args.critical_wait and args.candidate!='m3':parser.error('--critical-wait requires M3 without Fast')
     if args.fast_reserve_full and (args.candidate!='m3_fast' or args.full_only):parser.error('--fast-reserve-full requires m3_fast without --full-only')
     if args.fast_selective416 and (not args.fast_reserve_full or args.full_only):parser.error('--fast-selective416 requires --fast-advance without --full-only')
@@ -78,7 +80,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
-            critical_wait=args.critical_wait,fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; PACE-inspired key-phase guard and one Full response' if args.fast_key_phases else 'events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
+            critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; PACE-inspired key-phase guard and one Full response' if args.fast_key_phases else 'events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
     subprocess.run(['sudo','-v'],check=True)
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed,m4_comparison_tasks=task_plan),'M4','paired-acceptance',repo_root=ROOT)
@@ -98,6 +100,7 @@ def main():
             if args.fast_selective416:command.append('--fast-selective416')
             if args.fast_key_phases:command.append('--fast-key-phases')
             if args.critical_wait and group=='m3':command.append('--critical-wait')
+            if args.critical_wait_phases and group=='m3':command.append('--critical-wait-phases')
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])

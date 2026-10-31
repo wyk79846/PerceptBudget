@@ -1,0 +1,98 @@
+{
+  "scope": "Fixed-history replay; changed closed-loop results not yet measured",
+  "source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261031T043710.052515Z-record-full-1a5737db",
+  "rows": [
+    {
+      "prediction_id": 2,
+      "step": 52,
+      "original_wait_seconds": 0.3438937049359083,
+      "review": {
+        "wait": true,
+        "reason": "new_phase",
+        "phase": {
+          "start_offset": 3,
+          "stop_offset": 26,
+          "valley_offsets": [
+            16
+          ],
+          "anchors": [
+            {
+              "kind": "gripper_close",
+              "offset": 14
+            }
+          ],
+          "minimum_command_norm": 0.11583930042358422,
+          "shoulder_command_norm": 0.8877304615310083,
+          "end_observed": true,
+          "start_step": 41,
+          "stop_step": 64
+        },
+        "kinds": [
+          "gripper_close"
+        ]
+      }
+    },
+    {
+      "prediction_id": 3,
+      "step": 56,
+      "original_wait_seconds": 0.3289053840562701,
+      "review": {
+        "wait": false,
+        "reason": "phase_already_waited",
+        "covered_phase": {
+          "start_step": 41,
+          "stop_step": 64,
+          "kinds": [
+            "gripper_close"
+          ]
+        }
+      }
+    },
+    {
+      "prediction_id": 6,
+      "step": 138,
+      "original_wait_seconds": 0.22493426129221916,
+      "review": {
+        "wait": true,
+        "reason": "new_phase",
+        "phase": {
+          "start_offset": 2,
+          "stop_offset": 22,
+          "valley_offsets": [
+            15
+          ],
+          "anchors": [
+            {
+              "kind": "gripper_open",
+              "offset": 15
+            }
+          ],
+          "minimum_command_norm": 0.08672650381122361,
+          "shoulder_command_norm": 0.3425815679350892,
+          "end_observed": true,
+          "start_step": 125,
+          "stop_step": 145
+        },
+        "kinds": [
+          "gripper_open"
+        ]
+      }
+    },
+    {
+      "prediction_id": 7,
+      "step": 139,
+      "original_wait_seconds": 0.4804671974852681,
+      "review": {
+        "wait": false,
+        "reason": "phase_already_waited",
+        "covered_phase": {
+          "start_step": 125,
+          "stop_step": 145,
+          "kinds": [
+            "gripper_open"
+          ]
+        }
+      }
+    }
+  ]
+}

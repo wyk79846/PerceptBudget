@@ -315,6 +315,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         mode_delay_queues={key:DelayQueue(value,config['rtc_delay_buffer_size']) for key,value in config['rtc_initial_delays_by_compute'].items()}
     current_request = None
     missed_triggers, underflows = [], []
+    from perceptbudget.critical_wait import PhaseWait
+    phase_wait = PhaseWait()
     prefix_rejection = None
     if config.get('m3_critical_wait') and config.get('controlled_delay_steps') is not None:
         raise ValueError('Critical wait requires actual async completion, not controlled step delay')
@@ -629,6 +631,16 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if config.get('m3_critical_wait') and future is not None:
                 from perceptbudget.critical_wait import should_wait, wait_target
                 if should_wait(current_request, step):
+                    review = dict(wait=True, reason='point_event')
+                    active_item = queue.get(step)
+                    if config.get('m3_critical_wait_phases') and active_item is not None:
+                        owner = requests[active_item[1]]
+                        review = phase_wait.review(current_request, owner['actions'],
+                            owner['observation_step'], scheduler.events_config)
+                    current_request['critical_wait_review'] = review
+                else:
+                    review = dict(wait=False)
+                if review['wait']:
                     waiting_request = current_request
                     wait_started = time.monotonic()
                     target = wait_target(waiting_request)
@@ -639,6 +651,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                         if future is not None:
                             time.sleep(.002)
                     critical_wait_seconds = time.monotonic() - wait_started
+                    phase_wait.complete(review)
                     waiting_request['critical_wait'] = dict(step=step, target_step=target,
                         seconds=critical_wait_seconds, simulation_frozen=True)
                     base._trace(stream, 'critical_wait', step=step,

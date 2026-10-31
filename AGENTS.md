@@ -1,4 +1,4 @@
-> 当前授权（2026-10-31）：用户要求先回退M3，暂停Fast与新增关键阶段规则。SSH验收入口默认m3；Full＋Continue、原版机制一、P95＋25ms，保留RTC与内存/环境缓存修复。不启动或续跑Fast。回退前分支archive/before-return-to-m3-20261031。此前Fast批次完成9回合、5成功，进入第10个任务触发RAM保护；原记录保留，不计作12回合结果。以下Fast描述为历史。
+> 当前授权（2026-10-31）：保持M3无Fast。用户授权关键位置缺口等待，并修复同一阶段重复等待；实验开关--critical-wait --critical-wait-phases，见docs/M3_CRITICAL_WAIT.md。只去重等待，不改原M3刷新规则。Object0原等待版成功但多耗能；新阶段去重已通过101项CPU检查和固定历史回放，尚未做GPU闭环。修改前备份archive/before-m3-phase-wait-20261031。以下Fast工作为历史，不续测。
 
 > 2026-10-31 当前：320无state Fast，`--fast-key-phases`已补Full响应，版本`m3_key_phase_response_policy=full_once_v1`。当前Fast新预测若含未结束关键区间，未来边界按完整服务预算提前Full，已进入则立即请求；Full提交后不重复响应同一阶段。147项相关测试及真实110步调度重放通过，GPU闭环待原指令重测。旧无版本标记的准入实验仍可审计，416/30步/闭爪门槛不启用。见docs/KEY_PHASE_NEXT.md。
 
