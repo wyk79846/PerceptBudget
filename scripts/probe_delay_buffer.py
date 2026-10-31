@@ -316,6 +316,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     current_request = None
     missed_triggers, underflows = [], []
     prefix_rejection = None
+    if config.get('m3_critical_wait') and config.get('controlled_delay_steps') is not None:
+        raise ValueError('Critical wait requires actual async completion, not controlled step delay')
     if config.get('prefix_lock') or config.get('adaptive_prefix'):
         raise ValueError('Hard-prefix experiments were retired; use the RTC entrypoint')
     late_policy = 'discard'
@@ -385,7 +387,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if rtc_adapter is not None and step > 0:
             executed = step - previous_request_step
             recent_rows = rows[-16:]
-            periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+            periods = [b['action_end_monotonic'] - a['action_end_monotonic'] - b.get('critical_wait_seconds', 0.)
                        for a, b in zip(recent_rows, recent_rows[1:])]
             period_estimate = float(np.median(periods)) if periods else period
             delay = config.get('controlled_delay_steps', rtc_adapter.estimate_delay_steps(period_estimate))
@@ -597,7 +599,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if (rtc_adapter is not None and config.get('rtc_wait_for_delay_feasibility')
                     and future is None and step > 0 and due):
                 recent_rows = rows[-16:]
-                periods = [b['action_end_monotonic'] - a['action_end_monotonic']
+                periods = [b['action_end_monotonic'] - a['action_end_monotonic'] - b.get('critical_wait_seconds', 0.)
                            for a, b in zip(recent_rows, recent_rows[1:])]
                 measured_period = float(np.median(periods)) if periods else period
                 # Preserve the audited d<=s constraint; q is a minimum request
@@ -623,6 +625,26 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     missed_triggers.append(step)
                     base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q,
                                 trial_index=trial_index, condition=condition, step=step)
+            critical_wait_seconds = 0.0
+            if config.get('m3_critical_wait') and future is not None:
+                from perceptbudget.critical_wait import should_wait, wait_target
+                if should_wait(current_request, step):
+                    waiting_request = current_request
+                    wait_started = time.monotonic()
+                    target = wait_target(waiting_request)
+                    # No env.step and no queue consumption while waiting. Poll
+                    # through harvest so the normal request watchdog stays live.
+                    while future is not None:
+                        harvest(step)
+                        if future is not None:
+                            time.sleep(.002)
+                    critical_wait_seconds = time.monotonic() - wait_started
+                    waiting_request['critical_wait'] = dict(step=step, target_step=target,
+                        seconds=critical_wait_seconds, simulation_frozen=True)
+                    base._trace(stream, 'critical_wait', step=step,
+                        prediction_id=waiting_request['prediction_id'], target_step=target,
+                        seconds=critical_wait_seconds)
+                    deadline += critical_wait_seconds
             queued = buffer_count(queue, step)
             item = queue.pop(step, None)
             if scheduler is not None and not scheduler.admitted(item, step, time.monotonic()):
@@ -663,6 +685,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'trial_index': trial_index,
                 'condition': condition,
                 'tick_monotonic': tick,
+                'critical_wait_seconds': critical_wait_seconds,
                 'action_start_monotonic': action_start,
                 'action_end_monotonic': action_end,
                 'before': before,
@@ -762,6 +785,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         'steps': len(rows),
         'simulated_seconds': len(rows) * period,
         'real_seconds': stop - start,
+        'critical_wait_count': sum(r.get('critical_wait_seconds', 0) > 0 for r in rows),
+        'critical_wait_seconds': sum(r.get('critical_wait_seconds', 0) for r in rows),
         'start_monotonic': start,
         'stop_monotonic': stop,
         'inference_busy_seconds': busy,

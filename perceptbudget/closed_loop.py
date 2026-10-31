@@ -357,9 +357,9 @@ class DeadlineRuntime:
 
     def decide(self, *, now, step, queue, rows, inflight, rtc_delay_steps=None):
         item = queue.get(step)
-        intervals = [b['action_start_monotonic']-a['action_start_monotonic']
+        intervals = [b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.)
                      for a,b in zip(rows[-17:], rows[-16:])] if len(rows)>=17 else [
-                         b['action_start_monotonic']-a['action_start_monotonic'] for a,b in zip(rows,rows[1:])]
+                         b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.) for a,b in zip(rows,rows[1:])]
         period = median(intervals) if intervals else self.initial_period
         end = step
         while end in queue and self.admitted(queue[end],end,now):
