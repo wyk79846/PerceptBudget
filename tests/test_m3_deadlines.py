@@ -42,6 +42,26 @@ def test_first_event_free_refresh_cap_only_applies_to_bootstrap_chunk():
     assert 'first_refresh_cap' not in later and not later['start_now']
 
 
+def test_completed_phase_removes_repeat_refresh_but_retains_release_event():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_phase_refresh=True,m3_scheduler_mode='deadline_high',
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
+            maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False),
+        m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    r=DeadlineRuntime(cfg)
+    actions=[[1.,0.,0.,0.,0.,0.,1.] for _ in range(50)]
+    response=dict(start_step=10,stop_step=25,source_prediction_id=0,target_step=16,kinds=['gripper_close'])
+    r.committed(dict(prediction_id=1,observation_step=10,observation_monotonic=10.,actions=actions,
+        m3_timing=dict(reason='action_event',deadline=11.,critical_step=16,candidate_event_kinds=['gripper_close'],
+            refresh_phase_response=response)),dict(commit_step=14,commit_monotonic=10.2))
+    r.events=[dict(kind='slowdown',target_step=18,prediction_id=1),dict(kind='gripper_open',target_step=24,prediction_id=1)]
+    queue={10+i:(a,1,10,i) for i,a in enumerate(actions)}
+    d=r.decide(now=10.2,step=14,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['critical_step']==24
+    assert [e['target_step'] for e in d['refresh_phase_suppressed']]==[18]
+
+
 def test_recovery_path_must_have_its_own_idle_time():
     p=full_continue_plan(now=10.,step=0,buffer_end_step=16,period=.05,
                          hot_service=.55,recovery_service=.58,margin_seconds=.05)

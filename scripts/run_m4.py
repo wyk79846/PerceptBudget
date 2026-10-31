@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
+    parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
     parser.add_argument('--fast-key-phases',action='store_true',help='Experimental320 key-phase protection and one Full response')
@@ -33,6 +34,7 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.phase_refresh and args.acceptance_group!='m3':parser.error('--phase-refresh requires M3')
     if args.first_refresh_step is not None and args.acceptance_group!='m3':parser.error('--first-refresh-step requires M3')
     if args.critical_wait_phases and not args.critical_wait:parser.error('--critical-wait-phases requires --critical-wait')
     if args.critical_wait and args.acceptance_group!='m3':parser.error('--critical-wait requires M3 without Fast')
@@ -45,6 +47,7 @@ def main():
         parser.error('Explicit indices require M3, default first-tasks and unique indices')
     if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
+    cfg['m3_phase_refresh']=args.phase_refresh
     cfg['m3_first_refresh_step']=args.first_refresh_step
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
@@ -98,7 +101,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -157,6 +160,7 @@ def main():
             if args.critical_wait:command.append('--critical-wait')
             if args.critical_wait_phases:command.append('--critical-wait-phases')
             if args.first_refresh_step is not None:command.extend(['--first-refresh-step',str(args.first_refresh_step)])
+            if args.phase_refresh:command.append('--phase-refresh')
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')

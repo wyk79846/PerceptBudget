@@ -39,3 +39,11 @@ class PhaseWait:
         phase = review.get('phase')
         self.completed = (dict(start_step=phase['start_step'], stop_step=phase['stop_step'],
                                kinds=review['kinds']) if phase else None)
+
+
+def covered_by_phase(event, phase):
+    if not phase or not phase['start_step'] <= event['target_step'] < phase['stop_step']:
+        return False
+    kinds = phase['kinds']
+    return not (('gripper_open' == event['kind'] and 'gripper_close' in kinds) or
+                ('gripper_close' == event['kind'] and 'gripper_open' in kinds))

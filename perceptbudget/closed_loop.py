@@ -208,6 +208,9 @@ class DeadlineRuntime:
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
+        self.phase_refresh=bool(config.get('m3_phase_refresh'))
+        self.refresh_phase=None
+        if self.phase_refresh and self.fast_selection:raise ValueError('Phase refresh experiment requires M3 without Fast')
         self.first_refresh_step=config.get('m3_first_refresh_step')
         if self.first_refresh_step is not None and (type(self.first_refresh_step) is not int or self.first_refresh_step!=30 or self.fast_selection):
             raise ValueError('First-refresh experiment requires M3 without Fast and step30')
@@ -296,6 +299,13 @@ class DeadlineRuntime:
             self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'],
             context_mode=request.get('m3_fast_choice',{}).get('mode','Full'))
+        if self.phase_refresh:
+            from perceptbudget.key_phases import absolute_intervals
+            self.chunks[pid]['refresh_phases']=absolute_intervals(request['actions'],origin,self.events_config)
+            response=request.get('m3_timing',{}).get('refresh_phase_response')
+            if response and commit['commit_step']<response['stop_step']:
+                self.refresh_phase=dict(response,completed_prediction_id=pid,
+                    completed_step=commit['commit_step'])
         if getattr(self,'key_phase_guard',False):
             from perceptbudget.key_phases import absolute_intervals
             self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
@@ -373,6 +383,12 @@ class DeadlineRuntime:
         visible = [e for e in self.events if step <= e['target_step'] < end]
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
+        phase_suppressed=[]
+        if self.phase_refresh:
+            from perceptbudget.critical_wait import covered_by_phase
+            if self.refresh_phase and step>=self.refresh_phase['stop_step']:self.refresh_phase=None
+            phase_suppressed=[dict(e) for e in candidates if covered_by_phase(e,self.refresh_phase)]
+            candidates=[e for e in candidates if not covered_by_phase(e,self.refresh_phase)]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -437,6 +453,13 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
+        if self.phase_refresh:
+            response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
+                and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
+            self.plan.update(refresh_phase_covered=self.refresh_phase,
+                refresh_phase_suppressed=phase_suppressed,
+                refresh_phase_response=dict(start_step=response['start_step'],stop_step=response['stop_step'],
+                    source_prediction_id=item[1],target_step=critical,kinds=critical_kinds) if response and self.plan['reason']=='action_event' else None)
         if getattr(self,'key_phase_response_enabled',False):
             self.plan.update(key_phase_response_policy=self.key_phase_response_policy,key_phase_response=phase_response)
         if getattr(self,'key_phase_guard',False) and current is not None:

@@ -396,6 +396,24 @@ def audit(run):
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
                 policy=cfg.get('m3_signal_policy','earliest')
+                if cfg.get('m3_phase_refresh'):
+                    from perceptbudget.key_phases import absolute_intervals
+                    from perceptbudget.action_events import EventConfig
+                    from perceptbudget.critical_wait import covered_by_phase
+                    phase=d.get('refresh_phase_covered')
+                    if phase:
+                        completed=by_id.get(phase['completed_prediction_id'],{})
+                        response=completed.get('m3_timing',{}).get('refresh_phase_response')
+                        matched=[c for c in commits if c['prediction_id']==phase['completed_prediction_id']]
+                        source=by_id.get(phase['source_prediction_id'],{})
+                        phases=absolute_intervals(source.get('actions',[]),source.get('observation_step',0),EventConfig(**cfg.get('m3_events',{})))
+                        check('m3_refresh_phase_provenance',bool(response) and bool(matched)
+                            and all(phase.get(k)==response.get(k) for k in response)
+                            and phase['completed_step']==matched[0]['commit_step']<=origin<phase['stop_step']
+                            and any(p['end_observed'] and p['start_step']==phase['start_step']
+                                and p['stop_step']==phase['stop_step'] for p in phases),pid)
+                    check('m3_refresh_phase_suppression',all(covered_by_phase(e,phase)
+                        for e in d.get('refresh_phase_suppressed',[])),pid)
                 check('m3_signal_policy_matches_config',policy in ('earliest','latest')
                       and d.get('signal_policy','earliest')==policy,pid)
                 if group is not None:

@@ -1,4 +1,4 @@
-> 当前授权（2026-10-31）：保持M3无Fast。阶段等待Object0成功、Object3仍超时。用户同意只将首次无事件刷新提前到30步，新增--first-refresh-step 30实验开关，后续保持M3及阶段等待；见docs/M3_OBJECT3_FIRST_DIVERGENCE_20261031.md。102项CPU检查与旧记录审计通过，新GPU闭环待用户执行。修改前备份archive/before-m3-first-refresh30-20261031。以下Fast工作为历史，不续测。
+> 当前授权（2026-10-31）：保持M3无Fast。首次30步Object3仍超时，闭爪持续但提前上提后接触断开。用户同意同阶段刷新去重：--phase-refresh，保留--first-refresh-step 30 --critical-wait --critical-wait-phases。仅一次事件响应完成后覆盖旧预测的固定有限阶段；相反夹爪和缓冲/RTC硬约束保留。104项CPU检查、历史回放和单任务dry-run通过，GPU闭环待用户执行。修改前备份archive/before-m3-phase-refresh-20261031。见docs/M3_CRITICAL_WAIT.md。以下Fast工作为历史，不续测。
 
 > 2026-10-31 当前：320无state Fast，`--fast-key-phases`已补Full响应，版本`m3_key_phase_response_policy=full_once_v1`。当前Fast新预测若含未结束关键区间，未来边界按完整服务预算提前Full，已进入则立即请求；Full提交后不重复响应同一阶段。147项相关测试及真实110步调度重放通过，GPU闭环待原指令重测。旧无版本标记的准入实验仍可审计，416/30步/闭爪门槛不启用。见docs/KEY_PHASE_NEXT.md。
 

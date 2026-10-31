@@ -35,3 +35,12 @@ def test_completion_without_observed_phase_end_does_not_cover_whole_horizon():
     guard = PhaseWait()
     guard.complete(dict(phase=None, kinds=['turn']))
     assert guard.completed is None
+
+
+def test_phase_event_coverage_keeps_opposite_grip_and_outside_events():
+    from perceptbudget.critical_wait import covered_by_phase
+    phase=dict(start_step=44,stop_step=80,kinds=['gripper_close'])
+    assert covered_by_phase(dict(target_step=52,kind='turn'),phase)
+    assert covered_by_phase(dict(target_step=60,kind='slowdown'),phase)
+    assert not covered_by_phase(dict(target_step=74,kind='gripper_open'),phase)
+    assert not covered_by_phase(dict(target_step=80,kind='turn'),phase)
