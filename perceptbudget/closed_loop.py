@@ -208,6 +208,9 @@ class DeadlineRuntime:
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
+        self.first_refresh_step=config.get('m3_first_refresh_step')
+        if self.first_refresh_step is not None and (type(self.first_refresh_step) is not int or self.first_refresh_step!=30 or self.fast_selection):
+            raise ValueError('First-refresh experiment requires M3 without Fast and step30')
         self.fast_full_only=bool(config.get('m3_fast_full_only',False))
         self.fast_reserve_full=bool(config.get('m3_fast_reserve_full',False))
         self.fast_advance=bool(config.get('m3_fast_advance',False))
@@ -451,6 +454,17 @@ class DeadlineRuntime:
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
             self.plan.update(latest_start=rtc_latest_start,wait_seconds=max(0.,rtc_latest_start-now),
                              start_now=rtc_latest_start<=now,start_constraint='rtc_prefix')
+        if (self.first_refresh_step is not None and current is not None and item[1]==0
+                and critical is None and not inflight):
+            # This caps request submission, not result arrival. Start recovery
+            # one control tick earlier; do not subtract Full inference again.
+            recovery_ticks=1 if recovery else 0
+            cap=now+(self.first_refresh_step-step-recovery_ticks)*period
+            self.plan['first_refresh_cap']=dict(request_step=self.first_refresh_step,
+                recovery_ticks=recovery_ticks,latest_start=cap)
+            if cap<self.plan['latest_start']:
+                self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
+                    start_now=cap<=now,start_constraint='first_refresh')
         if self.fast_selection and not inflight and current is not None:
             from perceptbudget.m3_fast_choice import choose_mode
             quiet_since=self.fast_quiet_since

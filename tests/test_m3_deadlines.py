@@ -19,6 +19,29 @@ def test_no_event_uses_admitted_buffer_or_observation_age():
     assert p.reason=='buffer' and p.start_now
 
 
+def test_first_event_free_refresh_cap_only_applies_to_bootstrap_chunk():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_first_refresh_step=30,m3_scheduler_mode='deadline_high',
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
+            maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False),
+        m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    runtime=DeadlineRuntime(cfg)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.] for _ in range(50)]
+    def commit_chunk(pid,origin):
+        runtime.committed(dict(prediction_id=pid,observation_step=origin,
+            observation_monotonic=10.,actions=actions),dict(commit_step=origin,commit_monotonic=10.))
+        return {origin+i:(a,pid,origin,i) for i,a in enumerate(actions)}
+    queue=commit_chunk(0,0)
+    before=runtime.decide(now=10.,step=29,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert not before['start_now']
+    at=runtime.decide(now=10.,step=30,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert at['start_now'] and at['start_constraint']=='first_refresh'
+    queue=commit_chunk(1,30)
+    later=runtime.decide(now=10.,step=31,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert 'first_refresh_cap' not in later and not later['start_now']
+
+
 def test_recovery_path_must_have_its_own_idle_time():
     p=full_continue_plan(now=10.,step=0,buffer_end_step=16,period=.05,
                          hot_service=.55,recovery_service=.58,margin_seconds=.05)

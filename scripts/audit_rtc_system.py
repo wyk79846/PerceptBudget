@@ -430,6 +430,7 @@ def audit(run):
                         check('m3_signal_deadline_and_hard_bounds',
                               abs(d['deadline']-expected_deadline)<1e-8 and d['reason']==expected_reason,pid)
                 expected_start=d['deadline']-d['service_seconds']-d['margin_seconds'] if d else float('nan')
+                expected_constraint='service_deadline'
                 if d.get('rtc_latest_submit_step') is not None:
                     # Recovery acknowledges HIGH on the following control tick;
                     # the copied plan still belongs to the original decision.
@@ -446,9 +447,23 @@ def audit(run):
                     check('m3_rtc_prefix_bound_inputs',d['rtc_delay_steps']==delay
                           and d['rtc_latest_submit_step']==latest_submit
                           and d['rtc_submit_guard_steps']==guard,pid)
-                    check('m3_start_constraint',d['start_constraint']==(
-                          'rtc_prefix' if prefix_start<expected_start else 'service_deadline'),pid)
+                    if prefix_start<expected_start:expected_constraint='rtc_prefix'
                     expected_start=min(expected_start,prefix_start)
+                if d.get('first_refresh_cap'):
+                    cap=d['first_refresh_cap']
+                    originals=[e for e in events if e['event']=='m3_decision'
+                               and e.get('decision_monotonic')==d.get('decision_monotonic')]
+                    decision_step=min(e['step'] for e in originals)
+                    recovery_ticks=1 if d['path']=='low_continue_recovery' else 0
+                    first_start=d['decision_monotonic']+(30-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
+                    check('m3_first_refresh_cap_inputs',cfg.get('m3_first_refresh_step')==30
+                          and old['prediction_id']==0 and d.get('critical_step') is None
+                          and cap['request_step']==30 and cap['recovery_ticks']==recovery_ticks
+                          and abs(cap['latest_start']-first_start)<1e-8,pid)
+                    if first_start<expected_start:expected_constraint='first_refresh'
+                    expected_start=min(expected_start,first_start)
+                if d.get('rtc_latest_submit_step') is not None or d.get('first_refresh_cap'):
+                    check('m3_start_constraint',d['start_constraint']==expected_constraint,pid)
                 if d.get('fast_reserve_full') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
                     expected_start-=math.ceil((d['fast_full_reserve_service_seconds']+d['margin_seconds'])/d['estimated_control_period_seconds']-1e-9)*d['estimated_control_period_seconds']
                 check('m3_service_and_margin_subtracted_once',bool(d)
