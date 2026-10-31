@@ -18,7 +18,7 @@ def decision(deadline=12.):
         service_seconds=.6,latest_start=deadline-.625)
 
 
-def test_low_full_needs_time_quality_and_lower_common_window_energy():
+def test_low_full_needs_time_and_quality_and_still_records_energy():
     args=dict(costs=costs(),low_budget=.75,quiet_age=.3,ordinary=True,rtc_low_cap=20.)
     f=choose(decision(),**args)
     assert f['selected']['profile']=='gpu_emc'
@@ -29,12 +29,13 @@ def test_low_full_needs_time_quality_and_lower_common_window_energy():
     assert choose(decision(),**args)['selected']['profile']=='baseline'
 
 
-def test_low_power_does_not_win_if_service_energy_is_higher():
+def test_low_full_is_used_even_if_service_energy_is_higher():
     c=costs()
     for cell in c['cells']:
         if cell['profile']=='gpu_emc':cell['mean_absolute_service_energy_j']=30.
     f=choose(decision(),costs=c,low_budget=.75,quiet_age=2.,ordinary=True,rtc_low_cap=20.)
-    assert f['selected']['profile']=='baseline'
+    assert f['selected']['profile']=='gpu_emc'
+    assert f['energy_used_for_selection'] is False
 
 
 def test_runtime_preserves_high_service_history_and_never_switches_mid_low_inference():

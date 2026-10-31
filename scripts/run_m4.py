@@ -23,7 +23,7 @@ def main():
     parser.add_argument('--fast-advance','--fast-reserve-full',dest='fast_reserve_full',action='store_true',help='Advance Fast submission by its complete recovery-to-commit budget plus margin, rounded to control steps')
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
-    parser.add_argument('--low-full',action='store_true',help='M3 only: measured energy/deadline selection of Full compute frequency; no Fast')
+    parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
@@ -95,6 +95,7 @@ def main():
     if args.low_full:
         import math
         from perceptbudget.m3_low_full import load_costs
+        cfg['m3_low_full_policy']='deadline_first_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
         low=max(c['p95_service_seconds'] for c in cfg['m3_low_full_costs']['cells'] if c['profile']=='gpu_emc')
         cfg['m3_low_full_initial_delay']=math.ceil((low+.05)/.05)

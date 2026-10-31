@@ -415,8 +415,14 @@ def audit(run):
                                 and abs(row['latest_start']-latest)<1e-8
                                 and row['feasible']==(latest>=now-1e-9),pid)
                         choices=[r for r in formula['candidates'] if r['quality_allowed'] and r['feasible']]
-                        chosen=min(choices,key=lambda r:(r['energy_j'],r['profile']!='baseline')) if choices else formula['candidates'][0]
-                        check('m3_full_minimum_feasible_energy',formula['selected']==chosen
+                        if formula.get('policy')=='deadline_first_v2':
+                            low=next(r for r in formula['candidates'] if r['profile']=='gpu_emc')
+                            chosen=low if low['quality_allowed'] and low['feasible'] else formula['candidates'][0]
+                            check('m3_full_deadline_first_policy',cfg.get('m3_low_full_policy')=='deadline_first_v2'
+                                and formula.get('energy_used_for_selection') is False,pid)
+                        else:
+                            chosen=min(choices,key=lambda r:(r['energy_j'],r['profile']!='baseline')) if choices else formula['candidates'][0]
+                        check('m3_full_selected_policy',formula['selected']==chosen
                             and chosen['profile']==profile,pid)
                     if profile=='gpu_emc':
                         from perceptbudget.key_phases import absolute_intervals

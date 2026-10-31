@@ -1,3 +1,5 @@
+> 2026-10-31最新更正：用户确认低频Full采用deadline_first_v2：首次和关键阶段保持高频，普通阶段低频赶得上就用，不以预计能量筛选；能量只记录。沿用--low-full，未启动GPU测试。修改前分支archive/before-low-full-deadline-first-20261031。
+
 > 当前授权（2026-10-31）：阶段刷新去重12任务完成11/12，原始批次M4/20261031T063736.148606Z-acceptance-m3-68053278，作为当前对照。用户同意先加低频Full而不加Fast：独立开关--low-full，保留三项既有刷新/等待规则。实现见docs/M3_LOW_FULL.md，142项CPU检查及单模型三任务配置核对通过，GPU闭环尚未执行。备份archive/before-m3-low-full-20261031。不启用旧M4联合搜索或Fast。以下为历史。
 
 > 2026-10-31 当前：320无state Fast，`--fast-key-phases`已补Full响应，版本`m3_key_phase_response_policy=full_once_v1`。当前Fast新预测若含未结束关键区间，未来边界按完整服务预算提前Full，已进入则立即请求；Full提交后不重复响应同一阶段。147项相关测试及真实110步调度重放通过，GPU闭环待原指令重测。旧无版本标记的准入实验仍可审计，416/30步/闭爪门槛不启用。见docs/KEY_PHASE_NEXT.md。

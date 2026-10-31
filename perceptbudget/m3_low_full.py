@@ -19,7 +19,7 @@ def load_costs(settings):
 
 
 def choose(decision, *, costs, low_budget, quiet_age, ordinary, rtc_low_cap):
-    """Compare LOW->HIGH Full with staying LOW on a common deadline window."""
+    """Prefer LOW whenever its time and phase constraints pass; energy is logged."""
     now=decision['decision_monotonic'];end=decision['deadline']-decision['margin_seconds']
     rows=[]
     for profile in ('baseline','gpu_emc'):
@@ -43,11 +43,12 @@ def choose(decision, *, costs, low_budget, quiet_age, ordinary, rtc_low_cap):
             service_energy_j=cell['mean_absolute_service_energy_j'],
             tail_seconds=tail,tail_energy_j=tail_j,energy_j=energy,
             source=cell['source']))
-    allowed=[r for r in rows if r['feasible'] and r['quality_allowed']]
-    selected=min(allowed,key=lambda r:(r['energy_j'],r['profile']!='baseline')) if allowed else rows[0]
-    return dict(selected=selected,candidates=rows,quiet_age_seconds=quiet_age,
+    low=rows[1]
+    selected=low if low['feasible'] and low['quality_allowed'] else rows[0]
+    return dict(policy='deadline_first_v2',selected=selected,candidates=rows,quiet_age_seconds=quiet_age,
         ordinary=ordinary,window_end=end,rtc_low_cap=rtc_low_cap,
-        reason='minimum_common_window_energy' if allowed else 'high_deadline_fallback',
+        reason='low_meets_deadline' if selected is low else 'high_key_phase' if not ordinary else 'high_low_too_late',
+        energy_used_for_selection=False,
         energy_scope='LOW entry through common deadline-minus-margin; service includes any recovery; Continue separate')
 
 
@@ -129,5 +130,5 @@ class LowFullRuntime(DeadlineRuntime):
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile
         if request['observation_step'] and self.active_profile=='gpu_emc':
-            if not self.pending_low:raise RuntimeError('Low Full request without admitted energy/deadline plan')
+            if not self.pending_low:raise RuntimeError('Low Full request without admitted phase/deadline plan')
             request['m3_timing']['low_full_measurement_history']=self.plan['low_full_formula']['selected']['history']
