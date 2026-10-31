@@ -503,7 +503,11 @@ def audit(run):
                     decision_step=min(e['step'] for e in originals)
                     period=d['estimated_control_period_seconds']
                     delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') or cfg.get('m3_fast_enabled') else g['delay_estimate_steps']
-                    if frequency_histories is not None:delay=max(max(v) for v in frequency_histories.values())
+                    if frequency_histories is not None:
+                        delay=(max(frequency_histories[request['m4_compute_profile']])
+                            if cfg.get('m3_low_full_rtc_policy')=='per_profile_v2'
+                            else max(max(v) for v in frequency_histories.values()))
+                        if cfg.get('rtc_fixed_delay_estimate') is not None:delay=cfg['rtc_fixed_delay_estimate']
                     latest_submit=old['observation_step']+cfg['H']-delay
                     guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period

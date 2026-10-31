@@ -96,6 +96,7 @@ def main():
         import math
         from perceptbudget.m3_low_full import load_costs
         cfg['m3_low_full_policy']='deadline_first_v2'
+        cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
         low=max(c['p95_service_seconds'] for c in cfg['m3_low_full_costs']['cells'] if c['profile']=='gpu_emc')
         cfg['m3_low_full_initial_delay']=math.ceil((low+.05)/.05)

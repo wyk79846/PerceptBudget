@@ -89,3 +89,27 @@ def test_runtime_can_submit_admitted_low_full_but_keeps_first_refresh_high():
 def test_measurement_history_uses_expected_service_start_not_decision_age():
     f=choose(decision(),costs=costs(),low_budget=.75,quiet_age=.1,ordinary=True,rtc_low_cap=20.)
     assert all(r['history']=='long' for r in f['candidates'])
+
+
+def test_high_rtc_bound_is_not_shortened_by_low_delay():
+    cfg=dict(H=50,m3_low_full_initial_delay=16,m3_low_full_costs=costs(),
+        m3_scheduler_mode='deadline_dvfs',
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
+            maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False,
+            minimum_low_idle_seconds=.2),m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    r=LowFullRuntime(cfg)
+    r.clocks=SimpleNamespace(profile='gpu_emc',pending=None,last_low=9.,last_change=None,poll=lambda:None)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    r.committed(dict(prediction_id=1,observation_step=30,observation_monotonic=9.,actions=actions),
+        dict(commit_step=40,commit_monotonic=9.))
+    queue={30+i:(a,1,30,i) for i,a in enumerate(actions)}
+    d=r.decide(now=10.,step=45,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['rtc_delay_steps']==16 and d['rtc_latest_submit_step']==64
+    high=d['low_full_formula']['candidates'][0]
+    # HIGH reserves its own10 steps +2 recovery/margin ticks, not LOW's16.
+    assert high['latest_start']==pytest.approx(10.+(70-45-2)*.05)
+    # A key event forces HIGH, and keeps exactly the same HIGH prefix bound.
+    r.events=[dict(kind='turn',target_step=75,prediction_id=1)]
+    high_d=r.decide(now=10.,step=45,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert high_d['rtc_delay_steps']==10 and high_d['rtc_latest_submit_step']==70

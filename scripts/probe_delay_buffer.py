@@ -604,11 +604,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if scheduler is not None:
                 rtc_delay=delay_queue.estimate if delay_queue is not None else None
                 if frequency_delay_queues is not None:
-                    rtc_delay=max(q.estimate for q in frequency_delay_queues.values())
+                    rtc_delay=frequency_delay_queues['baseline'].estimate
+                    scheduler.low_delay_steps=frequency_delay_queues['gpu_emc'].estimate
                 if (config.get('m4_enabled') or config.get('m3_fast_enabled')) and mode_delay_queues:
                     rtc_delay=max(q.estimate for q in mode_delay_queues.values())
                 if config.get('rtc_fixed_delay_estimate') is not None:
                     rtc_delay=config['rtc_fixed_delay_estimate']
+                    if frequency_delay_queues is not None:scheduler.low_delay_steps=rtc_delay
                 decision = scheduler.decide(now=time.monotonic(),step=step,queue=queue,
                                             rows=rows,inflight=future is not None,rtc_delay_steps=rtc_delay)
                 decision = scheduler.control_clocks(decision,inflight=future is not None)

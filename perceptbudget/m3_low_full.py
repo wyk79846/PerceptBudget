@@ -63,6 +63,9 @@ class LowFullRuntime(DeadlineRuntime):
             for h in ('hot','short','long')}
         self.active_profile='baseline'
         self.pending_low=False
+        self.low_delay_steps=config.get('m3_low_full_initial_delay',math.ceil(
+            max(c['p95_service_seconds'] for c in self.costs['cells'] if c['profile']=='gpu_emc')
+            /self.initial_period)+1)
 
     def committed(self,request,commit):
         low=request.get('m4_compute_profile')=='gpu_emc'
@@ -95,7 +98,7 @@ class LowFullRuntime(DeadlineRuntime):
             not any((target-step)*d['estimated_control_period_seconds']<=low_q+self.margin.seconds for target in upcoming))
         period=d['estimated_control_period_seconds']
         guard=math.ceil(self.margin.seconds/period-1e-9)
-        latest_submit=d.get('rtc_latest_submit_step')
+        latest_submit=self.chunks[item[1]]['origin']+self.horizon-self.low_delay_steps
         cap=now+(latest_submit-step-guard)*period if latest_submit is not None else float('inf')
         age=max(0.,now-(self.clocks.last_low or now))
         formula=choose(d,costs=self.costs,low_budget=low_q,quiet_age=age,ordinary=ordinary,rtc_low_cap=cap)
@@ -105,6 +108,7 @@ class LowFullRuntime(DeadlineRuntime):
             d.update(service_seconds=low_q,latest_start=selected['latest_start'],
                 wait_seconds=max(0.,selected['latest_start']-now),start_now=selected['latest_start']<=now,
                 path='low_full_compute',service_budget_history='low',rtc_submit_guard_steps=guard,
+                rtc_delay_steps=self.low_delay_steps,rtc_latest_submit_step=latest_submit,
                 start_constraint='rtc_prefix' if cap<d['deadline']-low_q-self.margin.seconds else 'service_deadline',
                 deadline_already_unreachable=now+low_q+self.margin.seconds>d['deadline'])
         self.plan=d
