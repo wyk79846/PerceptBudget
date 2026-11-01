@@ -132,3 +132,34 @@ def test_high_rtc_bound_is_not_shortened_by_low_delay():
     r.events=[dict(kind='turn',target_step=75,prediction_id=1)]
     high_d=r.decide(now=10.,step=45,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
     assert high_d['rtc_delay_steps']==10 and high_d['rtc_latest_submit_step']==70
+
+
+def test_low_dispatch_starts_on_last_tick_before_deadline_not_after_it():
+    cfg=dict(H=50,m3_low_full_costs=costs(),m3_scheduler_mode='deadline_dvfs',
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
+            maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False,
+            minimum_low_idle_seconds=.2),m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    r=LowFullRuntime(cfg)
+    r.clocks=SimpleNamespace(profile='gpu_emc',pending=None,last_low=9.,last_change=None,poll=lambda:None)
+    # .75s LOW budget, with .025s margin: only26ms of waiting remain.
+    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+    r.committed(dict(prediction_id=1,observation_step=30,observation_monotonic=9.,actions=actions),
+        dict(commit_step=40,commit_monotonic=9.))
+    r.low_delay_steps=10
+    queue={30+i:(a,1,30,i) for i,a in enumerate(actions)}
+    # At64, buffer ends at80: 16 ticks=.8s, LOW=.75, margin=.025.
+    d=r.decide(now=10.,step=64,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['low_full_formula']['selected']['profile']=='gpu_emc'
+    assert d['latest_start']-10.==pytest.approx(.025)
+    assert d['start_now'] and d['wait_seconds']==0.
+    earlier=r.decide(now=10.,step=63,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert not earlier['start_now']
+    # An exact next-tick RTC boundary can still be reached without an early
+    # request; do not advance it unnecessarily by a full control step.
+    r.low_delay_steps=15
+    exact_next=r.decide(now=10.,step=63,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert exact_next['latest_start']-10.==pytest.approx(.05)
+    assert not exact_next['start_now']
+    exact_now=r.decide(now=10.,step=64,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    assert exact_now['start_now']

@@ -116,8 +116,15 @@ class LowFullRuntime(DeadlineRuntime):
         d['low_full_formula']=formula
         if formula['selected']['profile']=='gpu_emc':
             selected=formula['selected'];self.pending_low=True
+            # Decisions run once per control tick. Start on the last tick
+            # BEFORE the continuous deadline; otherwise the next tick can make
+            # a previously feasible LOW plan disappear before it ever starts.
+            remaining_wait=selected['latest_start']-now
+            dispatch_due=remaining_wait<period-1e-9
+            dispatch_wait=0. if dispatch_due else max(0.,remaining_wait)
             d.update(service_seconds=low_q,latest_start=selected['latest_start'],
-                wait_seconds=max(0.,selected['latest_start']-now),start_now=selected['latest_start']<=now,
+                wait_seconds=dispatch_wait,start_now=dispatch_due,
+                low_full_dispatch_lead_seconds=period,
                 path='low_full_compute',service_budget_history='low',rtc_submit_guard_steps=guard,
                 rtc_delay_steps=self.low_delay_steps,rtc_latest_submit_step=latest_submit,
                 start_constraint='rtc_prefix' if cap<d['deadline']-low_q-self.margin.seconds else 'service_deadline',

@@ -1,0 +1,34 @@
+{
+  "scope": "Fixed original history only; not a new rollout",
+  "source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261101T043323.034844Z-record-full-fb6e7c5c",
+  "rows": [
+    {
+      "step": 74,
+      "old_start_now": false,
+      "new_start_now": false,
+      "selected": "gpu_emc",
+      "seconds_before_latest": 0.07719000056385994
+    },
+    {
+      "step": 75,
+      "old_start_now": false,
+      "new_start_now": true,
+      "selected": "gpu_emc",
+      "seconds_before_latest": 0.026250166818499565
+    },
+    {
+      "step": 112,
+      "old_start_now": false,
+      "new_start_now": false,
+      "selected": "gpu_emc",
+      "seconds_before_latest": 0.08568666968494654
+    },
+    {
+      "step": 113,
+      "old_start_now": false,
+      "new_start_now": true,
+      "selected": "gpu_emc",
+      "seconds_before_latest": 0.034978700801730156
+    }
+  ]
+}

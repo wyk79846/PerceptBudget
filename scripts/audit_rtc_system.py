@@ -446,6 +446,12 @@ def audit(run):
                         phases=absolute_intervals(old['actions'],old['observation_step'],ec)
                         qlow=formula['selected']['service_seconds'] if formula else t['service_seconds']
                         period=t['estimated_control_period_seconds']
+                        if 'low_full_dispatch_lead_seconds' in t:
+                            ahead=t['latest_start']-t['decision_monotonic']
+                            check('m3_low_full_last_feasible_tick',
+                                cfg.get('m3_low_full_dispatch_policy')=='before_next_control_tick'
+                                and t['low_full_dispatch_lead_seconds']==period
+                                and -1e-9<=ahead<=period+1e-9 and t['start_now'],pid)
                         imminent=[e for e in detect_events(old['actions'],ec)
                             if 0<=(old['observation_step']+e['offset']-origin)*period<=qlow+t['margin_seconds']]
                         check('m3_low_full_only_ordinary_stage',bool(formula) and formula['ordinary']

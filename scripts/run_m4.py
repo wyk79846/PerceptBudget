@@ -95,6 +95,7 @@ def main():
     if args.low_full:
         from perceptbudget.m3_low_full import load_costs
         cfg['m3_low_full_policy']='shared_deadline_v4'
+        cfg['m3_low_full_dispatch_policy']='before_next_control_tick'
         cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
     continuation=None
