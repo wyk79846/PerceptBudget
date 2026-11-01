@@ -14,6 +14,34 @@ from perceptbudget.experiment import _write_json_atomically
 from perceptbudget.power import PowerMonitor
 
 
+def absolute_pair_plan():
+    return [dict(block=i,profile=p,pair_ids=list(range((i//2)*5,(i//2+1)*5)))
+            for i,p in enumerate(('baseline','gpu_emc','gpu_emc','baseline'))]
+
+
+def summarize_absolute_pairs(rows):
+    import math
+    pairs=[]
+    for index in range(10):
+        members=[r for r in rows if r.get('pair_id')==index]
+        if len(members)!=2 or {r['profile'] for r in members}!={'baseline','gpu_emc'}:
+            raise ValueError('Require ten complete HIGH/LOW pairs')
+        high=next(r for r in members if r['profile']=='baseline')
+        low=next(r for r in members if r['profile']=='gpu_emc')
+        for r in members:
+            if not r['frame_matches_reference'] or not r['state_matches_reference'] or r['raw_action_max_abs_difference_vs_reference']!=0:
+                raise ValueError('Paired Full inputs or outputs differ')
+            if not math.isfinite(r['energy']['energy_j']) or r['energy']['energy_j']<=0:
+                raise ValueError('Invalid absolute service energy')
+        pairs.append(dict(pair_id=index,high_j=high['energy']['energy_j'],low_j=low['energy']['energy_j'],
+                          high_ms=high['service_ms'],low_ms=low['service_ms']))
+    high=statistics.mean(p['high_j'] for p in pairs);low=statistics.mean(p['low_j'] for p in pairs)
+    return dict(pairs=pairs,mean_high_j=high,mean_low_j=low,
+        low_energy_change_percent=100*(low/high-1),
+        measurement='Absolute service windows including recovery; no matched-hold subtraction or Continue',
+        limitation='Repeated short-window diagnostic; sensor-response bias not eliminated by repetition')
+
+
 def full_preparation_peer(adapter,model):
     """Preparation-only eager Full context, sharing frozen suffix weights, no reload."""
     import copy
@@ -261,8 +289,13 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
     profiles = validate_profiles(profiles)
     cfg = adapter.config
     validation = bool(cfg.get('m2_service_validation'))
-    requests_per_condition = 20 if validation else 5
+    absolute_pairs=bool(cfg.get('m2_absolute_full_pairs'))
+    requests_per_condition = 5 if absolute_pairs else 20 if validation else 5
     histories = (('hot', 0.), ('short', .2), ('long', 1.)) if validation and not cfg.get('m2_service_hot_only') else (('hot', 0.),)
+    if absolute_pairs:
+        if not validation or profiles!=('baseline','gpu_emc'):
+            raise ValueError('Absolute pairs require validated Full with HIGH/LOW')
+        histories=(('long',1.),)
     gate = json.loads((CLEANUP_GATE/'reset_reuse_audit.json').read_text())
     if not gate['passed'] or len(gate['cases']) != 6 or gate['render_cleanup']['errors']:
         raise RuntimeError('Require passed hard-reset render cleanup gate')
@@ -297,6 +330,11 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
             static_input_policy='At most3 real reads, exact pixels only; rejected reads saved, all acquisition/retry cost counted',
             calibrated_energy_field='conditions[].mean_batch_increment_per_request_j',
             energy_scope='Mean long batch minus same-duration hold; includes logging and replay differences, not event-tail energy')
+    if absolute_pairs:
+        result.update(planned_requests=20,absolute_pair_plan=absolute_pair_plan(),
+            calibrated_energy_field=None,reported_energy_field='absolute_pair_review',
+            energy_scope='Absolute recovery-command to ready, repeated paired diagnostic; no hold subtraction',
+            continue_validation=False)
     path = directory/('selected_fast_service.json' if selected_fast else 'full_service.json')
     env = None
     monitor = None
@@ -357,10 +395,12 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
         device = inventory()
         result['device_before_service'] = dict(power_mode=device['power_mode'], thermal=device['thermal'])
         references = {}
-        scenarios = [(profile, state, idle) for state, idle in histories for profile in profiles]
-        for profile, state, idle in scenarios:
+        scenarios = ([(b['profile'],'long',1.,b['block']) for b in absolute_pair_plan()] if absolute_pairs else
+                     [(profile,state,idle,None) for state,idle in histories for profile in profiles])
+        for profile, state, idle, pair_block in scenarios:
             rows = []
             label = profile+'_'+state if validation else profile
+            if absolute_pairs:label+='_pair'+str(pair_block)
             idle_profile = 'gpu_emc' if idle else profile
             thermal_before = inventory()['thermal']
             monitor = PowerMonitor(.02, max_gap_seconds=.1)
@@ -379,6 +419,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                         result['clock_settings_changed'] = True
                         for local_index in range(5):
                             index = chunk*5+local_index
+                            if absolute_pairs:index+=(pair_block//2)*5
                             torch.manual_seed(20261023+index)
                             lease.send('RUN')
                             event = lease.receive('SERVE', local_index)
@@ -413,6 +454,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                                 state_matches_reference=measured['raw_state']==ref_state,
                                 raw_action_max_abs_difference_vs_reference=difference,
                                 observation_age_at_ready_seconds=ready-measured['acquisition']['start_monotonic'])
+                            if absolute_pairs:row.update(pair_id=index,pair_block=pair_block)
                             if not row['frame_matches_reference'] or not row['state_matches_reference'] or difference != 0:
                                 _write_json_atomically(directory/('rejected_'+label+'_'+str(index)+'.json'),row)
                                 raise RuntimeError('Paired observation/state/actions changed across service profiles/histories')
@@ -421,7 +463,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                             _write_json_atomically(path, result)
                             print('FULL_SERVICE_REQUEST='+label+'/'+str(index)+' ms='+str(row['service_ms']), flush=True)
                     events.extend(lease.events)
-                if validation:
+                if validation and not absolute_pairs:
                     batch_start = rows[0]['timing']['down']['command_monotonic']
                     batch_stop = rows[-1]['measured']['ready_monotonic']+3.
                     time.sleep(max(0., batch_stop-time.monotonic()))
@@ -453,7 +495,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                 thermal_before=thermal_before, thermal_after=inventory()['thermal'],
                 max_raw_action_difference_vs_reference=max(r['raw_action_max_abs_difference_vs_reference'] for r in rows),
                 **summarize_services(rows)))
-            if validation:
+            if validation and not absolute_pairs:
                 def prepare():
                     torch.manual_seed(20261023)
                     measure_one(adapter, env, task['instruction'], stats, previous_raw, queue,
@@ -465,6 +507,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
                     energy_interpretation='Batch-integrated minus matched hold, mean only; includes logs and preparation differences; short request energy fields are diagnostic, not resolved single-event measurements')
             _write_json_atomically(path, result)
         result.update(status='completed', restored=True)
+        if absolute_pairs:result['absolute_pair_review']=summarize_absolute_pairs(result['requests'])
         if validation:
             result['camera_extra_reads'] = sum(r['measured']['acquisition'].get('real_camera_reads',1)-1 for r in result['requests'])
         if len(profiles)==1:

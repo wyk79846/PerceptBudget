@@ -1,4 +1,4 @@
-> 2026-11-01当前：Object0 shared_deadline_v4成功147步，但6次全高频。已定位离散控制tick错失连续最晚启动：75步剩26ms未发起，76步又将LOW判过期；113/114步同样。修复为最后一个可行tick启动，整数RTC下一tick恰能到则不抢早，不修改deadline。156项检查与真实75/113步回放通过，修复后GPU未测。原--low-full命令可复测，见docs/M3_LOW_FULL.md。以下为历史。
+> 2026-11-02当前：低频Object0配对成功并降能耗；12任务扩测只完成Spatial0/3，Spatial6动作开始前RAM保护中止，剩10未测。用户同意先复核Full自身能量口径：新增profile_clock_screen --full-service --absolute-full-pairs，同一模型、同输入/旧前缀/噪声、每次低频1秒历史，高低低高20次共10对，只积分绝对服务、不混Continue或扣保持。40项相关CPU检查和dry-run通过，GPU尚未运行。亚秒传感器响应仍是诊断限制，不能把原8.62/9.80J当校准后的纯Full能量。见docs/FULL_ABSOLUTE_PAIRS_20261102.md，备份archive/before-full-absolute-pairs-20261102。以下为历史。
 
 > 2026-11-01最新：用户澄清是每次预测完成后，用完整剩余动作/关键点安排Continue＋下一次推理，不新增固定交接。--low-full现为shared_deadline_v4：低频少等一些，保持关键/缓冲截止；频率各自RTC历史，低频初始化按本环境控制周期换算，不固定16步。original_m3_slot_v3的0准入限制已撤回。155项检查通过，同状态1924次关键/截止判断一致，442候选tick非请求；新GPU闭环未执行，先测Object0。见docs/M3_LOW_FULL.md。以下为历史。
 

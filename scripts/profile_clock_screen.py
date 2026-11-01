@@ -75,6 +75,7 @@ def main():
     from perceptbudget.device_clocks import PROFILES, SCREEN_PROFILES, MATRIX_PROFILES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--absolute-full-pairs',action='store_true',help='With Full service:20 absolute requests in HIGH/LOW/LOW/HIGH blocks, one-second LOW history')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--idle-state-scan',action='store_true',help='Fixed high clocks, seven idle durations, three randomized blocks; no preassigned states')
     modes.add_argument('--m4-transitions',action='store_true',help='Paired active-control high/low directional preparation windows')
@@ -102,6 +103,14 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.absolute_full_pairs:
+        if not args.full_service or args.service_hot_only:
+            parser.error('--absolute-full-pairs requires --full-service without hot-only')
+        if args.service_profiles and args.service_profiles!=['baseline','gpu_emc']:
+            parser.error('Absolute pairs use baseline and gpu_emc')
+        args.service_validation=True
+        args.skip_continue_validation=True
+        args.service_profiles=['baseline','gpu_emc']
     if args.service_hot_only and not (args.service_validation and (args.full_service or args.live_service)):
         parser.error('--service-hot-only requires live service validation')
     if args.service_hot_only and args.full_service and not args.skip_continue_validation:
@@ -126,6 +135,7 @@ def main():
     if os.geteuid() == 0:
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
+    if args.absolute_full_pairs:config=dict(config,m2_absolute_full_pairs=True)
     validate(config)
     if args.m4_transitions:
         config=dict(config,m4_transition_probe=True)
@@ -149,6 +159,14 @@ def main():
             measurement='Absolute250ms preparation+control energy, not instantaneous switch-only energy')))
         return 0
     if args.dry_run:
+        if args.absolute_full_pairs:
+            from perceptbudget.device_service import absolute_pair_plan
+            print(json.dumps(dict(model_loads=1,mode='absolute_full_pairs',services=20,pairs=10,
+                plan=absolute_pair_plan(),history='same1s LOW before every request',
+                inputs='same physics/images/state/old actions and per-pair noise; d5/s5',
+                energy='absolute recovery-command to ready; no hold subtraction or Continue',
+                sensor_response='short-window diagnostic, not newly calibrated event energy')))
+            return 0
         if args.continue_validation:
             print(json.dumps(dict(model_loads=1, mode='continue_only', windows=60,
                 profile='gpu_emc', histories_seconds=[0,.2,1.], windows_per_condition=20,
@@ -245,14 +263,14 @@ def main():
                               source_run=str(source)), ensure_ascii=False))
         return 0
     if args.worker:
-        if args.run_dir is None or args.run_dir.resolve().parent != (Path(config['output_root'])/('M4' if args.m4_transitions else 'M2')).resolve():
-            parser.error('Worker requires M2 output directory')
+        if args.run_dir is None or args.run_dir.resolve().parent != (Path(config['output_root'])/('M4' if args.m4_transitions or args.absolute_full_pairs else 'M2')).resolve():
+            parser.error('Worker requires matching M2/M4 output directory')
         # Check the inherited tty credential before loading any weights.
         subprocess.run(['sudo', '-n', 'true'], check=True)
         from perceptbudget.device_profile import fixed_view_probe
         from contextlib import nullcontext
         from perceptbudget.closed_loop import compiled_environments
-        preparation=compiled_environments(args.run_dir,[('libero_spatial',0)],config) if args.m4_transitions else nullcontext()
+        preparation=compiled_environments(args.run_dir,[('libero_spatial',0)],config) if args.m4_transitions or args.absolute_full_pairs else nullcontext()
         with preparation:
             fixed_view_probe(config, args.run_dir, source, 'single' if args.visual_clocks else 'full', clock_screen=True,
                              clock_transitions=args.transitions or args.m4_transitions, clock_recovery=args.recovery,
@@ -274,9 +292,10 @@ def main():
     purpose = 'm4-directional-transitions' if args.m4_transitions else 'idle-state-scan' if args.idle_state_scan else 'continue-history' if args.continue_history else 'selected-fast-service' if args.live_service else 'selected-fast-recovery' if args.idle_recovery else 'selected-fast-clock-screen' if args.selected_fast_clocks else 'continue-camera-compare' if args.continue_camera_compare else 'pooled-clock-screen' if args.pooled_clocks else 'visual-clock-screen' if args.visual_clocks else 'fast-clock-screen' if args.fast_clocks else 'full-service' if args.full_service else 'continue-control' if args.continue_control else 'clock-matrix' if args.matrix else 'clock-recovery' if args.recovery else 'clock-transitions' if args.transitions else 'clock-screen'
     if args.service_validation:
         purpose = validation_purpose(args.live_service,args.validation_batch)
+    if args.absolute_full_pairs:purpose='full-absolute-pairs'
     if args.continue_validation:
         purpose = 'continue-validation-batch'+str(args.validation_batch)
-    run = create_run(config, 'M4' if args.m4_transitions else 'M2', purpose, repo_root=ROOT)
+    run = create_run(config, 'M4' if args.m4_transitions or args.absolute_full_pairs else 'M2', purpose, repo_root=ROOT)
     print('run_dir='+str(run), flush=True)
     summary = dict(status='running', source_run=str(source), scope='four candidate fixed-input screen')
     try:
@@ -302,6 +321,7 @@ def main():
                 command.append('--m4-transitions')
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
+            if args.absolute_full_pairs:command.append('--absolute-full-pairs')
             if args.service_hot_only:
                 command.append('--service-hot-only')
             if args.skip_continue_validation:
@@ -359,7 +379,9 @@ def main():
                 return 0
             if args.full_service or args.live_service:
                 record = json.loads((run/('selected_fast_service.json' if args.live_service else 'full_service.json')).read_text())
-                if record['status'] != 'completed' or len(record['requests']) != ((20 if args.service_hot_only else 60) if args.service_validation else 5)*len(service_profiles):
+                expected_services=(20 if args.absolute_full_pairs else
+                    ((20 if args.service_hot_only else 60) if args.service_validation else 5)*len(service_profiles))
+                if record['status'] != 'completed' or len(record['requests']) != expected_services:
                     raise RuntimeError('Incomplete live Full service measurement')
                 fields = ('service_median_ms', 'service_max_ms', 'mean_service_energy_j',
                           'acquisition_median_ms', 'preprocess_median_ms', 'predict_median_ms',
@@ -367,6 +389,9 @@ def main():
                 summary.update(status='completed', scope=record['scope'], model_loads=record['model_loads'],
                                services=len(record['requests']), conditions=record['conditions'],
                                **{key: record[key] for key in fields if key in record})
+                if args.absolute_full_pairs:
+                    summary.update(absolute_pair_review=record['absolute_pair_review'],
+                        sensor_response=record['single_request_energy_status'])
                 if args.service_validation and args.full_service and not args.skip_continue_validation:
                     continuation=json.loads((run/'continue_control.json').read_text())
                     if continuation['status']!='completed' or len(continuation['windows'])!=60:

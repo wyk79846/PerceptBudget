@@ -185,3 +185,32 @@ def test_service_profiles_reject_duplicates_and_wrong_mode():
     with patch('sys.argv', ['probe', '--service-profiles', 'baseline', '--dry-run']):
         with pytest.raises(SystemExit):
             main()
+
+
+def test_absolute_pair_plan_is_balanced_and_dry_run_does_not_launch(capsys):
+    from perceptbudget.device_service import absolute_pair_plan
+    from scripts.profile_clock_screen import main
+    plan=absolute_pair_plan()
+    assert [b['profile'] for b in plan]==['baseline','gpu_emc','gpu_emc','baseline']
+    for pair in range(10):
+        assert sorted(b['profile'] for b in plan if pair in b['pair_ids'])==['baseline','gpu_emc']
+    with patch('sys.argv',['probe','--full-service','--absolute-full-pairs','--dry-run']), \
+            patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['services']==20 and result['model_loads']==1
+    launch.assert_not_called()
+
+
+def test_absolute_pair_summary_uses_absolute_energy_and_rejects_mismatched_inputs():
+    from perceptbudget.device_service import summarize_absolute_pairs
+    rows=[dict(pair_id=i,profile=p,energy=dict(energy_j=10. if p=='baseline' else 9.),
+        service_ms=500.,frame_matches_reference=True,state_matches_reference=True,
+        raw_action_max_abs_difference_vs_reference=0.)
+        for i in range(10) for p in ('baseline','gpu_emc')]
+    summary=summarize_absolute_pairs(rows)
+    assert summary['mean_high_j']==10. and summary['mean_low_j']==9.
+    assert summary['low_energy_change_percent']==pytest.approx(-10.)
+    with pytest.raises(ValueError):summarize_absolute_pairs(rows[:-1])
+    rows[1]['frame_matches_reference']=False
+    with pytest.raises(ValueError,match='inputs or outputs differ'):summarize_absolute_pairs(rows)
