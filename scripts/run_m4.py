@@ -94,8 +94,8 @@ def main():
             cfg['m3_comparison_tasks']=settings['calibration_tasks']
     if args.low_full:
         from perceptbudget.m3_low_full import load_costs
-        cfg['m3_low_full_policy']='original_m3_slot_v3'
-        cfg['m3_low_full_rtc_policy']='original_m3_history_v3'
+        cfg['m3_low_full_policy']='shared_deadline_v4'
+        cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
     continuation=None
     if args.resume_from:

@@ -430,7 +430,7 @@ def audit(run):
                                 and abs(row['latest_start']-latest)<1e-8
                                 and row['feasible']==feasible,pid)
                         choices=[r for r in formula['candidates'] if r['quality_allowed'] and r['feasible']]
-                        if formula.get('policy') in ('deadline_first_v2','original_m3_slot_v3'):
+                        if formula.get('policy') in ('deadline_first_v2','original_m3_slot_v3','shared_deadline_v4'):
                             low=next(r for r in formula['candidates'] if r['profile']=='gpu_emc')
                             chosen=low if low['quality_allowed'] and low['feasible'] else formula['candidates'][0]
                             check('m3_full_deadline_first_policy',cfg.get('m3_low_full_policy')==formula['policy']

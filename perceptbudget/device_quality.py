@@ -537,6 +537,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         if c['mode']==service and c['profile']==profile)/calibration['median_seconds'])
                         for mode,service in [('full','Full'),('pool2_agent','Fast')] for profile in ('baseline','gpu_emc')}
                 cfg['rtc_initial_control_period_seconds'] = calibration['median_seconds']
+                if cfg.get('m3_low_full_policy')=='shared_deadline_v4':
+                    from perceptbudget.m3_low_full import initial_low_delay
+                    cfg['m3_low_full_initial_delay']=initial_low_delay(
+                        cfg['m3_low_full_costs'],calibration['median_seconds'])
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else view

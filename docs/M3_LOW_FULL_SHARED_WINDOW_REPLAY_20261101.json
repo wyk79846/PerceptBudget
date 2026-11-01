@@ -1,0 +1,105 @@
+{
+  "scope": "Same recorded state; candidate ticks are not requests or new rollout outcomes",
+  "policy": "shared_deadline_v4",
+  "rows": [
+    {
+      "suite": "libero_spatial",
+      "task_id": 0,
+      "decisions": 76,
+      "deadline_and_events_unchanged": 76,
+      "low_candidate_ticks": 9,
+      "initial_low_delay": 13
+    },
+    {
+      "suite": "libero_spatial",
+      "task_id": 3,
+      "decisions": 87,
+      "deadline_and_events_unchanged": 87,
+      "low_candidate_ticks": 0,
+      "initial_low_delay": 12
+    },
+    {
+      "suite": "libero_spatial",
+      "task_id": 6,
+      "decisions": 109,
+      "deadline_and_events_unchanged": 109,
+      "low_candidate_ticks": 10,
+      "initial_low_delay": 13
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 0,
+      "decisions": 145,
+      "deadline_and_events_unchanged": 145,
+      "low_candidate_ticks": 40,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 3,
+      "decisions": 125,
+      "deadline_and_events_unchanged": 125,
+      "low_candidate_ticks": 26,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 6,
+      "decisions": 146,
+      "deadline_and_events_unchanged": 146,
+      "low_candidate_ticks": 36,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 0,
+      "decisions": 300,
+      "deadline_and_events_unchanged": 300,
+      "low_candidate_ticks": 165,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 3,
+      "decisions": 173,
+      "deadline_and_events_unchanged": 173,
+      "low_candidate_ticks": 19,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 6,
+      "decisions": 89,
+      "deadline_and_events_unchanged": 89,
+      "low_candidate_ticks": 6,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 0,
+      "decisions": 235,
+      "deadline_and_events_unchanged": 235,
+      "low_candidate_ticks": 28,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 3,
+      "decisions": 226,
+      "deadline_and_events_unchanged": 226,
+      "low_candidate_ticks": 62,
+      "initial_low_delay": 14
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 6,
+      "decisions": 213,
+      "deadline_and_events_unchanged": 213,
+      "low_candidate_ticks": 41,
+      "initial_low_delay": 14
+    }
+  ],
+  "decisions": 1924,
+  "deadline_and_events_unchanged": 1924,
+  "low_candidate_ticks": 442
+}

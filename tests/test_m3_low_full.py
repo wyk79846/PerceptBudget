@@ -15,12 +15,11 @@ def costs():
 
 def decision(deadline=12.):
     return dict(decision_monotonic=10.,deadline=deadline,margin_seconds=.025,
-        service_seconds=.6,latest_start=deadline-.9,estimated_control_period_seconds=.05,
-        rtc_delay_steps=16,path='low_continue_recovery')
+        service_seconds=.6,latest_start=deadline-.625)
 
 
 def test_low_full_needs_time_and_quality_and_still_records_energy():
-    args=dict(costs=costs(),low_budget=.75,quiet_age=.3,ordinary=True)
+    args=dict(costs=costs(),low_budget=.75,quiet_age=.3,ordinary=True,rtc_low_cap=20.)
     f=choose(decision(),**args)
     assert f['selected']['profile']=='gpu_emc'
     assert f['selected']['energy_j']==pytest.approx(sum(f['selected'][k] for k in
@@ -34,9 +33,28 @@ def test_low_full_is_used_even_if_service_energy_is_higher():
     c=costs()
     for cell in c['cells']:
         if cell['profile']=='gpu_emc':cell['mean_absolute_service_energy_j']=30.
-    f=choose(decision(),costs=c,low_budget=.75,quiet_age=2.,ordinary=True)
+    f=choose(decision(),costs=c,low_budget=.75,quiet_age=2.,ordinary=True,rtc_low_cap=20.)
     assert f['selected']['profile']=='gpu_emc'
     assert f['energy_used_for_selection'] is False
+
+
+def test_shared_deadline_uses_more_wait_for_high_and_less_wait_for_low():
+    d=decision()
+    f=choose(d,costs=costs(),low_budget=.8,quiet_age=1.,ordinary=True,rtc_low_cap=20.)
+    high,low=f['candidates']
+    assert f['policy']=='shared_deadline_v4'
+    assert f['selected']==low
+    assert high['wait_before_seconds']-low['wait_before_seconds']==pytest.approx(.2)
+    assert high['latest_start']+high['service_seconds']==pytest.approx(d['deadline']-.025)
+    assert low['latest_start']+low['service_seconds']==pytest.approx(d['deadline']-.025)
+    assert d['deadline']==12.  # Neither candidate changes the event/buffer bound.
+
+
+def test_initial_low_delay_uses_the_actual_environment_period():
+    from perceptbudget.m3_low_full import initial_low_delay
+    assert initial_low_delay(costs(),.05)==14
+    assert initial_low_delay(costs(),.1)==7
+    with pytest.raises(ValueError):initial_low_delay(costs(),0.)
 
 
 def test_runtime_preserves_high_service_history_and_never_switches_mid_low_inference():
@@ -70,9 +88,8 @@ def test_runtime_can_submit_admitted_low_full_but_keeps_first_refresh_high():
         rtc_initial_control_period_seconds=.05)
     r=LowFullRuntime(cfg)
     r.clocks=SimpleNamespace(profile='gpu_emc',pending=None,last_low=9.,last_change=None,poll=lambda:None)
-    for values in r.low_histories.values():values.clear();values.append(.3)
     actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
-    for pid,origin,step in [(0,0,10),(1,30,62)]:
+    for pid,origin,step in [(0,0,10),(1,30,40)]:
         r.committed(dict(prediction_id=pid,observation_step=origin,observation_monotonic=9.,actions=actions),
             dict(commit_step=origin,commit_monotonic=9.))
         queue={origin+i:(a,pid,origin,i) for i,a in enumerate(actions)}
@@ -81,18 +98,15 @@ def test_runtime_can_submit_admitted_low_full_but_keeps_first_refresh_high():
             assert not r.pending_low
         else:
             assert r.pending_low and d['low_full_formula']['selected']['profile']=='gpu_emc'
-            assert d['path']=='low_continue_recovery'
-            assert not r.control_clocks(d,inflight=False)['start_now']
-            d=r.decide(now=10.05,step=63,queue=queue,rows=[],inflight=False,rtc_delay_steps=16)
-            assert r.control_clocks(d,inflight=False)['start_now']
-            request=dict(observation_step=63,observation_monotonic=10.05)
+            assert d['path']=='low_full_compute'
+            request=dict(observation_step=step,observation_monotonic=10.)
             r.requested(request)
             assert request['m4_compute_profile']=='gpu_emc'
             assert 'service_start_monotonic' not in request['m3_timing']
 
 
 def test_measurement_history_uses_expected_service_start_not_decision_age():
-    f=choose(decision(),costs=costs(),low_budget=.75,quiet_age=.1,ordinary=True)
+    f=choose(decision(),costs=costs(),low_budget=.75,quiet_age=.1,ordinary=True,rtc_low_cap=20.)
     assert all(r['history']=='long' for r in f['candidates'])
 
 
@@ -110,7 +124,7 @@ def test_high_rtc_bound_is_not_shortened_by_low_delay():
         dict(commit_step=40,commit_monotonic=9.))
     queue={30+i:(a,1,30,i) for i,a in enumerate(actions)}
     d=r.decide(now=10.,step=45,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
-    assert d['rtc_delay_steps']==10 and d['rtc_latest_submit_step']==70
+    assert d['rtc_delay_steps']==16 and d['rtc_latest_submit_step']==64
     high=d['low_full_formula']['candidates'][0]
     # HIGH reserves its own10 steps +2 recovery/margin ticks, not LOW's16.
     assert high['latest_start']==pytest.approx(10.+(70-45-2)*.05)
@@ -118,12 +132,3 @@ def test_high_rtc_bound_is_not_shortened_by_low_delay():
     r.events=[dict(kind='turn',target_step=75,prediction_id=1)]
     high_d=r.decide(now=10.,step=45,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
     assert high_d['rtc_delay_steps']==10 and high_d['rtc_latest_submit_step']==70
-
-
-def test_original_rtc_prefix_must_fit_even_if_buffer_deadline_is_later():
-    d=decision()
-    d['rtc_delay_steps']=9
-    f=choose(d,costs=costs(),low_budget=.75,quiet_age=1.,ordinary=True)
-    assert f['selected']['profile']=='baseline'
-    assert f['candidates'][1]['available_seconds']==pytest.approx(.425)
-    assert all(r['latest_start']==d['latest_start'] for r in f['candidates'])
