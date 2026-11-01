@@ -1,0 +1,92 @@
+{
+  "scope": "Same recorded state fed to both controllers; not a new closed-loop rollout",
+  "rows": [
+    {
+      "suite": "libero_spatial",
+      "task_id": 0,
+      "decisions": 76,
+      "unchanged": 76,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_spatial",
+      "task_id": 3,
+      "decisions": 87,
+      "unchanged": 87,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_spatial",
+      "task_id": 6,
+      "decisions": 109,
+      "unchanged": 109,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 0,
+      "decisions": 145,
+      "unchanged": 145,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 3,
+      "decisions": 125,
+      "unchanged": 125,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_object",
+      "task_id": 6,
+      "decisions": 146,
+      "unchanged": 146,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 0,
+      "decisions": 300,
+      "unchanged": 300,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 3,
+      "decisions": 173,
+      "unchanged": 173,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 6,
+      "decisions": 89,
+      "unchanged": 89,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 0,
+      "decisions": 235,
+      "unchanged": 235,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 3,
+      "decisions": 226,
+      "unchanged": 226,
+      "low_candidate_ticks": 0
+    },
+    {
+      "suite": "libero_10",
+      "task_id": 6,
+      "decisions": 213,
+      "unchanged": 213,
+      "low_candidate_ticks": 0
+    }
+  ],
+  "decisions": 1924,
+  "unchanged": 1924,
+  "low_candidate_ticks": 0
+}

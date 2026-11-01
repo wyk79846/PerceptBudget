@@ -201,7 +201,8 @@ def audit(run):
         check('single_fast_actually_executed',any(r.get('source',{}).get('prediction_id')==1 for r in controls))
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
     frequency_histories=({'baseline':[cfg['rtc_initial_delay_steps']],
-        'gpu_emc':[cfg['m3_low_full_initial_delay']]} if cfg.get('m3_low_full') else None)
+        'gpu_emc':[cfg['m3_low_full_initial_delay']]} if cfg.get('m3_low_full')
+        and cfg.get('m3_low_full_policy')!='original_m3_slot_v3' else None)
     mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in cfg.get('m2_delay_modes', ('full','expert_only'))}
                     if cfg.get('m2_split_delay') else None)
     if cfg.get('m4_enabled') and mode_histories is not None:
@@ -405,20 +406,34 @@ def audit(run):
                         for row in formula['candidates']:
                             cell=next(c for c in costs['cells'] if c['profile']==row['profile']
                                 and c['history']==row['history'] and c['from_profile']=='gpu_emc')
-                            cap=formula['rtc_low_cap'] if row['profile']=='gpu_emc' else row['latest_start']
-                            latest=min(end-row['service_seconds'],cap)
-                            before=max(0.,latest-now)
+                            if formula.get('policy')=='original_m3_slot_v3':
+                                latest=t['latest_start']
+                                prepare=max(now,latest)
+                                request_at=prepare+(1 if t['path']=='low_continue_recovery' else 0)*t['estimated_control_period_seconds']
+                                begin=prepare if row['profile']=='baseline' else request_at
+                                slot_end=end if row['profile']=='baseline' else min(end,
+                                    request_at+t['rtc_delay_steps']*t['estimated_control_period_seconds']-t['margin_seconds'])
+                                feasible=begin+row['service_seconds']<=slot_end+1e-9
+                                before=max(0.,begin-now)
+                                check('m3_original_request_slot',formula['original_latest_start']==t['latest_start']
+                                    and formula['original_rtc_delay_steps']==t['rtc_delay_steps']
+                                    and request.get('target_handoff_step') is None,pid)
+                            else:
+                                cap=formula['rtc_low_cap'] if row['profile']=='gpu_emc' else row['latest_start']
+                                latest=min(end-row['service_seconds'],cap)
+                                before=max(0.,latest-now)
+                                feasible=latest>=now-1e-9
                             tail=max(0.,end-(now+before+cell['mean_service_seconds']))
                             energy=(hold_energy(costs['waits'],'gpu_emc',formula['quiet_age_seconds'],before)
                                 +cell['mean_absolute_service_energy_j']+hold_energy(costs['waits'],row['profile'],0.,tail))
                             check('m3_full_common_window_energy',abs(row['energy_j']-energy)<1e-8
                                 and abs(row['latest_start']-latest)<1e-8
-                                and row['feasible']==(latest>=now-1e-9),pid)
+                                and row['feasible']==feasible,pid)
                         choices=[r for r in formula['candidates'] if r['quality_allowed'] and r['feasible']]
-                        if formula.get('policy')=='deadline_first_v2':
+                        if formula.get('policy') in ('deadline_first_v2','original_m3_slot_v3'):
                             low=next(r for r in formula['candidates'] if r['profile']=='gpu_emc')
                             chosen=low if low['quality_allowed'] and low['feasible'] else formula['candidates'][0]
-                            check('m3_full_deadline_first_policy',cfg.get('m3_low_full_policy')=='deadline_first_v2'
+                            check('m3_full_deadline_first_policy',cfg.get('m3_low_full_policy')==formula['policy']
                                 and formula.get('energy_used_for_selection') is False,pid)
                         else:
                             chosen=min(choices,key=lambda r:(r['energy_j'],r['profile']!='baseline')) if choices else formula['candidates'][0]
@@ -429,7 +444,8 @@ def audit(run):
                         from perceptbudget.action_events import EventConfig,detect_events
                         ec=EventConfig(**cfg.get('m3_events',{}))
                         phases=absolute_intervals(old['actions'],old['observation_step'],ec)
-                        qlow=t['service_seconds'];period=t['estimated_control_period_seconds']
+                        qlow=formula['selected']['service_seconds'] if formula else t['service_seconds']
+                        period=t['estimated_control_period_seconds']
                         imminent=[e for e in detect_events(old['actions'],ec)
                             if 0<=(old['observation_step']+e['offset']-origin)*period<=qlow+t['margin_seconds']]
                         check('m3_low_full_only_ordinary_stage',bool(formula) and formula['ordinary']
@@ -466,7 +482,8 @@ def audit(run):
                           and d.get('dvac_enabled')==expected_variance,pid)
                     expected_policy='independent' if group=='C_independent' else 'joint'
                     expected_budget='recovery' if group=='D_joint' and d.get('path')=='low_continue_recovery' else 'hot'
-                    if cfg.get('m3_low_full') and request.get('m4_compute_profile')=='gpu_emc':expected_budget='low'
+                    if (cfg.get('m3_low_full') and request.get('m4_compute_profile')=='gpu_emc'
+                            and cfg.get('m3_low_full_policy')!='original_m3_slot_v3'):expected_budget='low'
                     check('formal_device_service_budget',d.get('dvfs_policy')==expected_policy
                           and d.get('service_budget_history')==expected_budget,pid)
                 if 'signal_policy' in d:

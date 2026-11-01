@@ -314,7 +314,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     if config.get('m4_enabled') and mode_delay_queues is not None:
         mode_delay_queues={key:DelayQueue(value,config['rtc_delay_buffer_size']) for key,value in config['rtc_initial_delays_by_compute'].items()}
     frequency_delay_queues=None
-    if config.get('m3_low_full'):
+    if config.get('m3_low_full') and config.get('m3_low_full_policy')!='original_m3_slot_v3':
         if delay_queue is None or mode_delay_queues is not None:
             raise ValueError('Low Full requires paper RTC without visual mode delay queues')
         frequency_delay_queues=dict(baseline=delay_queue,
