@@ -19,7 +19,7 @@ def test_helper_only_extends_diagnostic_process(monkeypatch):
         probe.clock_helper()
         control.assert_called_once_with()
     assert '--clock-helper' not in sys.argv
-    assert device_clocks.PROFILES['idle408'] == (408000000, 1600000000, 1497600)
+    assert device_clocks.PROFILES['idle408'] == (408000000, 2133000000, 1497600)
     assert all(device_clocks.PROFILES[k] == v for k,v in original.items())
     assert 'idle306' in device_clocks.MATRIX_PROFILES
 
@@ -34,3 +34,8 @@ def test_root_command_is_only_known_diagnostic_entry():
     command = probe.helper_command('lease', '--profile', 'idle306', '--seconds', '1')
     assert command[:3] == ['sudo','-n','/usr/bin/python3']
     assert command[4:] == ['--clock-helper','lease','--profile','idle306','--seconds','1']
+
+
+def test_gpu_only_scan_holds_memory_and_cpu_constant():
+    assert {p[1:] for p in probe.PROFILES.values()} == {(2133000000, 1497600)}
+    assert [p[0] for p in probe.PROFILES.values()] == [816000000,408000000,306000000]
