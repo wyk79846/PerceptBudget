@@ -1,0 +1,6 @@
+condition,repeat,initial_delay,outcome,steps,seconds,underflow_steps,run
+rtc_initial_d8,1,8,timeout,520,27.490876575931907,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261102T092933.112873Z-record-full-2c041d70
+rtc_initial_d9,1,9,success,225,12.544755741022527,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261102T093101.173591Z-record-full-2d515a80
+rtc_initial_d10,1,10,timeout,520,27.38433342333883,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261102T093122.431987Z-record-full-f13b844e
+rtc_initial_d11,1,11,success,225,12.530243631452322,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261102T093206.129079Z-record-full-417bf0a6
+unguided,1,9,success,230,13.375414649955928,2,/home/wyk/workspace/任务产出/perceptbudget/M4/20261102T093227.855082Z-record-full-a21a069f
