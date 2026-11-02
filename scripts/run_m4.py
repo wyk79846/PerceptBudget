@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
+    parser.add_argument('--frequency-reference-run',type=Path,help='Merge completed Full frequency pairs from an earlier batch; do not rerun them')
     parser.add_argument('--full-frequency-pair',action='store_true',help='Resident paired high/low Full policies with common LOW terminal energy window')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
@@ -38,6 +39,12 @@ def main():
     args=parser.parse_args()
     if args.full_frequency_pair and (not args.low_full or args.acceptance_group!='m3'):
         parser.error('--full-frequency-pair requires --low-full --acceptance-group m3')
+    if args.frequency_reference_run and not args.full_frequency_pair:
+        parser.error('--frequency-reference-run requires --full-frequency-pair')
+    if args.frequency_reference_run:
+        previous=json.loads((args.frequency_reference_run/'summary.json').read_text())
+        if previous.get('status')!='completed' or 'full_frequency_pairs' not in previous:
+            parser.error('Reference must contain completed Full frequency pairs')
     if args.low_full and args.acceptance_group!='m3':parser.error('--low-full requires M3 without Fast')
     if args.phase_refresh and args.acceptance_group!='m3':parser.error('--phase-refresh requires M3')
     if args.first_refresh_step is not None and args.acceptance_group!='m3':parser.error('--first-refresh-step requires M3')
@@ -110,6 +117,13 @@ def main():
         continuation=resume_joint(args.resume_from,cfg)
         cfg['m3_resume_plan']=continuation
     pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
+    if args.frequency_reference_run:
+        old_tasks={(e['suite'],e['task_id']) for e in previous['episodes']}
+        if old_tasks & {tuple(t) for t in pending_tasks}:
+            parser.error('Reference tasks overlap the requested new tasks')
+        source_cfg=json.loads((args.frequency_reference_run/'run.json').read_text())['config_snapshot']
+        if source_cfg.get('m4_acceptance_manifest')!=cfg.get('m4_acceptance_manifest'):
+            parser.error('Reference model/task manifest differs')
     if args.dry_run:
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast=('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
@@ -151,6 +165,12 @@ def main():
         if args.full_frequency_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir)
+            if args.frequency_reference_run:
+                combined=args.run_dir/'combined_frequency_pairs'
+                combined.mkdir()
+                result['combined_frequency_pairs']=summarize_pairs(previous['episodes']+result['episodes'],combined)
+                result['combined_frequency_pairs']['source_runs']=[str(args.frequency_reference_run),str(args.run_dir)]
+                _write_json_atomically(combined/'sources.json',result['combined_frequency_pairs']['source_runs'])
         result.update(mode=('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
@@ -180,6 +200,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.low_full:command.append('--low-full')
             if args.full_frequency_pair:command.append('--full-frequency-pair')
+            if args.frequency_reference_run:command.extend(['--frequency-reference-run',str(args.frequency_reference_run)])
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.cover_close_slowdown:command.append('--cover-close-slowdown')

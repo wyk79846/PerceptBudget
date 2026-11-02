@@ -23,3 +23,11 @@ tmux new-session -s pb-full-pair 'bash scripts/run_m4_ssh.sh --acceptance-group 
 输出仍在任务产出/perceptbudget/M4。完整批次新增full_frequency_pairs.csv/json，保留每回合原始功率、请求步号/RTC前缀、终态时间戳、初始条件配对审核与频率审核。报告未执行到的末次推理数量，不能只按有无commit判定是否执行。
 
 本轮代码检查30项通过、命令dry-run确认4回合/1model。GPU实测待普通用户终端输入sudo密码；没有声称已启动或取得节能结果。修改前备份archive/before-common-low-tail-20261102。
+
+## 扩展剩余10任务
+
+首批602d378f四回合完成，保留Spatial0/Object0原始记录。现补Spatial3/6、Object3/6、Goal0/3/6、LIBERO10 0/3/6，每任务两组，共20回合、一次模型加载。模型、RTC、刷新判断和统一LOW计量保持不变。
+
+已在tmux时执行：`bash scripts/run_full_frequency_remaining.sh`。其参数已通过dry-run检查，需终端sudo密码，准备入口不代表已启动GPU。
+
+新批次full_frequency_pairs.csv仅列新增20回合；combined_frequency_pairs/full_frequency_pairs.csv合并此前4回合，完整24回合；sources.json保存两个批次来源。开始前拒绝重复任务和模型/任务清单不一致的来源，避免重复计算已有结果。
