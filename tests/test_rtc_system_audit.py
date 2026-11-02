@@ -258,3 +258,14 @@ def test_m3_fast_guard_uses_both_modes_and_choice_is_bound_to_trace(tmp_path):
     save();assert audit(tmp_path)['passed']
     requests[1]['m3_fast_decision']['service_seconds']=.2;save()
     assert 'm3_fast_decision_bound_to_trace' in [f['check'] for f in audit(tmp_path)['failures']]
+
+
+def test_same_control_step_uses_later_commit_after_critical_wait():
+    from scripts.audit_rtc_system import latest_commit_at_step
+    early=dict(prediction_id=1,commit_step=43,commit_monotonic=10.)
+    late=dict(prediction_id=2,commit_step=43,commit_monotonic=10.5)
+    future=dict(prediction_id=3,commit_step=90,commit_monotonic=20.)
+    for records in ([early,late,future],[late,future,early]):
+        assert latest_commit_at_step(records,43)==late
+        assert latest_commit_at_step(records,86)==late
+        assert latest_commit_at_step(records,90)==future

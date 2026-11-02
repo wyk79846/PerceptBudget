@@ -31,3 +31,13 @@ tmux new-session -s pb-full-pair 'bash scripts/run_m4_ssh.sh --acceptance-group 
 已在tmux时执行：`bash scripts/run_full_frequency_remaining.sh`。其参数已通过dry-run检查，需终端sudo密码，准备入口不代表已启动GPU。
 
 新批次full_frequency_pairs.csv仅列新增20回合；combined_frequency_pairs/full_frequency_pairs.csv合并此前4回合，完整24回合；sources.json保存两个批次来源。开始前拒绝重复任务和模型/任务清单不一致的来源，避免重复计算已有结果。
+
+## 11月2日扩测中断：校验器同一步提交排序修复
+
+9fe7d04a批次已实际完成Spatial3高低两组（86/87步成功），低频组在独立审核时被拒绝。原始记录显示35步请求于43步提交；同43步再次请求，在关键等待期间同43步完成并提交。校验器只按commit_step取max，错误地一直选择前一份预测，并误报85/86步断供。修复为按(commit_step, commit_monotonic, prediction_id)排序，没有修改执行队列、动作或调频规则。
+
+原失败回合1e400be6重新独立审核通过、零断供，频率审核及RESTORED通过；原system_audit.json和失败批次不覆盖，重审另存system_audit_recheck.json/m4_clock_audit_recheck.json。25项审核/终态相关测试通过。
+
+新恢复索引：M4/20261102T083327.472973Z-frequency-pairs-recovered-f322ac57。包含首批4回合和本批2回合，共3任务6回合；逐回合审核、频率及初始输入配对重新通过。这是已完成记录索引，不代表12任务已完成。
+
+scripts/run_full_frequency_remaining.sh现仅补9任务18回合，使用恢复索引自动合并已有6回合，原命令不变。GPU续测仍需终端sudo密码。

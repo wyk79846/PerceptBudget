@@ -9,6 +9,13 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 
+def latest_commit_at_step(commits, step):
+    # Critical waiting can finish several predictions before the same env.step.
+    # A step number alone does not order these submissions.
+    return max((c for c in commits if c['commit_step']<=step),
+               key=lambda c:(c['commit_step'],c['commit_monotonic'],c['prediction_id']))
+
+
 def decode_raw(raw,stats,profile=None):
     import numpy as np
     if profile=='lerobot_h50_quantiles_v044':
@@ -632,8 +639,7 @@ def audit(run):
         previous=c
     underflows=[]
     for step,row in by_step.items():
-        candidates=[c for c in commits if c['commit_step']<=step]
-        active=max(candidates,key=lambda c:c['commit_step'])
+        active=latest_commit_at_step(commits,step)
         request=by_id[active['prediction_id']]
         offset=step-request['observation_step']
         check('control_timestamp_order',row['tick_monotonic']<=row['action_start_monotonic']<=row['action_end_monotonic'],step)
