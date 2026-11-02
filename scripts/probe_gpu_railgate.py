@@ -15,7 +15,7 @@ import time
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from perceptbudget.experiment import load_config,create_run,_write_json_atomically
-from perceptbudget.gpu_railgate import state,confirmed_off
+from perceptbudget.gpu_railgate import state,confirmed_off,joint_rail_configuration
 from perceptbudget.power import PowerMonitor
 
 
@@ -73,8 +73,16 @@ def main():
         print(json.dumps(dict(scopes=['no CUDA context','resident tiny CUDA graph'],
             idle_seconds=[.2,1.,2.],repeats=2,changes=['railgate_enable only'],model_loaded=False)));return
     if os.geteuid()==0:parser.error('Run as normal user; only the helper uses sudo')
-    subprocess.run(['sudo','-v'],check=True)
     cfg=load_config(repo_root=ROOT)
+    if joint_rail_configuration():
+        result=dict(status='unavailable',reason='Device tree declares joint XPU rail; GA10B driver disables independent railgate',
+            model_loaded=False,power_settings_changed=False,clock_settings_changed=False,
+            restoration_required=False,actual=state())
+        run=create_run(dict(cfg,scope='Read-only joint-rail preflight'),'M4','gpu-railgate-preflight',repo_root=ROOT)
+        _write_json_atomically(run/'summary.json',result)
+        print('GPU_RAILGATE_STATUS='+json.dumps(dict(result,run=str(run))),flush=True)
+        return 2
+    subprocess.run(['sudo','-v'],check=True)
     with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         run=create_run(dict(cfg,scope='Tiny CUDA railgate capability, not VLA inference'),'M4','gpu-railgate-probe',repo_root=ROOT)

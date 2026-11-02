@@ -1,3 +1,5 @@
+> 2026-11-02 GPU railgate：本机chosen/nvidia,tegra-joint_xpu_rail存在，rel36 GA10B驱动据此can_railgate_init=false，开启返回EINVAL。当前独立GPU railgate不可用；probe_gpu_railgate已先只读预检返回unavailable。不重试电源写入，不使用force_idle、不改DT/驱动绕过。旧测试根助手已RESTORED；细节docs/M4_GPU_RAILGATE_PROBE_RESULT_20261102.md。
+
 > 2026-11-02当前：完整路线长窗实测已完成，M4/20261102T023320.273423Z-full-long-window-pairs-c9c8a51a。20次/10对，一模型；共同4秒、同LOW起终态。高频往返34.43897J，低频31.28471J，少3.15427J/9.159%，10对全低频较低。功率覆盖1、输入/输出相同、频率和恢复全通过，尾段至少3.221秒、末端约5.915W。确认该条件低频Full整路线省电，不能再用短窗+6.2%否定，也不能外推整任务省9%。见docs/FULL_LONG_WINDOW_RESULT_20261102.md。闭环旧12批仅完成2项，其余RAM中止未测。以下为历史。
 
 > 2026-11-02最新校正：20次绝对Full配对完成，10对输入输出相同，高7.708J低8.185J（服务至ready窗口）。用户指出的旧M4低频省电其实是race-to-idle-calculation-561d07bb的整路线共同窗口模型：长历史1秒高频再降频13.808J、低频12.724J。二者不矛盾，不能用单次服务结果否定整路线预测；旧M4尚未做同起终点真实路线配对。见docs/FULL_ABSOLUTE_PAIRS_RESULT_20261102.md末节。12任务扩测仍仅2项完成，其余RAM中止；不要冒充已完成。以下为历史。

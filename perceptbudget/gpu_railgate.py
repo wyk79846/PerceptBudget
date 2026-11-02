@@ -5,6 +5,11 @@ from pathlib import Path
 GPU=Path('/sys/devices/platform/bus@0/17000000.gpu')
 
 
+def joint_rail_configuration(chosen=Path('/proc/device-tree/chosen')):
+    # DT booleans are represented by zero-length properties: presence is true.
+    return (chosen/'nvidia,tegra-joint_xpu_rail').exists()
+
+
 def state(root=GPU):
     values=dict(monotonic=time.monotonic())
     for name in ('railgate_enable','railgate_delay','is_railgated','gpu_powered_on',

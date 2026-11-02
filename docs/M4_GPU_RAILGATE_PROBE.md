@@ -1,3 +1,5 @@
+> 当前结论（2026-11-02）：本机joint XPU rail启动配置使驱动禁止独立railgate；探针现先只读返回unavailable，不再写开关。详见M4_GPU_RAILGATE_PROBE_RESULT_20261102.md。以下保留初版测试设计。
+
 # GPU自动railgate可用性小测
 
 本轮只用128×128矩阵与一个CUDA图，不加载VLA、不运行LIBERO。CPU/EMC/GPU频率和功耗模式保持原设置；唯一修改为railgate_enable。先检查无CUDA上下文时的自动断电，再保持GPU分配和图比较空闲0.2/1/2秒后能否自动进入、恢复计算。每档关闭/开启各两次，次序反转，共12次计算。

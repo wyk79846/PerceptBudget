@@ -62,3 +62,10 @@ def test_close_retains_restoration_after_driver_failure():
     lease.restored_event=None
     with pytest.raises(RuntimeError,match='restoration acknowledgement'):
         lease.close()
+
+
+def test_zero_length_device_tree_property_disables_probe(tmp_path):
+    from perceptbudget.gpu_railgate import joint_rail_configuration
+    assert not joint_rail_configuration(tmp_path)
+    (tmp_path/'nvidia,tegra-joint_xpu_rail').touch()
+    assert joint_rail_configuration(tmp_path)
