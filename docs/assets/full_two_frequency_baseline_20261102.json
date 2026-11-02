@@ -1,0 +1,29 @@
+{
+  "baseline_branch": "baseline/full-two-frequency-20261102",
+  "commit": "bbe414fc42f15d282309d5c5574f4ecbff86253a",
+  "profiles": {
+    "full_high": [
+      1173000000,
+      3199000000,
+      1497600
+    ],
+    "full_low_and_continue": [
+      816000000,
+      2133000000,
+      1497600
+    ]
+  },
+  "policy": "shared_deadline_v4",
+  "safety_margin_ms": 25,
+  "reference_results": "docs/M4_FULL_FREQUENCY_12TASK_RESULTS_20261102.md",
+  "file_sha256": {
+    "config.json": "8c53f0b3b94e930a8ed13745e5e979bcb28f771331a1cd6d9f7291bbb86db455",
+    "m3.json": "ff853de66cec73fdd869b268a3264df9382ccda4ec12fbf769322fa8f25b0f09",
+    "m4.json": "a8d30d266695274bff15332fafa4a471c47446b80734c199b265fe32eb6f7a9e",
+    "perceptbudget/m3_low_full.py": "079dcb77fb295c19f2bacf7fa1df23c5f970be21d0ebc6f76119ef47a28794b8",
+    "perceptbudget/closed_loop.py": "4293199c4c606a4bf810d4ce219e22d489bc79c36526fa5199b31bf1908884e3",
+    "perceptbudget/device_clocks.py": "a43582d76d40ff20d3c3a81821cb7daacb34fdb974fea4bfa5e66381757204f2",
+    "scripts/control_device_clocks.py": "0327b48ea60af4e94f7d595f48c4257ef8d4c462ea8cd9b63032c5a10c78b7e3",
+    "scripts/run_m4.py": "9e6f22d8daa3e2fbfd9ce6b4c3543aaafeadc45dd49f94b548ac5ad4ca3f73bd"
+  }
+}

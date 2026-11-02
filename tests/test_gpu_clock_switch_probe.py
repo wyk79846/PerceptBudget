@@ -28,6 +28,15 @@ def test_gpu_only_switch(tmp_path):
     with pytest.raises(ValueError):switch(control,123)
 
 
+def test_medium_pair_is_explicit_and_does_not_change_default(tmp_path):
+    control=FakeControl(tmp_path)
+    (tmp_path/'available_frequencies').write_text(f'{LOW} 816000000 {HIGH}')
+    assert switch(control,816000000,upper=816000000)['actual_hz']==816000000
+    assert switch(control,LOW,upper=816000000)['actual_hz']==LOW
+    with pytest.raises(ValueError):switch(control,816000000)
+    assert switch(control,HIGH)['actual_hz']==HIGH
+
+
 def test_detects_non_gpu_change(tmp_path):
     control=FakeControl(tmp_path)
     original=control.bounds

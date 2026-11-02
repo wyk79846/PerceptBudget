@@ -16,11 +16,11 @@ HIGH=1173000000
 LOW=306000000
 
 
-def switch(control, target):
+def switch(control, target, *, upper=HIGH):
     """Command to first matching sysfs read; not an actual GPU kernel timestamp."""
     before=control.snapshot()
     advertised=list(map(int,(control.gpu/'available_frequencies').read_text().split()))
-    if target not in (HIGH,LOW) or target not in advertised:
+    if upper not in (HIGH,816000000) or target not in (upper,LOW) or target not in advertised:
         raise ValueError('Unapproved GPU frequency')
     start=time.monotonic()
     control.bounds(control.gpu/'min_freq',control.gpu/'max_freq',target,target)
@@ -43,18 +43,18 @@ def switch(control, target):
                 non_gpu_settings_unchanged=True)
 
 
-def helper():
+def helper(*, upper=HIGH):
     if os.geteuid()!=0:
         raise RuntimeError('Helper requires sudo')
     from perceptbudget import device_clocks
     # Reuse root journal, locking, fixed40W gate, signals and finally restoration.
     from scripts import control_device_clocks
-    device_clocks.PROFILES['baseline']=(HIGH,2133000000,1497600)
+    device_clocks.PROFILES['baseline']=(upper,2133000000,1497600)
     device_clocks.PROFILES['gpu_emc']=(LOW,2133000000,1497600)
     def cycles(control,profile,emit):
         for index in range(10):
-            for direction,target in [('down',LOW),('up',HIGH)]:
-                record=switch(control,target)
+            for direction,target in [('down',LOW),('up',upper)]:
+                record=switch(control,target,upper=upper)
                 emit(dict(status='TRANSITION',index=index,direction=direction,**record))
                 time.sleep(.2)
     control_device_clocks.cycle_trace=cycles
@@ -82,11 +82,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--helper',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--dry-run',action='store_true')
+    parser.add_argument('--medium',action='store_true',help='Measure306/816MHz for the three-state candidate')
     args=parser.parse_args()
+    upper=816000000 if args.medium else HIGH
     if args.helper:
-        return helper()
+        return helper(upper=upper)
     if args.dry_run:
-        print(json.dumps(dict(high_hz=HIGH,low_hz=LOW,emc_hz=2133000000,cpu_khz=1497600,
+        print(json.dumps(dict(high_hz=upper,low_hz=LOW,emc_hz=2133000000,cpu_khz=1497600,
             pairs=10,model_loads=0,timing_scope='GPU bounds command to current-frequency readback',
             production_defaults_changed=False)))
         return 0
@@ -99,12 +101,13 @@ def main():
     print('run_dir='+str(run),flush=True)
     summary=dict(status='running',model_loads=0,
         scope='Static GPU-only sysfs command/readback timing; not resident-model wake or first-kernel timing',
-        fixed_emc_hz=2133000000,fixed_cpu_khz=1497600)
+        fixed_emc_hz=2133000000,fixed_cpu_khz=1497600,upper_gpu_hz=upper,lower_gpu_hz=LOW)
     try:
         with (Path(config['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             with (run/'clocks.log').open('w') as log:
-                code=subprocess.run(['sudo','-n','/usr/bin/python3',str(Path(__file__).resolve()),'--helper'],
+                code=subprocess.run(['sudo','-n','/usr/bin/python3',str(Path(__file__).resolve()),'--helper']+
+                                    (['--medium'] if args.medium else []),
                                     stdout=log,stderr=subprocess.STDOUT).returncode
             lines=(run/'clocks.log').read_text().splitlines()
             restored='RESTORED' in lines
