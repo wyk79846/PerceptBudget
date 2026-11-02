@@ -395,9 +395,15 @@ def audit(run):
             old=by_id[previous['prediction_id']]
             s=origin-old['observation_step']
             if not synchronous:
-                check('old_target_alignment',g.get('guidance_enabled') is True
-                    and solver['executed']==s==g['executed_steps']
-                    and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
+                if cfg.get('rtc_disable_guidance'):
+                    check('unguided_without_old_target_or_vjp',g.get('guidance_enabled') is False
+                        and solver['previous_raw'] is None and not g.get('vjp_norms')
+                        and solver['executed']==s==g['executed_steps']
+                        and g.get('solver_backend')=='original_openpi_eager_unguided',pid)
+                else:
+                    check('old_target_alignment',g.get('guidance_enabled') is True
+                        and solver['executed']==s==g['executed_steps']
+                        and eq(solver['previous_raw'],old['actions_raw'][s:]),pid)
             if m3:
                 d=decisions.get(origin,{})
                 t=request.get('m3_timing',{})

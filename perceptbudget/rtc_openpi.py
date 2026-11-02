@@ -163,6 +163,8 @@ class OriginalOpenPiRTCAdapter:
         if self.config.get('experimental_original_varlen') and not getattr(self.expert,'varlen_attention_enabled',False):
             from perceptbudget.openpi_varlen import enable_varlen_attention
             enable_varlen_attention(self.expert)
+        if self.config.get('rtc_disable_guidance'):
+            previous_raw=None
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
         clean_trace=[] if self.config.get('m3_dvac_enabled') and previous is not None else None
@@ -194,7 +196,8 @@ class OriginalOpenPiRTCAdapter:
         request.setdefault('rtc_guidance', {}).update(dict(
             delay_estimate_steps=delay, executed_steps=executed, guidance_enabled=previous is not None,
             solver_backend=('original_source_step_graph' if step_graph is not None and previous is not None else
-                'original_openpi_cuda_graph' if use_graph and previous is not None else 'original_openpi_eager_vjp'),
+                'original_openpi_cuda_graph' if use_graph and previous is not None else
+                'original_openpi_eager_unguided' if self.config.get('rtc_disable_guidance') else 'original_openpi_eager_vjp'),
             expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=self.beta,
             fused_norm=bool(self.config.get('rtc_fused_norm')),

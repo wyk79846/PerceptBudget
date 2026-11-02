@@ -269,3 +269,14 @@ def test_same_control_step_uses_later_commit_after_critical_wait():
         assert latest_commit_at_step(records,43)==late
         assert latest_commit_at_step(records,86)==late
         assert latest_commit_at_step(records,90)==future
+
+
+def test_unguided_ablation_audit_requires_no_target_and_no_vjp(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text());meta['config_snapshot']['rtc_disable_guidance']=True
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    requests[1]['rtc_solver_inputs']['previous_raw']=None
+    requests[1]['rtc_guidance'].update(guidance_enabled=False,vjp_norms=[],solver_backend='original_openpi_eager_unguided')
+    save();assert audit(tmp_path)['passed']
+    requests[1]['rtc_guidance']['vjp_norms']=[1.]
+    save();assert not audit(tmp_path)['passed']

@@ -13,6 +13,10 @@ SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 def camera_view_for_condition(condition):
     """Frequency pair labels select policies, never different camera inputs."""
+    if condition.startswith(('rtc_initial_d','unguided_repeat')):
+        from perceptbudget.rtc_sensitivity import variants
+        if condition not in variants():raise ValueError('Unknown sensitivity view')
+        return 'full'
     return 'full' if condition in ('full_high', 'full_low') else condition
 
 
@@ -22,8 +26,8 @@ def audit_paired_bootstraps(episodes):
     cases=[]
     for suite,tid in sorted({(e['suite'],e['task_id']) for e in episodes}):
         pair=[e for e in episodes if e['suite']==suite and e['task_id']==tid]
-        if len(pair) not in (2,3,4):
-            raise ValueError('Require two, three or four resident episodes per task')
+        if len(pair)<2:
+            raise ValueError('Require at least two resident episodes per task')
         requests=[json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())[0] for e in pair]
         for i in range(1,len(pair)):
             checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[i]['initial']['initial_hashes']}
@@ -390,6 +394,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     views=comparison_variants(cfg)
                 if cfg.get('m4_full_frequency_pair'):
                     views=('full_high','full_low') if list(task_plan).index((suite,tid))%2==0 else ('full_low','full_high')
+                if cfg.get('m4_rtc_delay_sensitivity'):
+                    from perceptbudget.rtc_sensitivity import variants
+                    views=variants()
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -562,6 +569,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if cfg.get('m4_full_frequency_pair'):
                         child_cfg['m3_low_full']=view=='full_low'
                         child_cfg['m4_full_frequency_group']=view
+                    if cfg.get('m4_rtc_delay_sensitivity'):
+                        from perceptbudget.rtc_sensitivity import configure
+                        configure(child_cfg,view)
                     if prepared_start is not None:child_cfg['m4_reuse_calibrated_start']=True
                     child_cfg['m2_view'] = current_view
                     episode_q=5
@@ -722,7 +732,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair'):
+            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair') or cfg.get('m4_rtc_delay_sensitivity'):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired

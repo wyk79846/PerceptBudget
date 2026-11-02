@@ -8,7 +8,7 @@ cd -- "$pb_root" || exit 1
 
 pb_entry=scripts/run_m4_acceptance.py
 for pb_arg in "$@"; do
-    if [[ "$pb_arg" == --full-frequency-pair || "$pb_arg" == --rtc-delay-reference-run ]]; then
+    if [[ "$pb_arg" == --full-frequency-pair || "$pb_arg" == --rtc-delay-reference-run || "$pb_arg" == --rtc-delay-sensitivity ]]; then
         pb_entry=scripts/run_m4.py
     fi
 done
