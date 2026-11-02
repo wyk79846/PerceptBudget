@@ -1,0 +1,58 @@
+{
+  "source_run": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M4/20261102T092751.975386Z-acceptance-m3-dda0d514",
+  "state_layout": "sim_state=[time,qpos(26),qvel(24)]; bottom joint qpos address25 -> flattened26; verified from saved MjModel",
+  "rows": [
+    {
+      "initial_delay": 8,
+      "run": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M4/20261102T092933.112873Z-record-full-2c041d70",
+      "outcome": "timeout",
+      "steps": 520,
+      "first_bowl_wall_contact": 148,
+      "first_open_command_after100": 162,
+      "mean_command_z_150_159": -0.4291810870170593,
+      "eef_drop_mm_150_159": 8.28927755355835,
+      "bowl_drop_mm_150_159": 0.5206554993085755,
+      "final_drawer_qpos": -0.05638883308133048,
+      "final_tilt_deg": 18.49787439515617
+    },
+    {
+      "initial_delay": 9,
+      "run": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M4/20261102T093101.173591Z-record-full-2d515a80",
+      "outcome": "success",
+      "steps": 225,
+      "first_bowl_wall_contact": 155,
+      "first_open_command_after100": 161,
+      "mean_command_z_150_159": -0.3021980822086334,
+      "eef_drop_mm_150_159": 37.117958068847656,
+      "bowl_drop_mm_150_159": 34.70775425683836,
+      "final_drawer_qpos": 0.001021635129999204,
+      "final_tilt_deg": 1.6968415613083328e-05
+    },
+    {
+      "initial_delay": 10,
+      "run": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M4/20261102T093122.431987Z-record-full-f13b844e",
+      "outcome": "timeout",
+      "steps": 520,
+      "first_bowl_wall_contact": 149,
+      "first_open_command_after100": 163,
+      "mean_command_z_150_159": -0.4162247717380524,
+      "eef_drop_mm_150_159": 8.074760437011719,
+      "bowl_drop_mm_150_159": 0.3864784892116946,
+      "final_drawer_qpos": -0.056784339040910986,
+      "final_tilt_deg": 18.744725277251188
+    },
+    {
+      "initial_delay": 11,
+      "run": "/home/wyk/workspace/\u4efb\u52a1\u4ea7\u51fa/perceptbudget/M4/20261102T093206.129079Z-record-full-417bf0a6",
+      "outcome": "success",
+      "steps": 225,
+      "first_bowl_wall_contact": 157,
+      "first_open_command_after100": 160,
+      "mean_command_z_150_159": -0.2953078538179398,
+      "eef_drop_mm_150_159": 37.00125217437744,
+      "bowl_drop_mm_150_159": 34.79191048190866,
+      "final_drawer_qpos": 0.0017058859494179753,
+      "final_tilt_deg": 0.9457591232055517
+    }
+  ]
+}
