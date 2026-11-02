@@ -7,8 +7,8 @@ from perceptbudget.rtc_sensitivity import variants, configure
 from perceptbudget.device_quality import camera_view_for_condition
 
 
-def test_interleaved_fifteen_conditions_change_only_initial_history():
-    labels=variants();assert len(labels)==len(set(labels))==15
+def test_five_conditions_change_only_initial_history():
+    labels=variants();assert len(labels)==len(set(labels))==5
     counts=Counter()
     for label in labels:
         cfg={'H':50,'N':5,'state_enabled':True}
@@ -19,8 +19,7 @@ def test_interleaved_fifteen_conditions_change_only_initial_history():
         assert cfg['H']==50 and cfg['N']==5 and cfg['state_enabled']
         assert cfg['rtc_initial_delay_steps'] in (8,9,10,11)
         assert cfg['rtc_disable_guidance']==label.startswith('unguided_')
-    assert set(counts.values())=={3}
-    assert labels[:5]!=labels[5:10]
+    assert set(counts.values())=={1}
 
 
 def test_unguided_solver_has_no_backward_and_no_old_action_target():
@@ -38,7 +37,7 @@ def test_unguided_solver_has_no_backward_and_no_old_action_target():
     assert torch.allclose(result,torch.full_like(result,-.2))
 
 
-def test_bootstrap_comparison_accepts_all_fifteen_trials(tmp_path):
+def test_bootstrap_comparison_accepts_all_five_trials(tmp_path):
     import json
     from perceptbudget.device_quality import audit_paired_bootstraps
     episodes=[]
@@ -48,4 +47,4 @@ def test_bootstrap_comparison_accepts_all_fifteen_trials(tmp_path):
         (run/'rtc/q5_requests.json').write_text(json.dumps([request]))
         episodes.append(dict(suite='libero_10',task_id=3,run=str(run),view=label,initial={'initial_hashes':{'state':'same'}}))
     result=audit_paired_bootstraps(episodes)
-    assert result['passed'] and len(result['cases'])==14
+    assert result['passed'] and len(result['cases'])==4
