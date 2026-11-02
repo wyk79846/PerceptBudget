@@ -19,7 +19,8 @@ def test_switch_is_only_zero_or_one(tmp_path):
     assert p.read_text()=='1'
 
 
-def test_root_protocol_restores_on_invalid_command(tmp_path,monkeypatch):
+@pytest.mark.parametrize('driver_rejects',[False,True])
+def test_root_protocol_restores_on_invalid_command(tmp_path,monkeypatch,driver_rejects):
     class Directory:
         def mkdir(self,**kwargs):pass
         def is_symlink(self):return False
@@ -27,6 +28,7 @@ def test_root_protocol_restores_on_invalid_command(tmp_path,monkeypatch):
         def __truediv__(self,name):return tmp_path/name
     value={'enabled':'0'};events=[]
     def write(v):
+        if driver_rejects and v=='1':raise OSError(22,'Invalid argument')
         if v not in ('0','1'):raise ValueError('Invalid command')
         value['enabled']=v
     monkeypatch.setattr(helper,'Path',lambda _:Directory())
@@ -39,7 +41,24 @@ def test_root_protocol_restores_on_invalid_command(tmp_path,monkeypatch):
     monkeypatch.setattr(helper.sys,'argv',['control_gpu_railgate.py'])
     monkeypatch.setattr(helper.sys,'stdin',io.StringIO('1\nbad\n'))
     monkeypatch.setattr(helper.select,'select',lambda *a:([helper.sys.stdin],[],[]))
-    with pytest.raises(ValueError):helper.main()
+    if driver_rejects:
+        helper.main()
+    else:
+        with pytest.raises(ValueError):helper.main()
     assert value['enabled']=='0'
     assert not (tmp_path/'original.json').exists()
-    assert events==['READY','APPLIED','RESTORED']
+    assert events==(['READY','REJECTED','RESTORED'] if driver_rejects else ['READY','APPLIED','RESTORED'])
+
+
+def test_close_retains_restoration_after_driver_failure():
+    from unittest.mock import Mock
+    from scripts.probe_gpu_railgate import Lease
+    lease=Lease.__new__(Lease)
+    lease.proc=Mock();lease.proc.poll.return_value=0;lease.proc.wait.return_value=0
+    lease.reader=Mock();lease.log=Mock()
+    lease.restored_event={'status':'RESTORED','actual':{'railgate_enable':'0'}}
+    lease.close()
+    lease.proc.stdin.write.assert_not_called()
+    lease.restored_event=None
+    with pytest.raises(RuntimeError,match='restoration acknowledgement'):
+        lease.close()

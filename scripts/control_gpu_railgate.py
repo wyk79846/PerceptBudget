@@ -50,7 +50,12 @@ def main():
                 line=sys.stdin.readline()
                 if not line or line.strip()=='STOP':break
                 value=line.strip()
-                set_enabled(value);emit('APPLIED',enabled=value,actual=state())
+                try:
+                    set_enabled(value)
+                except OSError as exc:
+                    emit('REJECTED',enabled=value,errno=exc.errno,error=str(exc),actual=state())
+                    return
+                emit('APPLIED',enabled=value,actual=state())
         finally:
             for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):signal.signal(sig,signal.SIG_IGN)
             set_enabled(saved);snapshot.unlink();emit('RESTORED',actual=state())

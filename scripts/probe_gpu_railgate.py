@@ -19,15 +19,23 @@ from perceptbudget.gpu_railgate import state,confirmed_off
 from perceptbudget.power import PowerMonitor
 
 
+class RailgateUnavailable(RuntimeError):
+    pass
+
+
 class Lease:
     def __init__(self,directory):
+        self.restored_event=None
         self.events=queue.Queue();self.log=(directory/'railgate_helper.jsonl').open('w')
         self.proc=subprocess.Popen(['sudo','-n','/usr/bin/python3',str(ROOT/'scripts/control_gpu_railgate.py')],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
         def read():
             for line in self.proc.stdout:
                 self.log.write(line);self.log.flush()
-                try:self.events.put(json.loads(line))
+                try:
+                    event=json.loads(line)
+                    if event.get('status')=='RESTORED':self.restored_event=event
+                    self.events.put(event)
                 except ValueError:pass
             self.events.put({'status':'EOF'})
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
@@ -36,6 +44,8 @@ class Lease:
         while time.monotonic()<end:
             event=self.events.get(timeout=max(.001,end-time.monotonic()))
             if event['status']==status:return event
+            if event['status']=='REJECTED':
+                raise RailgateUnavailable(f"Driver rejected railgate_enable={event['enabled']}: errno={event['errno']}, {event['error']}")
             if event['status']=='EOF':raise RuntimeError('Railgate helper exited; inspect helper log')
         raise TimeoutError(status)
     def set(self,value):
@@ -45,9 +55,14 @@ class Lease:
     def close(self):
         try:
             if self.proc.poll() is None:
-                self.proc.stdin.write('STOP\n');self.proc.stdin.flush();self.proc.stdin.close()
-            self.wait('RESTORED')
-            if self.proc.wait(timeout=5):raise RuntimeError('Railgate restoration failed')
+                try:
+                    self.proc.stdin.write('STOP\n');self.proc.stdin.flush();self.proc.stdin.close()
+                except BrokenPipeError:pass
+            code=self.proc.wait(timeout=5)
+            self.reader.join(timeout=5)
+            if self.restored_event is None:
+                raise RuntimeError('No railgate restoration acknowledgement; inspect helper log')
+            if code:raise RuntimeError('Railgate helper failed after restoring; inspect helper log')
         finally:
             self.reader.join(timeout=5);self.log.close()
 
@@ -112,6 +127,9 @@ def main():
                 railgate_observed_without_cuda_context=any(r['confirmed_off'] for r in result['no_context']),
                 railgate_observed_with_resident_cuda_graph=any(r['confirmed_off_during_idle'] for r in result['requests']),
                 all_outputs_match=all(r['output_matches'] for r in result['requests']))
+        except RailgateUnavailable as exc:
+            result.update(status='unavailable',error=str(exc),
+                reason='Driver rejected enabling automatic railgate before CUDA test; no force-idle fallback')
         except BaseException as exc:
             result.update(status='invalid',error=f'{type(exc).__name__}: {exc}');raise
         finally:
@@ -126,6 +144,7 @@ def main():
                 _write_json_atomically(run/'gpu_states.json',samples)
                 _write_json_atomically(run/'power_readings.json',[asdict(x) for x in monitor.readings])
         print('GPU_RAILGATE_STATUS='+json.dumps(dict(status=result['status'],restored=result['restored'],run=str(run))),flush=True)
+        return 0 if result['status']=='completed' else 2
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':raise SystemExit(main())
