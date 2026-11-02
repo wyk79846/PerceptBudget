@@ -491,6 +491,13 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                        delay=5, executed=5, request={}), count=3)
                 stage_progress('inference_calibrated')
                 cfg['rtc_initial_delay_steps'] = math.ceil(timing['median_ms']/1000/calibration['median_seconds'])
+                if cfg.get('rtc_initial_delay_reference_run'):
+                    from perceptbudget.rtc_initial_delay import reference_delay
+                    frozen=reference_delay(cfg['rtc_initial_delay_reference_run'],suite,tid,cfg)
+                    cfg['rtc_initial_delay_calibration_observed_steps']=cfg['rtc_initial_delay_steps']
+                    cfg['rtc_initial_delay_steps']=frozen['initial_delay_steps']
+                    cfg['rtc_initial_delay_reference']=frozen
+                    record.setdefault('initial_delay_replays',[]).append(dict(suite=suite,task_id=tid,measured_ms=timing['median_ms'],observed_steps=cfg['rtc_initial_delay_calibration_observed_steps'],**frozen))
                 if split_delay_comparison:
                     adapter.bootstrap(prepared,task['instruction'],{})
                     cfg['m2_reuse_enabled']=True

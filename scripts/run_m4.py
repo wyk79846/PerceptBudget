@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
+    parser.add_argument('--rtc-delay-reference-run',type=Path,help='Replay a recorded per-task initial RTC delay; keep online updates enabled')
     parser.add_argument('--frequency-reference-run',type=Path,help='Merge completed Full frequency pairs from an earlier batch; do not rerun them')
     parser.add_argument('--full-frequency-pair',action='store_true',help='Resident paired high/low Full policies with common LOW terminal energy window')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
@@ -39,6 +40,8 @@ def main():
     args=parser.parse_args()
     if args.full_frequency_pair and (not args.low_full or args.acceptance_group!='m3'):
         parser.error('--full-frequency-pair requires --low-full --acceptance-group m3')
+    if args.rtc_delay_reference_run and args.acceptance_group!='m3':
+        parser.error('--rtc-delay-reference-run requires the Full/Continue policy')
     if args.frequency_reference_run and not args.full_frequency_pair:
         parser.error('--frequency-reference-run requires --full-frequency-pair')
     if args.frequency_reference_run:
@@ -60,6 +63,7 @@ def main():
     if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['m3_low_full']=args.low_full
+    if args.rtc_delay_reference_run:cfg['rtc_initial_delay_reference_run']=str(args.rtc_delay_reference_run.resolve())
     cfg['m4_full_frequency_pair']=args.full_frequency_pair
     if args.full_frequency_pair:cfg['m4_common_low_tail_seconds']=3.
     cfg['m3_phase_refresh']=args.phase_refresh
@@ -200,6 +204,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.low_full:command.append('--low-full')
             if args.full_frequency_pair:command.append('--full-frequency-pair')
+            if args.rtc_delay_reference_run:command.extend(['--rtc-delay-reference-run',str(args.rtc_delay_reference_run)])
             if args.frequency_reference_run:command.extend(['--frequency-reference-run',str(args.frequency_reference_run)])
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
