@@ -1,0 +1,15 @@
+{
+  "code_commit": "a549ae2",
+  "sources": [
+    {
+      "path": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261030T052140.445693Z-m3-completion-plan-1d3cd769/completed_comparison.json",
+      "sha256": "38f556efc1eb65ac65bf7017a5b47bcc6580c6ed4a48cee849845629d99fb860"
+    },
+    {
+      "path": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261031T063736.148606Z-acceptance-m3-68053278/recording.json",
+      "sha256": "9422dd8f25bd4d195cbac9868497dfec405c708ad43c48a987fa34c5d50ecf1e"
+    }
+  ],
+  "energy_scope": "whole task including drain; seconds=task_seconds",
+  "note": "CSV is extracted raw episode metrics; large per-step logs and power samples remain at source paths."
+}
