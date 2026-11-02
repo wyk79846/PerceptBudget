@@ -1,0 +1,19 @@
+# GPU306MHz后的EMC、CPU小测
+
+保持生产配置不变，GPU统一306MHz，参照EMC2133/CPU1497.6MHz。分别试EMC1600MHz，以及EMC2133下CPU1190.4、1036.8、806.4MHz，总计5个组合。当前只改变一个额外部件，不混合新的EMC和CPU降频收益。
+
+1. 模型加载前逐档做1秒实际频率预检。拒绝的候选只有在确认RESTORED后才跳过，保留日志，不把申请频率当作已生效频率。此前EMC1600申请未生效，此轮保留复核。
+2. 对可用组合测完整高低档转换，每组合5次往返。高频为GPU1173/EMC3199/CPU1497.6，低频为候选。记录命令至实际频率读回，不作为首GPU算子恢复时间。
+3. 一次模型加载，复用既有Continue实物理测试：Spatial0/seed7/init0，每轮只生成一次动作，关闭连续图像渲染但执行物理及本体控制，连续执行前15步再测后5步，控制目标周期70ms。每可用组合2窗，最多10窗，不是10个完整任务。无重复动作、无追加推理。同动作、物理终态、恢复图像及频率/功率覆盖沿用原检查。
+4. 对比最后5步平均功率、能量、每步耗时和超期数；后续取新图能量单列。低频导致70ms超期时本轮报告cadence_usable=false，不把更慢取得的低功率当作合格节能。原测试默认仍遇超期停止，诊断开关不改变正式行为。
+
+既有Continue代码只新增可选单历史点及超期报告参数，默认三历史点/超期拦截不变。诊断进程临时扩展频率表及重复数，退出不影响正式调度。无FlashRT/模型/RTC更改。恢复实际使用原40W检查、根快照、互斥及finally恢复。
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/probe_continue_combinations.py
+```
+
+普通用户运行，按提示输入sudo密码。结果在M4/*-continue-lower-combos-*/summary.json、preflight.json、continue_control.json；worker.log记录模型准备和逐窗过程。一次加载，时长主要由模型准备决定，短窗不重载。
+
+29项相关CPU测试通过，dry-run通过，设备测试尚未执行。原状态已留分支archive/before-lower-continue-combinations-20261102。

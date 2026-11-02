@@ -122,7 +122,8 @@ def control_window(env, observation, actions, lease, scene, frame, trace, *, np,
                 rows=rows), frames
 
 
-def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, camera_compare=False,history_windows=False):
+def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, camera_compare=False,history_windows=False,
+           history_points=(0.,.2,1.), report_cadence_misses=False):
     import gc
     import ctypes
     import numpy as np
@@ -135,6 +136,8 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
 
     directory = Path(directory)
     config = adapter.config
+    if tuple(history_points) not in ((0.,.2,1.), (1.,)):
+        raise ValueError('Unsupported Continue history points')
     validation = bool(config.get('m2_continue_validation'))
     repeats = 20 if validation else REPEATS
     profiles = ('gpu_emc',) if validation else MATRIX_PROFILES
@@ -160,6 +163,9 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             raise ValueError('History windows cannot compare camera modes')
         result.update(planned_windows=45,max_control_steps=495,comparison_period_seconds=.07,
             scope='No-inference Continue history at fixed target clocks: execute0/3/15 original actions, then measure next5 at70ms ticks; no repeated prefix, no hardware sleep or safe-buffer claim')
+        if tuple(history_points)==(1.,):
+            result.update(planned_windows=len(profiles)*repeats,max_control_steps=len(profiles)*repeats*20,
+                          requested_history_points=list(history_points))
         if validation:
             result.update(planned_windows=60, max_control_steps=660,
                 validation_batch=config.get('m2_validation_batch'),
@@ -197,7 +203,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             plan = [(r, off) for r in range(repeats)
                             for off in ((False, True) if r%2==0 else (True, False))] if camera_compare else [(r, False) for r in range(repeats)]
             if history_windows:
-                plan=[(r,True,h) for h in (0.,.2,1.) for r in range(repeats)]
+                plan=[(r,True,h) for h in history_points for r in range(repeats)]
             else:
                 plan=[(r,off,0.) for r,off in plan]
             for repeat, cameras_disabled,history in plan:
@@ -266,7 +272,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                                 period=.07 if camera_compare or history_windows else .05,
                                 capture_frames=not (camera_compare or history_windows),source_offset=consumed)
                         if camera_compare or history_windows:
-                            if window['deadline_overruns']:
+                            if window['deadline_overruns'] and not report_cadence_misses:
                                 raise RuntimeError('Shared 70ms cadence missed; camera energy comparison invalid')
                             fresh, acquisition = continue_observation(env, history, history_frame_references,
                                 directory, label, validated=validation)
@@ -340,7 +346,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 print('CONTINUE_DONE='+label+' hz='+str(window['actual_hz']), flush=True)
         result['summary'] = []
         for profile in profiles:
-          for disabled,history in ([(True,h) for h in (0.,.2,1.)] if history_windows else [(off,0.) for off in ((False, True) if camera_compare else (False,))]):
+          for disabled,history in ([(True,h) for h in history_points] if history_windows else [(off,0.) for off in ((False, True) if camera_compare else (False,))]):
             rows = [w for w in result['windows'] if w['profile']==profile and w['cameras_disabled']==disabled and w['requested_history_seconds']==history]
             summary = dict(profile=profile, cameras_disabled=disabled, windows=len(rows),
                 executed_steps=sum(w['executed_steps'] for w in rows),
@@ -355,7 +361,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
             if camera_compare or history_windows:
                 summary['mean_energy_including_fresh_images_j'] = statistics.mean(w['including_fresh_images']['energy_j'] for w in rows)
             result['summary'].append(summary)
-        paired=all(len({w['final_sim_sha256'] for w in result['windows'] if w['requested_history_seconds']==h})==1 for h in (0.,.2,1.)) if history_windows else len({w['final_sim_sha256'] for w in result['windows']})==1
+        paired=all(len({w['final_sim_sha256'] for w in result['windows'] if w['requested_history_seconds']==h})==1 for h in history_points) if history_windows else len({w['final_sim_sha256'] for w in result['windows']})==1
         result.update(status='completed', all_final_states_equal=paired)
         if not result['all_final_states_equal']:
             raise RuntimeError('Paired actions produced different final physics; do not qualify clock comparison')
