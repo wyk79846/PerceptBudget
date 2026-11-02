@@ -41,3 +41,11 @@ tmux new-session -s pb-full-pair 'bash scripts/run_m4_ssh.sh --acceptance-group 
 新恢复索引：M4/20261102T083327.472973Z-frequency-pairs-recovered-f322ac57。包含首批4回合和本批2回合，共3任务6回合；逐回合审核、频率及初始输入配对重新通过。这是已完成记录索引，不代表12任务已完成。
 
 scripts/run_full_frequency_remaining.sh现仅补9任务18回合，使用恢复索引自动合并已有6回合，原命令不变。GPU续测仍需终端sudo密码。
+
+## 扩测第二次中止：长任务图准备时RAM保护
+
+b2747fe7已完成新增6任务12回合，所有系统/频率/恢复检查通过；在LIBERO10 task0图准备prefix654处available897.3MiB，触发900MiB阶段保护，长任务回合尚未开始。已完成回合不是内存失败任务，不重新跑，也不降低保护线。
+
+清理后的torch allocated在各任务边界约6917MiB、运行约6929MiB，没有随12回合持续增加。长任务环境/图准备过程中available由1818降至897MiB，prefix648→649下降约278MiB而torch allocated变化不足1MiB；仅凭这些记录不能将内存问题认定为PyTorch张量泄漏或确定某一外部进程。保留原因定位边界。
+
+新恢复索引：M4/20261102T084844.066476Z-frequency-pairs-recovered-f9cbacb0。共9任务18回合，所有逐回合审核及初始配对通过；两组均8/9，Goal0均超时。scripts/run_full_frequency_remaining.sh只跑剩余LIBERO10 0/3/6的6回合，一次模型加载，合并原18回合；不逐回合重载。原命令不变。
