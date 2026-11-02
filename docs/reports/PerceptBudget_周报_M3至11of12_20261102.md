@@ -32,7 +32,7 @@
 
 ## Artifacts
 
-- [代码版本a549ae2](https://github.com/wyk79846/PerceptBudget/commit/a549ae2)：异步衔接、关键等待与阶段刷新去重。
-- [12任务实验记录](https://github.com/wyk79846/PerceptBudget/blob/c1e8ce1/docs/M3_PHASE_REFRESH_12TASK_RESULTS_20261031.md)。
+- [11/12版本相关源码快照（a549ae2）](assets/m3_weekly_20261102/code_a549ae2.tar.gz)：异步衔接、关键等待与阶段刷新去重。
+- [12任务实验记录](https://github.com/wyk79846/PerceptBudget/blob/reports/m3-weekly-20261102/docs/M3_PHASE_REFRESH_12TASK_RESULTS_20261031.md)。
 - [36回合逐任务数据](assets/m3_weekly_20261102/paired_results.csv) · [成功任务图](assets/m3_weekly_20261102/success_comparison.svg) · [原始来源及校验值](assets/m3_weekly_20261102/sources.json)。
 - [本机原始批次记录](/home/wyk/workspace/任务产出/perceptbudget/M4/20261031T063736.148606Z-acceptance-m3-68053278/recording.json)：索引含各回合路径，可追溯动作、功率和审计日志。
