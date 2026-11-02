@@ -8,6 +8,22 @@
     {
       "path": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261031T063736.148606Z-acceptance-m3-68053278/recording.json",
       "sha256": "9422dd8f25bd4d195cbac9868497dfec405c708ad43c48a987fa34c5d50ecf1e"
+    },
+    {
+      "path": "/home/wyk/workspace/任务指导与相关参考/PerceptBudget归档/M3相关报告/PerceptBudget_M3阶段交付报告_20261028.md",
+      "sha256": "47eef8e665cd1ce4cb2a88e85d22d2709dee13e00a56c39f3ec4da3b8af3477e"
+    },
+    {
+      "path": "/home/wyk/workspace/任务指导与相关参考/PerceptBudget归档/M3相关报告/PerceptBudget_M3最小闭环任务书_20261026.md",
+      "sha256": "81937a71ebb5ed93984a4dbdecb50f315e836f91b2b72be9b8cb72c31b696d4f"
+    },
+    {
+      "path": "/home/wyk/workspace/任务产出/perceptbudget/M3/20261028T023452.333326Z-comparison-7e34c992/comparison.csv",
+      "sha256": "550620f9e456449f313a0d0c15453ee4ec3f0f83594815220a018b9a6bad3475"
+    },
+    {
+      "path": "/home/wyk/workspace/任务指导与相关参考/PerceptBudget_M3Fast_12任务对照汇总_20261030.md",
+      "sha256": "3029bda7bbafd6f46fc9408d16c9823dc3abc7dc21c0b620261c086e836b5126"
     }
   ],
   "energy_scope": "whole task including drain; seconds=task_seconds",
