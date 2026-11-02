@@ -76,6 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--absolute-full-pairs',action='store_true',help='With Full service:20 absolute requests in HIGH/LOW/LOW/HIGH blocks, one-second LOW history')
+    parser.add_argument('--full-long-window',action='store_true',help='With Full service: paired4s routes, common LOW start/end and at least3s tail')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--idle-state-scan',action='store_true',help='Fixed high clocks, seven idle durations, three randomized blocks; no preassigned states')
     modes.add_argument('--m4-transitions',action='store_true',help='Paired active-control high/low directional preparation windows')
@@ -103,6 +104,7 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--run-dir', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.full_long_window:args.absolute_full_pairs=True
     if args.absolute_full_pairs:
         if not args.full_service or args.service_hot_only:
             parser.error('--absolute-full-pairs requires --full-service without hot-only')
@@ -136,6 +138,7 @@ def main():
         parser.error('Run model as ordinary user; only clock helper uses sudo')
     config = load_config(repo_root=ROOT)
     if args.absolute_full_pairs:config=dict(config,m2_absolute_full_pairs=True)
+    if args.full_long_window:config=dict(config,m4_full_long_window=True)
     validate(config)
     if args.m4_transitions:
         config=dict(config,m4_transition_probe=True)
@@ -161,6 +164,14 @@ def main():
     if args.dry_run:
         if args.absolute_full_pairs:
             from perceptbudget.device_service import absolute_pair_plan
+            if args.full_long_window:
+                from perceptbudget.full_route_energy import WINDOW_SECONDS,PREHOLD_SECONDS,TAIL_SECONDS
+                print(json.dumps(dict(model_loads=1,mode='full_long_window',services=20,pairs=10,
+                    plan=absolute_pair_plan(),window_seconds=WINDOW_SECONDS,prehold_seconds=PREHOLD_SECONDS,
+                    minimum_tail_seconds=TAIL_SECONDS,start_profile='gpu_emc',end_profile='gpu_emc',
+                    energy='Absolute common window including Full, return to LOW and response tail; no subtraction',
+                    fast=False,closed_loop=False)))
+                return 0
             print(json.dumps(dict(model_loads=1,mode='absolute_full_pairs',services=20,pairs=10,
                 plan=absolute_pair_plan(),history='same1s LOW before every request',
                 inputs='same physics/images/state/old actions and per-pair noise; d5/s5',
@@ -293,6 +304,7 @@ def main():
     if args.service_validation:
         purpose = validation_purpose(args.live_service,args.validation_batch)
     if args.absolute_full_pairs:purpose='full-absolute-pairs'
+    if args.full_long_window:purpose='full-long-window-pairs'
     if args.continue_validation:
         purpose = 'continue-validation-batch'+str(args.validation_batch)
     run = create_run(config, 'M4' if args.m4_transitions or args.absolute_full_pairs else 'M2', purpose, repo_root=ROOT)
@@ -322,6 +334,7 @@ def main():
             if args.service_validation:
                 command.extend(['--service-validation', '--validation-batch', str(args.validation_batch)])
             if args.absolute_full_pairs:command.append('--absolute-full-pairs')
+            if args.full_long_window:command.append('--full-long-window')
             if args.service_hot_only:
                 command.append('--service-hot-only')
             if args.skip_continue_validation:

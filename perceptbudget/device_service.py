@@ -19,7 +19,7 @@ def absolute_pair_plan():
             for i,p in enumerate(('baseline','gpu_emc','gpu_emc','baseline'))]
 
 
-def summarize_absolute_pairs(rows):
+def summarize_absolute_pairs(rows, *, energy_field='energy'):
     import math
     pairs=[]
     for index in range(10):
@@ -31,15 +31,17 @@ def summarize_absolute_pairs(rows):
         for r in members:
             if not r['frame_matches_reference'] or not r['state_matches_reference'] or r['raw_action_max_abs_difference_vs_reference']!=0:
                 raise ValueError('Paired Full inputs or outputs differ')
-            if not math.isfinite(r['energy']['energy_j']) or r['energy']['energy_j']<=0:
+            if not math.isfinite(r[energy_field]['energy_j']) or r[energy_field]['energy_j']<=0:
                 raise ValueError('Invalid absolute service energy')
-        pairs.append(dict(pair_id=index,high_j=high['energy']['energy_j'],low_j=low['energy']['energy_j'],
+        pairs.append(dict(pair_id=index,high_j=high[energy_field]['energy_j'],low_j=low[energy_field]['energy_j'],
                           high_ms=high['service_ms'],low_ms=low['service_ms']))
     high=statistics.mean(p['high_j'] for p in pairs);low=statistics.mean(p['low_j'] for p in pairs)
     return dict(pairs=pairs,mean_high_j=high,mean_low_j=low,
         low_energy_change_percent=100*(low/high-1),
-        measurement='Absolute service windows including recovery; no matched-hold subtraction or Continue',
-        limitation='Repeated short-window diagnostic; sensor-response bias not eliminated by repetition')
+        measurement=('Common4s Full routes including return to LOW and tail; no hold subtraction' if energy_field=='route_energy'
+                     else 'Absolute service windows including recovery; no matched-hold subtraction or Continue'),
+        limitation=('Common long window covers at least3s post-return tail; inspect raw response and end power' if energy_field=='route_energy'
+                    else 'Repeated short-window diagnostic; sensor-response bias not eliminated by repetition'))
 
 
 def full_preparation_peer(adapter,model):
@@ -394,6 +396,11 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, p
             raise RuntimeError('Full service RAM below900MiB')
         device = inventory()
         result['device_before_service'] = dict(power_mode=device['power_mode'], thermal=device['thermal'])
+        if cfg.get('m4_full_long_window'):
+            from perceptbudget.full_route_energy import measure_routes
+            measure_routes(adapter,env,task['instruction'],stats,previous_raw,queue,torch=torch,np=np,
+                directory=directory,result=result,validation_options=validation_options)
+            return result
         references = {}
         scenarios = ([(b['profile'],'long',1.,b['block']) for b in absolute_pair_plan()] if absolute_pairs else
                      [(profile,state,idle,None) for state,idle in histories for profile in profiles])

@@ -214,3 +214,75 @@ def test_absolute_pair_summary_uses_absolute_energy_and_rejects_mismatched_input
     with pytest.raises(ValueError):summarize_absolute_pairs(rows[:-1])
     rows[1]['frame_matches_reference']=False
     with pytest.raises(ValueError,match='inputs or outputs differ'):summarize_absolute_pairs(rows)
+
+
+def test_long_window_has_common_end_and_enough_response_tail(capsys):
+    from perceptbudget.full_route_energy import window_end
+    from scripts.profile_clock_screen import main
+    assert window_end(10.,10.7)==14.
+    with pytest.raises(RuntimeError,match='less than3s'):window_end(10.,11.1)
+    with patch('sys.argv',['probe','--full-service','--full-long-window','--dry-run']), \
+            patch('scripts.profile_clock_screen.subprocess.run') as launch:
+        assert main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['services']==20 and result['window_seconds']==4.
+    assert result['start_profile']==result['end_profile']=='gpu_emc'
+    assert result['minimum_tail_seconds']==3. and not result['fast']
+    launch.assert_not_called()
+
+
+def test_long_window_summary_does_not_use_truncated_service_energy():
+    from perceptbudget.device_service import summarize_absolute_pairs
+    rows=[dict(pair_id=i,profile=p,energy=dict(energy_j=7. if p=='baseline' else 8.),
+        route_energy=dict(energy_j=40. if p=='baseline' else 38.),service_ms=500.,
+        frame_matches_reference=True,state_matches_reference=True,
+        raw_action_max_abs_difference_vs_reference=0.) for i in range(10) for p in ('baseline','gpu_emc')]
+    result=summarize_absolute_pairs(rows,energy_field='route_energy')
+    assert result['mean_high_j']==40. and result['mean_low_j']==38.
+    assert result['low_energy_change_percent']==pytest.approx(-5.)
+
+
+def test_long_route_runner_returns_low_and_records_common_windows(tmp_path):
+    from perceptbudget.full_route_energy import measure_routes
+    virtual=SimpleNamespace(now=1000.)
+    def sleep(seconds):virtual.now+=seconds
+    clocks_seen=[]
+    class Clock:
+        def __init__(self,directory):
+            self.directory=directory;self.profile='baseline';self.pending=None
+            self.lease=SimpleNamespace(proc=True,events=[]);clocks_seen.append(self)
+        def __enter__(self):return self
+        def switch(self,profile):
+            self.pending=profile;self.command_time=virtual.now
+        def poll(self):
+            if self.pending:
+                virtual.now+=.01;self.profile=self.pending;self.pending=None
+                self.last_change=dict(command_monotonic=self.command_time,observed_match_monotonic=virtual.now)
+        def close(self):(self.directory/'runtime_clocks.jsonl').write_text('RESTORED\n')
+    class Monitor:
+        def __init__(self,*args,**kwargs):self.readings=[]
+        def start(self):pass
+        def sample(self):pass
+        def stop(self):pass
+    def measure(*args,**kwargs):
+        virtual.now+=.5 if clocks_seen[-1].profile=='baseline' else .7
+        return dict(ready_monotonic=virtual.now,frame_sha256='same',raw_state=[0.]*8,
+            packet=dict(action_payload=np.zeros((50,7))),request=dict(actions_raw=np.zeros((50,32)).tolist()))
+    def energy(monitor,start,stop):
+        return dict(start_monotonic=start,stop_monotonic=stop,duration_seconds=stop-start,
+            energy_j=(stop-start)*10.,mean_power_w=10.)
+    result=dict(requests=[],conditions=[])
+    with patch('perceptbudget.closed_loop.RuntimeClocks',Clock), \
+         patch('perceptbudget.full_route_energy.PowerMonitor',Monitor), \
+         patch('perceptbudget.full_route_energy.time.monotonic',lambda:virtual.now), \
+         patch('perceptbudget.full_route_energy.time.sleep',sleep), \
+         patch('perceptbudget.full_route_energy.energy_window',energy), \
+         patch('perceptbudget.full_route_energy.frequency_check',return_value=dict(matches=True)), \
+         patch('perceptbudget.device_service.measure_one',side_effect=measure):
+        measure_routes(None,None,'task',{},None,{},torch=SimpleNamespace(manual_seed=lambda s:None),np=np,
+            directory=tmp_path,result=result,validation_options={})
+    assert result['status']=='completed' and len(result['requests'])==20
+    assert all(c.profile=='gpu_emc' for c in clocks_seen)
+    assert all(r['route_seconds']==4. and r['post_return_tail_seconds']>=3. for r in result['requests'])
+    assert all(bool(r['entry_change'])==bool(r['return_change'])==(r['profile']=='baseline') for r in result['requests'])
+    assert result['absolute_pair_review']['mean_high_j']==40.
