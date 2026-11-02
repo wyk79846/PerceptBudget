@@ -123,7 +123,7 @@ def control_window(env, observation, actions, lease, scene, frame, trace, *, np,
 
 
 def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, camera_compare=False,history_windows=False,
-           history_points=(0.,.2,1.), report_cadence_misses=False):
+           history_points=(0.,.2,1.), report_cadence_misses=False, paired_fresh_inputs=False):
     import gc
     import ctypes
     import numpy as np
@@ -216,7 +216,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                 base._seed_process(7, np, torch)
                 observation, hz = base._prepare_env_episode(env, task, np)
                 initial_acquisition = None
-                if validation:
+                if validation or paired_fresh_inputs:
                     observation, initial_acquisition = continue_observation(env, 'initial', initial_frame_references,
                         directory, label+'_initial', validated=True)
                     initial_frame_references.setdefault('initial',frame(observation).copy())
@@ -275,7 +275,7 @@ def screen(adapter, snapshot, prompt, previous, torch, directory, metadata, *, c
                             if window['deadline_overruns'] and not report_cadence_misses:
                                 raise RuntimeError('Shared 70ms cadence missed; camera energy comparison invalid')
                             fresh, acquisition = continue_observation(env, history, history_frame_references,
-                                directory, label, validated=validation)
+                                directory, label, validated=validation or paired_fresh_inputs)
                             refreshed = frame(fresh)
                             if refreshed_reference is None:
                                 refreshed_reference = refreshed.copy()

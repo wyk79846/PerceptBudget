@@ -62,7 +62,7 @@ def screen(adapter,snapshot,prompt,previous,torch,directory,metadata,*,original_
     with patch.dict(clocks.PROFILES,CANDIDATES),patch.object(cont,'MATRIX_PROFILES',tuple(accepted)), \
          patch.object(cont,'REPEATS',2),patch.object(cont,'ContinueLease',ProbeLease):
         record=original_screen(adapter,snapshot,prompt,previous,torch,directory,metadata,
-                           history_windows=True,history_points=(1.,),report_cadence_misses=True)
+                           history_windows=True,history_points=(1.,),report_cadence_misses=True,paired_fresh_inputs=True)
     for row in record['summary']:
         row['cadence_usable']=row['deadline_overruns']==0
     record.update(candidate_profiles={p:CANDIDATES[p] for p in accepted},

@@ -17,3 +17,11 @@ cd /home/wyk/workspace/PerceptBudget
 普通用户运行，按提示输入sudo密码。结果在M4/*-continue-lower-combos-*/summary.json、preflight.json、continue_control.json；worker.log记录模型准备和逐窗过程。一次加载，时长主要由模型准备决定，短窗不重载。
 
 29项相关CPU测试通过，dry-run通过，设备测试尚未执行。原状态已留分支archive/before-lower-continue-combinations-20261102。
+
+## 首轮部分结果与修复
+
+M4/20261102T121105.707481Z-continue-lower-combos-a777f723：EMC1600再次未通过，已恢复后跳过；四个CPU组合预检及各5次完整转换完成。idle306降/升频中位16.92/17.98ms，CPU1190为17.75/18.82ms，CPU1036为18.16/19.02ms，CPU806为18.37/19.60ms。此为完整设置流程，含EMC/CPU，非GPU单项。
+
+真实Continue已完成5窗：CPU1497两窗6.615/6.608W，均14.28Hz、零超期；CPU1190两窗6.369/6.432W、14.22/13.93Hz，超期0/2；CPU1036首窗6.128W、12.51Hz、5步均超期。降低CPU已开始拖慢执行，不能仅凭更低W判定净节能或准入。以上是部分样本，不当完成结果。
+
+CPU1036第二窗在初态physics/frame配对检查中止，位于该窗低频助手启动之前。此前5个窗口与预检、转换日志均有RESTORED。旧检查没有保存失败输入，不能确认是物理状态还是像素差异。修复为诊断显式开启paired_fresh_inputs：重置后使用已有静态fresh参考流程，首参考需连续两帧一致，之后最多3次真实新读与参考精确比较，物理不推进；不替换保存图像、不放宽相等要求。最终图像也使用同一真实重读流程。初态不一致另存physics/frame两项哈希及实际输入，以免再次无法定位。生产默认不变。

@@ -23,7 +23,7 @@ def test_wrapper_calls_original_not_patched_self_and_restores_globals(tmp_path):
     def original(*args,**kwargs):
         assert device_continue.MATRIX_PROFILES==('idle306','cpu1190low')
         assert device_continue.REPEATS==2
-        assert kwargs==dict(history_windows=True,history_points=(1.,),report_cadence_misses=True)
+        assert kwargs==dict(history_windows=True,history_points=(1.,),report_cadence_misses=True,paired_fresh_inputs=True)
         seen.append(True)
         return {'windows':[],'summary':[],'status':'completed'}
     result=probe.screen(None,None,None,None,None,tmp_path,{},original_screen=original)
