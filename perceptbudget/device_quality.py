@@ -383,6 +383,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if cfg.get('m3_trigger_comparison') and task_plan is not None:
                         cfg['m3_trigger_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
+                if cfg.get('m4_full_frequency_pair'):
+                    views=('full_high','full_low') if list(task_plan).index((suite,tid))%2==0 else ('full_low','full_high')
                 done = {(r['suite'], r['task_id'], r['view']) for r in record['episodes']}
                 views = tuple(v for v in views if (suite, tid, v) not in done)
                 if not views:
@@ -543,8 +545,11 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         cfg['m3_low_full_costs'],calibration['median_seconds'])
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
-                    current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else view
+                    current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired or cfg.get('m4_full_frequency_pair') else view
                     child_cfg = copy.deepcopy(cfg)
+                    if cfg.get('m4_full_frequency_pair'):
+                        child_cfg['m3_low_full']=view=='full_low'
+                        child_cfg['m4_full_frequency_group']=view
                     if prepared_start is not None:child_cfg['m4_reuse_calibrated_start']=True
                     child_cfg['m2_view'] = current_view
                     episode_q=5
@@ -705,7 +710,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan'):
+            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair'):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired

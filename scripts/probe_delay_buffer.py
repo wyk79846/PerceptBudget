@@ -252,11 +252,11 @@ def device_state():
     return result
 
 
-def _drain_executor(executor, monitor, start, stop):
+def _drain_executor(executor, monitor, start, stop, *, terminal_low=None):
     """Keep sampling through worker completion; exclude subsequent artifact work."""
     try:
         executor.shutdown(wait=True)
-        drain_stop = time.monotonic()
+        drain_stop = terminal_low['stop_monotonic'] if terminal_low else time.monotonic()
     finally:
         monitor.stop()
     return {
@@ -268,6 +268,11 @@ def _drain_executor(executor, monitor, start, stop):
         'including_drain_stop_monotonic': drain_stop,
         'including_drain_seconds': drain_stop - start,
         'including_drain_power': base._power_result(monitor, start, drain_stop),
+        **({'terminal_low': dict(terminal_low,
+            power=base._power_result(monitor, terminal_low['start_monotonic'], drain_stop),
+            task_plus_inference_power=base._power_result(monitor, start, terminal_low['start_monotonic'])),
+            'energy_scope': 'Task plus inference drain and common LOW tail; original-frequency restoration excluded'}
+           if terminal_low else {}),
     }
 
 
@@ -773,19 +778,29 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 from perceptbudget.watchdog import finish_watched_request
                 finish_watched_request(future,current_request,request_watchdog)
         finally:
+            terminal_low = None
             try:
-                if scheduler is not None:
-                    scheduler.stop_clocks()
+                if config.get('m4_common_low_tail_seconds') and status != 'invalid':
+                    if scheduler is None or scheduler.clocks is None:
+                        raise RuntimeError('Common LOW endpoint requires runtime clocks')
+                    executor.shutdown(wait=True)
+                    from perceptbudget.terminal_energy import settle_low
+                    terminal_low = settle_low(scheduler.clocks, seconds=config['m4_common_low_tail_seconds'])
             finally:
                 try:
-                    if fixed_clocks is not None:
-                        fixed_clocks.close()
+                    if scheduler is not None:
+                        scheduler.stop_clocks()
                 finally:
-                    drain = _drain_executor(executor, monitor, start, stop)
-                    if request_watchdog is not None and current_request is not None:
-                        request_watchdog.complete(current_request.get('ready_monotonic',time.monotonic()))
+                    try:
+                        if fixed_clocks is not None:
+                            fixed_clocks.close()
+                    finally:
+                        drain = _drain_executor(executor, monitor, start, stop, terminal_low=terminal_low)
+                        if request_watchdog is not None and current_request is not None:
+                            request_watchdog.complete(current_request.get('ready_monotonic',time.monotonic()))
         base._trace(stream, 'episode_drain', task_id=task['task_id'], q=q,
                     trial_index=trial_index, condition=condition, **drain)
+
         if env_audit is not None:
             env_context.__exit__(None, None, None)
         if rtc_adapter is not None and config.get('release_rtc_graph_before_artifacts'):

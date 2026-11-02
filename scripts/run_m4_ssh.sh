@@ -6,9 +6,16 @@ pb_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd) || exit 1
 pb_python=/home/wyk/venvs/lutvla/bin/python
 cd -- "$pb_root" || exit 1
 
+pb_entry=scripts/run_m4_acceptance.py
+for pb_arg in "$@"; do
+    if [[ "$pb_arg" == --full-frequency-pair ]]; then
+        pb_entry=scripts/run_m4.py
+    fi
+done
+
 for pb_arg in "$@"; do
     if [[ "$pb_arg" == --dry-run ]]; then
-        exec "$pb_python" -u scripts/run_m4_acceptance.py "$@"
+        exec "$pb_python" -u "$pb_entry" "$@"
     fi
 done
 
@@ -32,7 +39,7 @@ echo "ssh_log=$pb_log"
 pb_auth_pid=$!
 trap 'kill "$pb_auth_pid" 2>/dev/null || true' EXIT
 
-"$pb_python" -u scripts/run_m4_acceptance.py "$@" 2>&1 | tee "$pb_log"
+"$pb_python" -u "$pb_entry" "$@" 2>&1 | tee "$pb_log"
 pb_status=${PIPESTATUS[0]}
 echo "M4_SSH_EXIT_CODE=$pb_status" | tee -a "$pb_log"
 exit "$pb_status"

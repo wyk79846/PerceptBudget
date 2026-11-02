@@ -31,6 +31,18 @@ def build_ledger(episode, requests, *, max_gap_seconds=.3, forbid_hot_fast=False
         if a>cursor:windows.append((cursor,a,'Continue',None))
         windows.append((a,b,label,pid));cursor=b
     if cursor<stop:windows.append((cursor,stop,'Continue',None))
+    terminal=episode.get('terminal_low')
+    if terminal:
+        boundary=terminal['start_monotonic']
+        separated=[]
+        for a,b,label,pid in windows:
+            if b<=boundary:
+                separated.append((a,b,label,pid))
+            elif a>=boundary:
+                separated.append((a,b,'Terminal LOW tail',None))
+            else:
+                separated.extend(((a,boundary,label,pid),(boundary,b,'Terminal LOW tail',None)))
+        windows=separated
     rows=[];totals={}
     for a,b,label,pid in windows:
         report=_integrate_report(readings,a,b,max_gap_seconds)
@@ -48,7 +60,7 @@ def build_ledger(episode, requests, *, max_gap_seconds=.3, forbid_hot_fast=False
         raise ValueError('Partition energy does not equal whole interval')
     return dict(scope='Measured module input energy by time activity, including concurrent simulation/control; not GPU-only',
                 service_scope='Recovery command (or hot observation) through action commit; recovery counted once',
-                continue_scope='All other time, including clock lowering and post-inference waiting',
+                continue_scope='Other time excluding separately labelled terminal LOW tail; includes clock lowering and post-inference waiting',
                 totals=totals,windows=rows,seconds=stop-start,covered_energy_j=energy,
                 total_energy_j=None if whole.total_energy_mj is None else whole.total_energy_mj/1000,
                 partition_verified=True)
