@@ -14,3 +14,7 @@ cd /home/wyk/workspace/PerceptBudget
 普通用户启动，sudo仅用于有限时钟助手；全程通常数秒，不需要重复加载模型。输出M4/*-gpu-clock-switch-*/summary.json及clocks.log。异常时先核对clocks.log中的RESTORED；若确有未恢复快照，使用原control_device_clocks.py restore。
 
 检查：GPU-only写入、非GPU变更拦截、统计完整性及原时钟控制共17项测试通过；dry-run通过。设备测量等待用户sudo授权，尚无新结果。
+
+## 实测完成
+
+运行M4/20261102T120211.709732Z-gpu-clock-switch-a7626503，20次转换/10往返，模型加载0次。降频1173→306MHz中位2.883ms、最大3.243ms；升频306→1173MHz中位2.899ms、最大3.004ms。两个方向中位数相加约5.782ms（不是逐对往返的中位数）。逐条核对目标频率匹配，非GPU设置不变，RESTORED确认；从原始clocks.log重算统计与summary完全一致。此结果是静态命令到cur_freq读回，尚非模型驻留且实际执行Continue时的完整恢复延迟；不能替代服务L。此前约17ms同时写GPU/EMC/CPU，两者测量路径不同。
