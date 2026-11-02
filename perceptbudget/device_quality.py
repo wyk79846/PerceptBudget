@@ -11,6 +11,11 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
+def camera_view_for_condition(condition):
+    """Frequency pair labels select policies, never different camera inputs."""
+    return 'full' if condition in ('full_high', 'full_low') else condition
+
+
 def audit_paired_bootstraps(episodes):
     """Require identical starting inputs and outputs, not identical future trajectories."""
     import numpy as np
@@ -405,7 +410,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                      suite=task['suite'],task_id=task['task_id'])
                     if (cfg.get('m4_acceptance_group')=='joint' or
                         (cfg.get('m4_acceptance_group')=='m3' and cfg.get('experimental_setup_reuse',False))) else None)
-                current_view = 'full' if dvac_paired else views[0]
+                current_view = 'full' if dvac_paired else camera_view_for_condition(views[0])
                 prepared = snapshot(observation, stats, True)
                 cfg.update(rtc_suite=suite)
                 cfg['screen'].update(suites=[suite], task_ids=[tid])
@@ -545,7 +550,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         cfg['m3_low_full_costs'],calibration['median_seconds'])
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
-                    current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired or cfg.get('m4_full_frequency_pair') else view
+                    current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)
                     child_cfg = copy.deepcopy(cfg)
                     if cfg.get('m4_full_frequency_pair'):
                         child_cfg['m3_low_full']=view=='full_low'

@@ -61,3 +61,17 @@ def test_pair_report_does_not_call_final_commit_executed(tmp_path):
     rows=summarize_pairs(episodes,tmp_path)['rows']
     assert all(r['unexecuted_requests']==1 for r in rows)
     assert all(r['task_plus_inference_j']+r['terminal_low_j']==r['common_endpoint_j'] for r in rows)
+
+
+@pytest.mark.parametrize('condition', ['full_high','full_low'])
+def test_frequency_groups_use_both_images_during_warmup_and_episode(condition):
+    from perceptbudget.device_quality import camera_view_for_condition
+    from perceptbudget.device_profile import select_images
+    snapshot={'images':['external','wrist'],'state':[1.]}
+    # The warmup and rollout both resolve the policy label before selecting images.
+    for label in (condition, camera_view_for_condition(condition)):
+        selected=select_images(snapshot,camera_view_for_condition(label))
+        assert selected['images']==['external','wrist']
+        assert selected['state']==[1.]
+    with pytest.raises(ValueError,match='Unknown view'):
+        select_images(snapshot,condition)
