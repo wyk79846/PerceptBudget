@@ -45,6 +45,23 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_short_wait_audit_rejects_action_executed_while_frozen(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot']['m3_short_wait_ms']=25
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    hold=dict(start_monotonic=50.45,stop_monotonic=50.47,seconds=.02,limit_seconds=.025,
+        ready=True,budget_exceeded=False,simulation_frozen=True,queue_consumed=False,
+        prediction_id=1,step=5,reason='point_event',target_step=5)
+    events.append(dict(event='short_wait',**hold));save()
+    (tmp_path/'summary.json').write_text(json.dumps(dict(episode=dict(
+        short_waits=[hold],short_wait_budget_exceeded=False))))
+    assert audit(tmp_path)['passed']
+    control=next(e for e in events if e.get('event')=='control_step' and e['step']==5)
+    control['action_start_monotonic']=50.46;save()
+    assert 'short_wait_frozen_control' in [f['check'] for f in audit(tmp_path)['failures']]
+
+
 def test_formal_event_only_audit_checks_config_and_runtime_switches(tmp_path):
     requests,events,save=fixture(tmp_path)
     meta=json.loads((tmp_path/'run.json').read_text())

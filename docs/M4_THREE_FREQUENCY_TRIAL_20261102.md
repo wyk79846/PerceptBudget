@@ -99,3 +99,25 @@ cd /home/wyk/workspace/PerceptBudget
 按服务区间与Continue不重叠划分，原双档Full/Continue约123.42/139.02J，新三档约137.10/116.35J。降低等待功率的部分收益被更多中频服务时间及额外刷新抵消。三档有小幅总体收益，尚未达到相对q30省20%的目标；此批只比较原双档，不直接作为q30节能比例。原基线仍保留，不自动替换。
 
 逐回合路径及精确数据：[CSV](assets/three_frequency_spatial_pairs_20261103.csv)。本轮没有再次改动调度机制；之后先据这三对分析额外刷新与服务时间，再决定是否扩大任务。
+
+## 25ms短等独立尝试（2026-11-03）
+
+用户允许少量短等以减少整数步取整造成的过早刷新。新增--short-wait-ms25（实际命令用空格），只允许三档且开启关键等待时使用。原双档及无该开关的三档保留。修改前备份archive/before-short-wait-25ms-20261103。
+
+每档候选先计算完整恢复/推理预算，加上原25ms安全余量，按当前实测控制周期求向下取整后的缺口。仅当缺口大于0且不超过25ms，允许延后相应毫秒数；缺口更大则仍使用原时间判断。不是每次固定晚25ms，也不缩短RTC的delay或改写实际已执行步数。RTC前缀最晚提交和首次30步上限仍取原硬上限，不能用宽限无限延长H50。原25ms余量字段与新增短等预算分别记录。
+
+执行到原关键动作边界（保持阶段去重）或动作队列空时，若预测尚未完成，可暂停仿真和动作消费，等待结果最多25ms。完成后按真实已执行步数提交，禁止通过减少裁剪数、补零或重播旧动作掩盖缺口。超过25ms则结束该实验回合，outcome=short_wait_limit_exceeded，保留已执行轨迹及等待记录；在途推理仍正常收尾并恢复频率。该结果表示预算未满足，不是脚本报错，也不算任务成功。OS调度可能使观察到的超时返回略晚于25ms，实际等待耗时原样记录，不声称硬实时精度。
+
+候选日志记录required_seconds/period_seconds/ceil_steps/floor_steps/shortfall_seconds/allowance_seconds；回合记录short_waits、short_wait_budget_exceeded。所有short_wait区间独立检查没有env.step开始或动作消费；超限后不得再执行该步。完整任务能量仍包含在途推理，不删除尾算费用。
+
+先对Spatial0做原三档与25ms三档各一次，2回合/1model。沿用现有配对开关；本次标签为full_three_strict/full_three_wait25（两组都三档，只改变短等预算）。初始状态/图像/噪声/首预测严格相同，终态统一816/2133+3秒，原双档对照入口继续有效。
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m4.py \
+  --acceptance-group m3 --low-full --three-frequency \
+  --short-wait-ms 25 --full-frequency-pair --task-indices 0 \
+  --critical-wait --critical-wait-phases --first-refresh-step 30 --phase-refresh
+```
+
+代码/边界/等待超时/独立审计等152项测试通过，旧6回合重新审计全部通过；同输入离线回放出现规划时间变化，但不能推断新轨迹与收益。dry-run确认2回合1model，原余量仍25ms，无Fast。新真实GPU实验未执行；需要用户在终端输入sudo启动。

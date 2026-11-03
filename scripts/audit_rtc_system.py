@@ -415,7 +415,21 @@ def audit(run):
                     if valid:
                         now=t['decision_monotonic'];end=t['deadline']-t['margin_seconds']
                         for row in candidates:
-                            latest=min(end-row['service_seconds'],row['rtc_cap'],row['first_cap'])
+                            rounding=row.get('rounding',{})
+                            limit=cfg.get('m3_short_wait_ms',0)/1000
+                            allowance=0.
+                            if limit:
+                                period=t['estimated_control_period_seconds']
+                                required=row['service_seconds']+t['margin_seconds']
+                                lower=math.floor(required/period+1e-9)
+                                upper=math.ceil(required/period-1e-9)
+                                gap=max(0.,required-lower*period)
+                                allowance=gap if lower>=1 and upper>lower and gap<=limit+1e-9 else 0.
+                                check('three_frequency_bounded_floor',limit==.025
+                                    and rounding.get('limit_seconds')==limit
+                                    and rounding.get('floor_steps')==lower and rounding.get('ceil_steps')==upper
+                                    and abs(rounding.get('allowance_seconds',-1)-allowance)<1e-8,pid)
+                            latest=min(end-row['service_seconds']+allowance,row['rtc_cap'],row['first_cap'])
                             check('three_frequency_candidate_feasibility',
                                 abs(row['latest_start']-latest)<1e-8 and row['feasible']==(latest>=now-1e-9),pid)
                         expected=candidates[0] if candidates[0]['feasible'] else candidates[1]
@@ -549,6 +563,14 @@ def audit(run):
                         check('m3_signal_deadline_and_hard_bounds',
                               abs(d['deadline']-expected_deadline)<1e-8 and d['reason']==expected_reason,pid)
                 expected_start=d['deadline']-d['service_seconds']-d['margin_seconds'] if d else float('nan')
+                if cfg.get('m3_short_wait_ms'):
+                    chosen=d.get('three_frequency_formula',{}).get('selected',{})
+                    allowance=chosen.get('rounding',{}).get('allowance_seconds',0.)
+                    check('short_wait_separate_from_margin',cfg['m3_short_wait_ms']==25
+                        and d.get('short_wait_limit_seconds')==.025
+                        and abs(d.get('short_wait_allowance_seconds',-1)-allowance)<1e-8
+                        and 0<=allowance<=.025+1e-9,pid)
+                    expected_start+=allowance
                 expected_constraint='service_deadline'
                 if d.get('rtc_latest_submit_step') is not None:
                     # Recovery acknowledges HIGH on the following control tick;
@@ -689,9 +711,27 @@ def audit(run):
             check('kv_execution_before_original_expiry',
                 step<request.get('kv_recompute',{}).get('nominal_expiry_step',-1),step)
     summary_path=run/'summary.json'
+    bounded_waits=[e for e in events if e['event']=='short_wait']
+    if cfg.get('m3_short_wait_ms'):
+        for w in bounded_waits:
+            a,b=w['start_monotonic'],w['stop_monotonic']
+            check('short_wait_frozen_control',cfg['m3_short_wait_ms']==25
+                and w['limit_seconds']==.025 and w['simulation_frozen'] and not w['queue_consumed']
+                and b>=a and abs(w['seconds']-(b-a))<1e-8
+                and not any(a<=r['action_start_monotonic']<b for r in controls),w['prediction_id'])
+            check('short_wait_outcome',w['budget_exceeded']==(not w['ready']),w['prediction_id'])
+            if w['budget_exceeded']:
+                check('short_wait_timeout_stops_before_action',w['step'] not in by_step,w['prediction_id'])
+    else:
+        check('no_unconfigured_short_wait',not bounded_waits)
     if summary_path.exists():
         summary=json.loads(summary_path.read_text())
         episode=summary.get('episode',summary)
+        if cfg.get('m3_short_wait_ms'):
+            check('short_waits_reported',episode.get('short_waits')==[
+                {k:v for k,v in w.items() if k!='event'} for w in bounded_waits])
+            check('short_wait_exceeded_reported',episode.get('short_wait_budget_exceeded')==
+                any(w['budget_exceeded'] for w in bounded_waits))
         if 'underflow_steps' in episode:
             check('reported_underflow_steps',episode['underflow_steps']==underflows)
         if 'initial_raw_state' in episode:

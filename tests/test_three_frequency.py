@@ -8,6 +8,32 @@ from perceptbudget.three_frequency import select_full,ThreeFullRuntime
 from perceptbudget.device_clocks import runtime_trace
 
 
+@pytest.mark.parametrize('required,expected',[(.720,.020),(.725,.025),(.726,0.),(.700,0.),(.750,0.)])
+def test_fractional_step_rounding_is_limited_to25ms(required,expected):
+    from perceptbudget.three_frequency import rounding_allowance
+    row=rounding_allowance(required,.07,.025)
+    assert row['allowance_seconds']==pytest.approx(expected)
+    assert row['uses_floor']==(expected>0)
+    assert rounding_allowance(required,.07,0.)['allowance_seconds']==0
+
+
+def test_short_wait_preserves_raw_service_margin_and_rtc_hard_limit():
+    d=decision(10.71)
+    # Medium .700s plus unchanged25ms margin: gap over10*70ms is25ms.
+    d.update(estimated_control_period_seconds=.07,margin_seconds=.025)
+    args=dict(medium_seconds=.7,medium_cap=20.,current_profile='gpu_emc',
+              transitions=dict(medium_seconds=.003,high_seconds=.019,high_to_medium_seconds=.018))
+    strict=select_full(d,**args)
+    relaxed=select_full(d,**args,short_wait_seconds=.025)
+    assert strict['selected']['profile']=='baseline'
+    assert relaxed['selected']['profile']=='gpu_emc'
+    assert relaxed['selected']['service_seconds']==.7
+    assert d['margin_seconds']==.025
+    assert relaxed['selected']['rounding']['allowance_seconds']==pytest.approx(.025)
+    limited=select_full(d,**dict(args,medium_cap=9.99),short_wait_seconds=.025)
+    assert limited['selected']['profile']=='baseline'
+
+
 def decision(end=12.):
     return dict(decision_monotonic=10.,deadline=end,margin_seconds=.025,
         estimated_control_period_seconds=.05,service_seconds=.55,latest_start=end-.575)
@@ -156,3 +182,39 @@ def test_three_frequency_pair_plan_is_six_episodes_one_model_without_launch(caps
     assert plan['three_frequency'] and plan['full_frequency_pair']
     assert plan['Fast']=='disabled' and plan['common_low_tail_seconds']==3.
     launch.assert_not_called()
+
+
+def test_wait_pair_changes_only_short_wait_budget():
+    import copy
+    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant
+    cfg=dict(m3_three_frequency=True,m3_low_full=True,m3_short_wait_ms=25,H=50,N=5,rtc_beta=5)
+    assert frequency_pair_views(cfg,0)==('full_three_strict','full_three_wait25')
+    assert frequency_pair_views(cfg,1)==('full_three_wait25','full_three_strict')
+    a,b=copy.deepcopy(cfg),copy.deepcopy(cfg)
+    configure_frequency_variant(a,'full_three_strict')
+    configure_frequency_variant(b,'full_three_wait25')
+    assert a['m3_short_wait_ms']==0 and b['m3_short_wait_ms']==25
+    assert a['m3_three_frequency'] and b['m3_three_frequency']
+    for key in ('H','N','rtc_beta','m3_low_full'):
+        assert a[key]==b[key]
+
+
+def test_wait_pair_dry_run_is_two_episodes_with_unchanged25ms_margin(capsys):
+    import json
+    from scripts.run_m4 import main
+    args=['probe','--acceptance-group','m3','--low-full','--three-frequency',
+          '--full-frequency-pair','--short-wait-ms','25','--task-indices','0',
+          '--critical-wait','--critical-wait-phases','--first-refresh-step','30',
+          '--phase-refresh','--dry-run']
+    with patch('sys.argv',args),patch('scripts.run_m4.subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['short_wait_ms']==25
+    assert plan['eta_ms']==25 and plan['Full'] and plan['Fast']=='disabled'
+    launch.assert_not_called()
+
+
+def test_wait_flag_requires_three_frequency_and_critical_boundary():
+    from scripts.run_m4 import main
+    with patch('sys.argv',['probe','--short-wait-ms','25','--dry-run']):
+        with pytest.raises(SystemExit):main()

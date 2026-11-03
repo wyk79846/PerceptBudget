@@ -1,3 +1,5 @@
+> 2026-11-03新增独立--short-wait-ms25试验（命令参数有空格）：三档完整预算含原25ms余量，整数步向下取整缺口<=25ms才允许对应放宽，RTC delay/实际裁剪/H50硬界不改。边界未就绪时暂停动作最多25ms，超限记录outcome=short_wait_limit_exceeded并结束该回合，正常在途推理收尾/恢复，不补零掩盖。和--full-frequency-pair并用比较full_three_strict/full_three_wait25，先Spatial0两回合1model；无开关仍原三档/双档。152项检查及旧6回合重审通过，新GPU未跑。备份archive/before-short-wait-25ms-20261103，命令/口径见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md末节。
+
 > 2026-11-03三档配对完成：M4/20261103T025809.765693Z-acceptance-m3-358d5a4f，Spatial0/3/6×原双档/新三档，6回合1model/1expert，均成功/0断供，3对bootstrap精确、各频率/恢复/独立审计通过，原始功率积分差0。任务＋在途推理262.436→253.442J（省3.43%），任务时间21.782→22.432s（+2.99%）；含同终态3秒尾段331.567→324.369J（省2.17%）。任务0能量+7.51%、3省12.15%、6省3.23%。Full次数12→13，中频2→7；Continue少22.67J但Full多13.68J。三档有小收益，不能当q30省20%证明，不自动替换保留基线。CSV及细节见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md末节。
 
 > 2026-11-03三档Spatial0首测成功77步/6.638s，任务68.485J，含推理收尾77.104J；0断供，审计442/频率/恢复均通过。28/65步中频，76步为新松爪79高频响应，任务77结束，不能按事后成功删除。历史原双档76步6.048s/任务67.783J，不宣称首测节能。现可将--three-frequency与--full-frequency-pair并用，比较原full_two/新full_three，Spatial0/3/6共6回合1model，终态统一816/2133+3s。131检查通过，6回合未执行。原双档分支和默认不变。见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md末节。

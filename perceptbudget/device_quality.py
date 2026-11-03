@@ -17,18 +17,24 @@ def camera_view_for_condition(condition):
         from perceptbudget.rtc_sensitivity import variants
         if condition not in variants():raise ValueError('Unknown sensitivity view')
         return 'full'
-    return 'full' if condition in ('full_high', 'full_low', 'full_two', 'full_three') else condition
+    return 'full' if condition in ('full_high', 'full_low', 'full_two', 'full_three',
+                                  'full_three_strict','full_three_wait25') else condition
 
 
 def frequency_pair_views(config, task_index):
     """Keep original frequency pairs; opt-in pairs compare two/three-state policy."""
-    labels=('full_two','full_three') if config.get('m3_three_frequency') else ('full_high','full_low')
+    labels=(('full_three_strict','full_three_wait25') if config.get('m3_short_wait_ms') else
+            ('full_two','full_three') if config.get('m3_three_frequency') else ('full_high','full_low'))
     return labels if task_index%2==0 else labels[::-1]
 
 
 def configure_frequency_variant(config, view):
     """Choose only the clock policy; model inputs and RTC configuration stay shared."""
-    if view in ('full_two','full_three'):
+    if view in ('full_three_strict','full_three_wait25'):
+        if not config.get('m3_three_frequency') or config.get('m3_short_wait_ms')!=25:
+            raise ValueError('Short-wait pair requires the25ms three-state configuration')
+        config.update(m3_low_full=True,m3_short_wait_ms=25 if view=='full_three_wait25' else 0)
+    elif view in ('full_two','full_three'):
         if not config.get('m3_three_frequency'):
             raise ValueError('Two/three-state pair requires the opt-in three-state configuration')
         config.update(m3_low_full=True,m3_three_frequency=view=='full_three')

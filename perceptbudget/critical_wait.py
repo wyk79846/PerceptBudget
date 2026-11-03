@@ -1,6 +1,26 @@
 """Pause only the uncompleted part of an event-triggered refresh."""
 
 
+def bounded_result_wait(future, seconds):
+    """No physics or queue operations; timeout is an experiment outcome."""
+    import time
+    from concurrent.futures import TimeoutError
+    if seconds!=.025:raise ValueError('Experimental short wait must be25ms')
+    start=time.monotonic()
+    try:
+        future.result(timeout=seconds)
+        ready=True
+    except TimeoutError:
+        # A completed worker may itself have raised TimeoutError. Propagate that
+        # failure instead of calling it a permissible timing shortfall.
+        if future.done():future.result()
+        ready=False
+    stop=time.monotonic()
+    return dict(start_monotonic=start,stop_monotonic=stop,seconds=stop-start,
+                limit_seconds=seconds,ready=ready,budget_exceeded=not ready,
+                simulation_frozen=True,queue_consumed=False)
+
+
 def wait_target(request):
     if not request:
         return None
