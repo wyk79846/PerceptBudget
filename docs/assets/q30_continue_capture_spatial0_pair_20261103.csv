@@ -1,0 +1,3 @@
+suite,task_id,group,outcome,steps,task_seconds,task_j,task_plus_inference_j,terminal_low_j,common_endpoint_j,requests,low_requests,unexecuted_requests,run,camera_skipped_steps,control_hz
+libero_spatial,0,full_capture,success,76,5.832923259586096,80.75600361299921,80.77356452076909,20.655923945735104,101.42948846650422,3,0,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T045829.026574Z-record-full-24faefe4,0,15.045695313553997
+libero_spatial,0,lean_continue,success,76,5.425048283301294,75.7186713931832,75.7204803230111,21.118431859875674,96.83891218288677,3,0,0,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T045843.707430Z-record-full-f4088ea3,60,16.31602656759274
