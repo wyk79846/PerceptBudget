@@ -1,0 +1,34 @@
+flowchart TD
+    S["初始化：H=50、N=5、BF16、RTC β=5<br/>先做一次Full，得到首段动作"] --> B["动作缓冲＋从预测动作中找关键位置<br/>夹爪切换、减速、转向；阶段去重"]
+    B --> T{"每个控制周期检查<br/>任务是否结束？"}
+    T -- 是 --> Z["收尾在途推理、恢复设备频率<br/>统计成功、耗时与总输入能量"]
+    T -- 否 --> R{"新预测已经就绪？"}
+    R -- 是 --> C["按实际经过的控制步数裁掉新chunk过期头部<br/>接入剩余新动作，更新关键事件"]
+    C --> B
+    R -- 否 --> I{"已有推理在途？"}
+    I -- 是 --> K{"触发现有关键等待规则？"}
+    K -- 是 --> W["暂停动作，等待本次预测完成<br/>同一阶段去重；不是固定等25ms"]
+    W --> R
+    K -- 否 --> E["执行当前步动作，更新state和步号<br/>名义20Hz，记录实际间隔"]
+    E --> T
+    I -- 否 --> P["机制一：读取剩余动作与未覆盖的关键时刻<br/>机制二：估计本状态下Full完整服务P95<br/>按Full时限选择中频优先／高频补位"]
+    P --> D["最晚启动＝min（缓冲截止，关键截止）−P95−η<br/>η=25ms；保留首次刷新、RTC窗口约束"]
+    D --> Q{"现在需要刷新？"}
+    Q -- 否 --> H["Continue：只执行已有动作，不做神经推理<br/>预计空挡≥0.2s可降至GPU306；短空挡保持"]
+    H --> E
+    Q -- 是 --> F["Fast拟接入：默认Full<br/>仅普通阶段、上次非Fast时比较同窗总能量<br/>Fast更省才替换这一次Full；下次必须Full<br/>首版保持原Full刷新时机与已选频率"]
+    F --> A["准备已选中／高频，确认后采集本次观测<br/>未确认时保留计划并继续旧动作<br/>本控制步允许≤25ms的频率确认短等"]
+    A -- 未确认 --> E
+    A -- 已确认 --> L["固定本次输入；对齐旧动作尾段<br/>使用本模式／频率的延迟估计d，提交后台请求"]
+    L --> E
+    L -. 后台并行 .-> N["所选感知路径重算KV<br/>RTC输入梯度引导＋5步去噪，生成新chunk<br/>本次推理期间保持计算频率"]
+    N -. 标记就绪，由主循环接收 .-> R
+
+    classDef current fill:#edf5ff,stroke:#376b9b,color:#18354b,stroke-width:1.5px;
+    classDef choice fill:#fff6dd,stroke:#b88c2b,color:#574213,stroke-width:1.5px;
+    classDef planned fill:#f3edff,stroke:#8053ad,color:#4a2c66,stroke-width:2px,stroke-dasharray:6 4;
+    classDef compute fill:#e6f6f0,stroke:#35836c,color:#214f41,stroke-width:1.5px;
+    class S,B,C,E,P,D,H,A,L current;
+    class T,R,I,K,Q choice;
+    class F planned;
+    class N compute;
