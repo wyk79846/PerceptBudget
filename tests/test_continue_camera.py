@@ -108,11 +108,12 @@ def test_pair_cli_has_two_episodes_one_model(monkeypatch,capsys):
 
 
 @pytest.mark.parametrize('capture_flags,enabled',[([],True),(['--lean-continue'],True),(['--full-capture'],False)])
-def test_q30_capture_is_enabled_by_default_and_old_behavior_can_be_reproduced(monkeypatch,capsys,capture_flags,enabled):
+@pytest.mark.parametrize('group',['m3','q30'])
+def test_capture_is_enabled_by_default_and_old_behavior_can_be_reproduced(monkeypatch,capsys,capture_flags,enabled,group):
     import json
     import sys
     from scripts import run_m4
-    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','q30',
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group',group,
         '--task-indices','0','--continue-overhead-pair','--dry-run',*capture_flags])
     assert run_m4.main() == 0
     plan=json.loads(capsys.readouterr().out)
@@ -120,3 +121,17 @@ def test_q30_capture_is_enabled_by_default_and_old_behavior_can_be_reproduced(mo
     assert plan['tasks']==[['libero_spatial',0]] and plan['episodes']==2
     assert plan['compute_profiles']==['baseline'] and plan['Full'] and plan['Fast']=='disabled'
     assert not plan['low_full'] and not plan['three_frequency']
+
+
+@pytest.mark.parametrize('capture_flag',['--lean-continue','--full-capture'])
+def test_capture_option_can_be_forwarded_to_frequency_pair_worker(monkeypatch,capsys,capture_flag):
+    import json
+    import sys
+    from scripts import run_m4
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--low-full',
+        '--three-frequency','--start-floor-ms','25','--full-frequency-pair','--task-indices','0',
+        capture_flag,'--dry-run'])
+    assert run_m4.main() == 0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['lean_continue'] == (capture_flag=='--lean-continue')
+    assert plan['full_frequency_pair'] and plan['episodes']==2 and plan['model_loads']==1

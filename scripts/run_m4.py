@@ -26,7 +26,7 @@ def main():
     parser.add_argument('--three-frequency',action='store_true',help='Opt-in306MHz Continue; medium Full first, high fallback; requires --low-full')
     capture_options=parser.add_mutually_exclusive_group()
     capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
-        help='Skip idle camera rendering and save request frames only; default for new q30 runs')
+        help='Skip idle camera rendering and save request frames only; default for new Full/Continue M3 and q30 runs')
     capture_options.add_argument('--full-capture',dest='lean_continue',action='store_false',
         help='Retain original per-step camera/recording behavior for reproduction')
     parser.add_argument('--continue-overhead-pair',action='store_true',help='Resident same-policy pair: original capture versus lean Continue, for M3 or q30')
@@ -48,8 +48,10 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
-    if (args.lean_continue is not None or args.continue_overhead_pair) and (args.acceptance_group not in ('m3','q30') or args.full_frequency_pair or args.rtc_delay_sensitivity):
-        parser.error('Continue capture requires --acceptance-group m3 or q30, without other pair/sensitivity modes')
+    if (args.lean_continue is not None or args.continue_overhead_pair) and args.acceptance_group not in ('m3','q30'):
+        parser.error('Continue capture requires --acceptance-group m3 or q30')
+    if args.continue_overhead_pair and (args.full_frequency_pair or args.rtc_delay_sensitivity):
+        parser.error('Compare capture variants separately from frequency pairs or RTC delay sensitivity')
     if args.start_floor_ms and not args.three_frequency:
         parser.error('--start-floor-ms requires --three-frequency')
     if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.rtc_delay_sensitivity or args.frequency_reference_run):
@@ -83,7 +85,7 @@ def main():
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
     cfg['m3_start_floor_ms']=args.start_floor_ms
-    cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group=='q30'
+    cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group in ('m3','q30')
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
