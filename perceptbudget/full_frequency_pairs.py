@@ -6,8 +6,8 @@ from pathlib import Path
 from perceptbudget.experiment import _write_json_atomically
 
 
-def summarize_pairs(episodes, directory, *, groups=('full_high','full_low')):
-    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25')):
+def summarize_pairs(episodes, directory, *, groups=('full_high','full_low'), stem='full_frequency_pairs'):
+    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25'),('full_capture','lean_continue')):
         raise ValueError('Unknown Full policy pair')
     rows=[]
     for e in episodes:
@@ -23,7 +23,9 @@ def summarize_pairs(episodes, directory, *, groups=('full_high','full_low')):
             common_endpoint_j=v['including_drain_power']['total_energy_mj']/1000,
             requests=len(requests),low_requests=sum(r.get('m4_compute_profile')=='gpu_emc' for r in requests),
             unexecuted_requests=sum(r['prediction_id'] not in {c['prediction_id'] for c in v['commits'] if c['commit_step']<v['steps']} for r in requests),
-            run=str(run)))
+            run=str(run),
+            camera_skipped_steps=v.get('continue_capture',{}).get('skipped_count',0),
+            control_hz=v.get('post_bootstrap_control_hz')))
     for suite,tid in {(r['suite'],r['task_id']) for r in rows}:
         pair=[r for r in rows if (r['suite'],r['task_id'])==(suite,tid)]
         if len(pair)!=2 or {r['group'] for r in pair}!=set(groups):
@@ -31,7 +33,7 @@ def summarize_pairs(episodes, directory, *, groups=('full_high','full_low')):
     result=dict(rows=rows,groups=list(groups),
         scope='Matched whole tasks; task, inference drain, and common LOW endpoint reported separately; restoration excluded')
     directory=Path(directory)
-    with (directory/'full_frequency_pairs.csv').open('w') as f:
+    with (directory/(stem+'.csv')).open('w') as f:
         w=csv.DictWriter(f,fieldnames=list(rows[0]),lineterminator='\n');w.writeheader();w.writerows(rows)
-    _write_json_atomically(directory/'full_frequency_pairs.json',result)
+    _write_json_atomically(directory/(stem+'.json'),result)
     return result

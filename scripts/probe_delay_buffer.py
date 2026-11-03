@@ -303,6 +303,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     if config.get('disk_backed_frames'):
         from perceptbudget.trace_frames import DiskFrames
         frames = DiskFrames(run_dir / f'q{q}{artifact_tag}_frames_spool.npy', task['max_steps']+1, np)
+    capture = None
+    if config.get('m4_lean_continue'):
+        from perceptbudget.continue_camera import ContinueCapture
+        capture = ContinueCapture()
     future = None
     previous_request_step = 0
     previous_commit_step = 0
@@ -372,6 +376,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if refresh_policy == 'post_commit' and step and step != previous_commit_step + q:
             raise RuntimeError('Post-commit refresh must follow exactly q executed control steps')
         observation_started = time.monotonic()
+        acquisition = None
+        if capture is not None:
+            obs, acquisition = capture.for_request(env, obs, step)
+            frames.append(np.concatenate((obs['agentview_image'], obs['robot0_eye_in_hand_image']), axis=1))
         snapshot = base._make_snapshot(obs, stats, config['state_enabled'])
         request = {
             'prediction_id': len(requests),
@@ -385,6 +393,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             'observation_raw_state': snapshot['raw_state'].tolist(),
             'queue_before_submit_actions': buffer_count(queue, step),
         }
+        if capture is not None:
+            request['camera_acquisition'] = acquisition
+            request['input_frame_step'] = step
         if config.get('m3_fast_enabled'):
             decision=dict(scheduler.plan or {})
             formula=decision.get('m3_fast_formula')
@@ -604,8 +615,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                                 q=q, step=step, details=hook_event)
             tick = time.monotonic()
             before = snapshot_scene(env, observation)
-            frames.append(np.concatenate((observation['agentview_image'],
-                                         observation['robot0_eye_in_hand_image']), axis=1))
+            if capture is None:
+                frames.append(np.concatenate((observation['agentview_image'],
+                                             observation['robot0_eye_in_hand_image']), axis=1))
             harvest(step)
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
@@ -710,7 +722,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             arm_gain = pending_arm_gain if future is not None else 1.0
             action = action.copy()
             action[:6] *= arm_gain
-            observation, reward, done, info = env.step(action)
+            if capture is None:
+                observation, reward, done, info = env.step(action)
+            else:
+                observation, reward, done, info = capture.step(env, action,
+                    control_step=step, inference_active=inference_active_at_action)
             action_end = time.monotonic()
             after = snapshot_scene(env, observation)
             success = bool(env.check_success())
@@ -738,6 +754,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'queue_after_step_actions': buffer_count(queue, step + 1),
                 'inference_active': future is not None,
                 'inference_active_at_action': inference_active_at_action,
+                **({'camera_render_skipped': not inference_active_at_action} if capture is not None else {}),
                 'deadline_overrun_seconds': overrun,
                 'success': success,
                 'env_done': bool(done),
@@ -818,11 +835,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 base._trace(stream, 'uncommitted_prediction', task_id=task['task_id'], q=q, trial_index=trial_index, condition=condition, request=request, reason='completed after final harvest; not executed')
         base._write_json_atomic(run_dir / f'q{q}{artifact_tag}_requests.json', requests)
         if frames:
-            frames.append(np.concatenate((observation['agentview_image'],
-                                         observation['robot0_eye_in_hand_image']), axis=1))
+            if capture is None:
+                frames.append(np.concatenate((observation['agentview_image'],
+                                             observation['robot0_eye_in_hand_image']), axis=1))
             np.savez_compressed(run_dir / f'q{q}{artifact_tag}_frames.npz',
                                 frames=np.asarray(frames), control_period_s=period,
-                                note='raw LIBERO images; rotate180 for viewing; final frame included')
+                                **({'frame_steps': np.asarray(capture.frame_steps),
+                                    'note': 'raw LIBERO request images only; sparse control-step indices; rotate180 for viewing'}
+                                   if capture is not None else
+                                   {'note': 'raw LIBERO images; rotate180 for viewing; final frame included'}))
     busy = sum(max(0, min(stop, r['inference_ended_monotonic']) -
                    max(start, r['inference_started_monotonic'])) for r in requests)
     intervals = [b['observation_step'] - a['observation_step'] for a, b in zip(requests, requests[1:])]
@@ -876,8 +897,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         'underflow_env_step_real_seconds': sum((r['action_end_monotonic'] - r['action_start_monotonic'] for r in rows if r['source'] is None)),
         'power': base._power_result(monitor, start, stop),
         **drain,
-        'field_checks': {'full_predictions': all((len(r.get('actions', [])) == config['H'] for r in requests)), 'pre_post_state': all(('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows)), 'scene_contacts': all(('contacts' in r['after'] for r in rows)), 'frames': len(frames) == len(rows) + 1},
+        'field_checks': {'full_predictions': all((len(r.get('actions', [])) == config['H'] for r in requests)), 'pre_post_state': all(('raw_state' in r['before'] and 'raw_state' in r['after'] for r in rows)), 'scene_contacts': all(('contacts' in r['after'] for r in rows)), 'frames': (len(frames) == len(requests) and capture.frame_steps == [r['observation_step'] for r in requests]) if capture is not None else len(frames) == len(rows) + 1},
     }
+    if capture is not None:
+        result['continue_capture'] = capture.summary()
     if env_audit is not None:
         result['env_forward_optimization'] = env_audit
     print(json.dumps({k: result[k] for k in ('q', 'status', 'steps', 'real_seconds', 'post_bootstrap_control_hz', 'tail_execution_steps', 'field_checks')}, ensure_ascii=False), flush=True)
