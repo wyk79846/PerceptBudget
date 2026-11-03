@@ -1,0 +1,7 @@
+suite,task_id,group,outcome,steps,task_seconds,task_j,task_plus_inference_j,terminal_low_j,common_endpoint_j,requests,low_requests,unexecuted_requests,run
+libero_spatial,0,full_three_strict,success,76,6.494390216656029,69.20752183210975,76.83408981736216,25.76128956047567,102.59537937783783,4,2,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041143.187137Z-record-full-857ef351
+libero_spatial,0,full_three_start25,success,76,6.570215837098658,70.75299140539701,75.93524071248207,25.137649411361284,101.07289012384335,4,2,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041159.032892Z-record-full-82d47b36
+libero_spatial,3,full_three_strict,success,86,7.276874100789428,78.45267355608595,79.74793157289108,25.086991595065843,104.83492316795687,4,2,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041833.147124Z-record-full-ab248ae9
+libero_spatial,3,full_three_start25,success,85,7.161828076466918,76.59462455658235,78.05554020011377,22.140585906171975,100.19612610628572,4,3,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041849.664082Z-record-full-be2995a3
+libero_spatial,6,full_three_start25,success,112,9.081816842779517,100.26803839261679,102.69724789495358,21.46965974412329,124.16690763907683,5,3,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041953.377922Z-record-full-e6ea1c4f
+libero_spatial,6,full_three_strict,success,111,9.135419175960124,100.74998140454458,103.00901144084115,21.508882951378006,124.5178943922191,5,3,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T042012.474202Z-record-full-2c6f1d66

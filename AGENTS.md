@@ -1,3 +1,7 @@
+> 2026-11-03已用免密助手自主完成Spatial3/6启动点配对（4回合/1model），run M4/20261103T041623.002680Z-acceptance-m3-cc0fd06a。合并先前0：原三档/启动点25两组3/3成功0断供，6回合2批累计2model；任务＋在途推理259.591→256.688J（省1.12%），时间22.907→22.814s（−0.41%），同终态含3s尾段省1.96%。各13次Full、中频7→8，7次9.60–19.21ms频率等待均确认本步提交。全部初态/系统/频率/恢复/原始功率复算通过，helper inspect恢复1173/3199/1497.6。只支持小收益，不替换基线。合并证据run/combined_startup_pairs，文档末节及CSV。
+
+> 2026-11-03用户已安装受限sudo，并明确后续已授权必要实验由agent自行跑，用户需要代跑会另行通知。宿主sudo-n true/助手inspect、root安装哈希均已验证通过；当前M4无需再推用户手动执行或重复问许可。需要用沙盒外执行工具，沙盒内NoNewPriv/UID映射不能误判安装失败。仅固定runtime/runtime3 120、inspect/restore/无参数true免密，模型仍普通用户。新助手核心改动需用户重新安装。
+
 > 2026-11-03准备可选受限sudo安装：scripts/install_clock_sudo.sh（尚未由用户安装）。用户一次sudo bash执行后，root持有/usr/local/sbin/perceptbudget-clocks及lib副本；NOPASSWD仅inspect/restore/runtime120/runtime3 120和无参数/usr/bin/true，不给任意Python/Shell/安装器免密。M4双/三档自动用root副本，普通用户模型；Codex沙盒审批仍单独生效。核心助手代码更改需用户重新安装，不静默改系统副本。详见docs/M2_CLOCK_CONTROL.md末节。
 
 > 2026-11-03用户澄清25ms针对启动点：30.2→30，不是推理时长取整。误解实现已撤回，archive/misread-duration-rounding-20261103保存原代码/数据，--short-wait-ms废弃。正确新开关--start-floor-ms25（有空格）：启动点提前量<=25ms时，本步最多等25ms频率确认，确认即本步提交；超时仍用原异步流程，不停止任务。原推理/安全预算、RTC/delay/实际裁剪不改，原基线保留。配对标签full_three_strict/full_three_start25，先Spatial0两回合1model，146项检查及旧6回合审计通过，新GPU未跑。见三档文档末节命令。

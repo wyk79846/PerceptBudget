@@ -485,3 +485,7 @@ sudo bash scripts/install_clock_sudo.sh --remove
 ```
 
 撤销只移除本项目sudoers片段并验证，root副本留作审计，不删除其他配置。项目安装脚本不是NOPASSWD白名单的一部分。
+
+## 安装已确认（2026-11-03）
+
+用户已亲自执行安装器，sudoers片段和整体检查均parsed OK。agent在宿主环境实测sudo -n /usr/bin/true和助手inspect均成功，无密码提示；root副本三份installed.sha256核对全部OK。当前实际/设置为GPU1173/EMC3199/CPU1497.6，恢复正常。后续当前项目范围内的必要实验由agent直接执行，用户需要手动运行时会另行通知；新权限和助手更新仍按原范围处理。已启动Spatial3/6启动点配对，根助手用安装副本、模型普通用户，不再要求用户代跑。

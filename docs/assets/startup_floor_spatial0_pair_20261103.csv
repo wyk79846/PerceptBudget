@@ -1,0 +1,3 @@
+suite,task_id,group,outcome,steps,task_seconds,task_j,task_plus_inference_j,terminal_low_j,common_endpoint_j,requests,low_requests,unexecuted_requests,run
+libero_spatial,0,full_three_strict,success,76,6.494390216656029,69.20752183210975,76.83408981736216,25.76128956047567,102.59537937783783,4,2,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041143.187137Z-record-full-857ef351
+libero_spatial,0,full_three_start25,success,76,6.570215837098658,70.75299140539701,75.93524071248207,25.137649411361284,101.07289012384335,4,2,1,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T041159.032892Z-record-full-82d47b36
