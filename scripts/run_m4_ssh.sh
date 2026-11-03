@@ -28,7 +28,9 @@ if [[ "$EUID" == 0 ]]; then
     exit 1
 fi
 
-sudo -v || exit 1
+if ! sudo -n /usr/bin/true 2>/dev/null; then
+    sudo -v || exit 1
+fi
 pb_log="/tmp/perceptbudget-m4-ssh-$(date +%Y%m%d-%H%M%S).log"
 echo "ssh_log=$pb_log"
 (

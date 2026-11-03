@@ -546,9 +546,8 @@ class RuntimeClocks:
         from perceptbudget.device_clock_screen import Lease
         class OnlineLease(Lease):
             def command(self):
-                from perceptbudget.device_clock_screen import ROOT
-                return ['sudo','-n','/usr/bin/python3',str(ROOT/'scripts/control_device_clocks.py'),
-                        'runtime','--seconds','120']
+                from perceptbudget.clock_access import helper_command
+                return helper_command('runtime','--seconds','120')
         self.lease = OnlineLease('baseline',Path(directory))
         self.lease.duration = 120
         self.lease.path = Path(directory)/'runtime_clocks.jsonl'

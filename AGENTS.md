@@ -1,3 +1,5 @@
+> 2026-11-03准备可选受限sudo安装：scripts/install_clock_sudo.sh（尚未由用户安装）。用户一次sudo bash执行后，root持有/usr/local/sbin/perceptbudget-clocks及lib副本；NOPASSWD仅inspect/restore/runtime120/runtime3 120和无参数/usr/bin/true，不给任意Python/Shell/安装器免密。M4双/三档自动用root副本，普通用户模型；Codex沙盒审批仍单独生效。核心助手代码更改需用户重新安装，不静默改系统副本。详见docs/M2_CLOCK_CONTROL.md末节。
+
 > 2026-11-03用户澄清25ms针对启动点：30.2→30，不是推理时长取整。误解实现已撤回，archive/misread-duration-rounding-20261103保存原代码/数据，--short-wait-ms废弃。正确新开关--start-floor-ms25（有空格）：启动点提前量<=25ms时，本步最多等25ms频率确认，确认即本步提交；超时仍用原异步流程，不停止任务。原推理/安全预算、RTC/delay/实际裁剪不改，原基线保留。配对标签full_three_strict/full_three_start25，先Spatial0两回合1model，146项检查及旧6回合审计通过，新GPU未跑。见三档文档末节命令。
 
 > 2026-11-03的25ms小测完成：M4/20261103T033811.439691Z-acceptance-m3-1ce5d972，Spatial0严格/25ms两组均成功（76/77步），6.3775/6.5608s，任务＋在途推理74.588/75.470J（+1.18%）、共同终态99.248/100.166J（+0.92%）。首刷新27→28，取整许可12.098ms，推理均4次/中频2次，实际短等0次，不能称已验证实际暂停。初态/bootstrap精确、系统/频率/恢复及功率重积分通过；暂保留实验开关默认0，不替换基线。原始复核short_wait_review.json，细节见三档文档末节。

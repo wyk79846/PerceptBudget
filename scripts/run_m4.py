@@ -169,7 +169,7 @@ def main():
     if args.worker:
         if args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Worker requires M4 directory')
-        subprocess.run(['sudo','-n','true'],check=True)
+        subprocess.run(['sudo','-n','/usr/bin/true'],check=True)
         cfg.update(m3_watchdog_path=str(args.run_dir/'request_watchdog.json'),m3_request_timeout_seconds=3.)
         if args.acceptance_group:cfg['m4_precompiled_environments']=True
         from scripts.eval_pooled_views import CLEANUP_GATE
@@ -200,7 +200,8 @@ def main():
         result.update(mode='m3_three_frequency' if args.three_frequency else ('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
-    subprocess.run(['sudo','-v'],check=True)
+    from perceptbudget.clock_access import authorize
+    authorize()
     run=create_run(dict(cfg,m4_tasks=settings['calibration_tasks']),'M4',
         'acceptance-'+args.acceptance_group if args.acceptance_group else 'joint-smoke',repo_root=ROOT)
     if args.result_index:

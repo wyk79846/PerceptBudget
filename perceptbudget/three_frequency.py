@@ -97,9 +97,8 @@ class ThreeClocks(RuntimeClocks):
     def __init__(self,directory):
         enable_profiles()
         super().__init__(directory)
-        from perceptbudget.device_clock_screen import ROOT
-        self.lease.command=lambda: ['sudo','-n','/usr/bin/python3',
-            str(ROOT/'scripts/control_device_clocks.py'),'runtime3','--seconds','120']
+        from perceptbudget.clock_access import helper_command
+        self.lease.command=lambda: helper_command('runtime3','--seconds','120')
 
     def switch(self,profile):
         tokens={'baseline':'HIGH','gpu_emc':'MID','deep_idle':'IDLE'}

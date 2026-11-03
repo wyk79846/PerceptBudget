@@ -460,3 +460,28 @@ cd /home/wyk/workspace/PerceptBudget
 新recovery_timing明确三段：up命令→频率实际读回、读回→调用predict、predict→动作返回；三段之和严格等于up命令→动作返回。actual_low_hold_ms另记，不混入恢复时间；不将读回当GPU首kernel，不将总恢复称纯硬件唤醒。summary增加分段均值及配对mean_recovery_extra_ms，保留原起点到返回字段兼容既有数据。
 
 旧静态1秒低频记录恢复命令→返回约488.9ms，2秒约489.6ms；旧真实控制1秒低频约575.1ms还含恢复后等到第20步取图/感知，不应拿它推GPU恢复随空闲变慢。该复核针对同口径重测，尚未证明旧静态设备实现有bug，也未宣布重新确认长空闲代表点。
+
+# 可选：一次安装受限免密助手（2026-11-03）
+
+为使Codex后续可直接启动当前M4双/三档实验，准备scripts/install_clock_sudo.sh；本次仅准备文件，尚未安装、未修改sudo配置、未调频。用户只需在普通终端亲自执行一次：
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+sudo bash scripts/install_clock_sudo.sh
+```
+
+安装复制control_device_clocks.py和device_clocks.py到root持有的/usr/local/lib/perceptbudget-clocks，使用空的clock-only包入口、系统Python-I隔离环境执行。工作区代码修改不会自动改变root副本。wrapper为/usr/local/sbin/perceptbudget-clocks；安装版本哈希在同目录installed.sha256。sudoers只允许wyk执行该wrapper的inspect、restore、runtime --seconds120、runtime3 --seconds120（实际参数有空格），以及无参数/usr/bin/true用于授权检查。没有任意Python、Shell、安装器或文件写入的NOPASSWD权限。根助手仍核对40W模式、使用固定档位白名单、根锁/快照、EOF/期限/signal恢复。
+
+安装脚本先核对受保护的系统目录，存在活动时钟快照时拒绝更新；sudoers片段先visudo-c校验，之后落入/etc/sudoers.d/perceptbudget-clocks并检查整体语法。模型和主实验普通用户运行。安装不启动模型、不切换频率、不改功耗模式。
+
+M4的RuntimeClocks/ThreeClocks自动选择已安装助手，run_m4优先用sudo-n的无操作检查跳过密码提示。未安装时仍沿用项目原路径和用户手动sudo验证。其他旧诊断/新权限不自动免密；若之后修改root助手核心文件，需要用户重新运行同一安装命令审核更新，不由agent静默覆盖。
+
+只读验证：sudo-n /usr/local/sbin/perceptbudget-clocks inspect（实际用sudo -n）。该命令仍受Codex执行沙盒/审批限制，需要在允许的外部执行环境验证；sudoers不会解除Codex管理权限。不要在聊天中提供密码。
+
+撤销免密授权：
+
+```bash
+sudo bash scripts/install_clock_sudo.sh --remove
+```
+
+撤销只移除本项目sudoers片段并验证，root副本留作审计，不删除其他配置。项目安装脚本不是NOPASSWD白名单的一部分。
