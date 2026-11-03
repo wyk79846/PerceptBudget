@@ -17,7 +17,26 @@ def camera_view_for_condition(condition):
         from perceptbudget.rtc_sensitivity import variants
         if condition not in variants():raise ValueError('Unknown sensitivity view')
         return 'full'
-    return 'full' if condition in ('full_high', 'full_low') else condition
+    return 'full' if condition in ('full_high', 'full_low', 'full_two', 'full_three') else condition
+
+
+def frequency_pair_views(config, task_index):
+    """Keep original frequency pairs; opt-in pairs compare two/three-state policy."""
+    labels=('full_two','full_three') if config.get('m3_three_frequency') else ('full_high','full_low')
+    return labels if task_index%2==0 else labels[::-1]
+
+
+def configure_frequency_variant(config, view):
+    """Choose only the clock policy; model inputs and RTC configuration stay shared."""
+    if view in ('full_two','full_three'):
+        if not config.get('m3_three_frequency'):
+            raise ValueError('Two/three-state pair requires the opt-in three-state configuration')
+        config.update(m3_low_full=True,m3_three_frequency=view=='full_three')
+    elif view in ('full_high','full_low'):
+        config['m3_low_full']=view=='full_low'
+    else:
+        raise ValueError('Unknown Full frequency policy')
+    config['m4_full_frequency_group']=view
 
 
 def audit_paired_bootstraps(episodes):
@@ -393,7 +412,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         cfg['m3_trigger_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
                 if cfg.get('m4_full_frequency_pair'):
-                    views=('full_high','full_low') if list(task_plan).index((suite,tid))%2==0 else ('full_low','full_high')
+                    views=frequency_pair_views(cfg,list(task_plan).index((suite,tid)))
                 if cfg.get('m4_rtc_delay_sensitivity'):
                     from perceptbudget.rtc_sensitivity import variants
                     views=variants()
@@ -567,8 +586,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)
                     child_cfg = copy.deepcopy(cfg)
                     if cfg.get('m4_full_frequency_pair'):
-                        child_cfg['m3_low_full']=view=='full_low'
-                        child_cfg['m4_full_frequency_group']=view
+                        configure_frequency_variant(child_cfg,view)
                     if cfg.get('m4_rtc_delay_sensitivity'):
                         from perceptbudget.rtc_sensitivity import configure
                         configure(child_cfg,view)
@@ -737,6 +755,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 record['comparison_initials_exact']=paired['passed']
+                if cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') and not paired['passed']:
+                    raise RuntimeError('Two/three-frequency comparison requires identical bootstrap inputs and actions')
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     tuple(cfg.get('m3_trigger_variants') or []) in (('events_only','events_and_variance'),('events_only','variance_only')) or
                     any(s in (cfg.get('m3_trigger_variants') or []) for s in ('events_and_variance_hold3','events_and_variance_open_probe','events_and_variance_valley','events_and_variance_latest','events_and_variance_no_turn','events_and_variance_slowdown_probe','events_and_variance_merge','events_only_merge'))):

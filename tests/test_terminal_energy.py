@@ -45,11 +45,12 @@ def test_drain_stops_energy_at_low_endpoint_not_later_restoration(monkeypatch):
     monitor.stop.assert_called_once()
 
 
-def test_pair_report_does_not_call_final_commit_executed(tmp_path):
+@pytest.mark.parametrize('groups',[('full_high','full_low'),('full_two','full_three')])
+def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups):
     import json
     from perceptbudget.full_frequency_pairs import summarize_pairs
     episodes=[]
-    for group in ('full_high','full_low'):
+    for group in groups:
         run=tmp_path/group;(run/'rtc').mkdir(parents=True)
         episode=dict(real_seconds=4.,steps=76,power={'total_energy_mj':10000},
             including_drain_power={'total_energy_mj':18000},
@@ -58,12 +59,14 @@ def test_pair_report_does_not_call_final_commit_executed(tmp_path):
         (run/'summary.json').write_text(json.dumps({'episode':episode}))
         (run/'rtc/q5_requests.json').write_text(json.dumps([{'prediction_id':i} for i in (0,1)]))
         episodes.append(dict(run=str(run),suite='libero_spatial',task_id=0,view=group,outcome='success',steps=76))
-    rows=summarize_pairs(episodes,tmp_path)['rows']
+    report=summarize_pairs(episodes,tmp_path,groups=groups)
+    assert report['groups']==list(groups)
+    rows=report['rows']
     assert all(r['unexecuted_requests']==1 for r in rows)
     assert all(r['task_plus_inference_j']+r['terminal_low_j']==r['common_endpoint_j'] for r in rows)
 
 
-@pytest.mark.parametrize('condition', ['full_high','full_low'])
+@pytest.mark.parametrize('condition', ['full_high','full_low','full_two','full_three'])
 def test_frequency_groups_use_both_images_during_warmup_and_episode(condition):
     from perceptbudget.device_quality import camera_view_for_condition
     from perceptbudget.device_profile import select_images

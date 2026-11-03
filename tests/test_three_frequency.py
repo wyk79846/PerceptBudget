@@ -113,3 +113,46 @@ def test_runtime_decision_does_not_modify_buffer_or_event_deadline():
     assert d['compute_profile']=='gpu_emc'
     assert d['deadline']==12.  #40 remaining actions *50ms
     assert len(q)==50 and d['three_frequency_formula']['policy']=='medium_first_v1'
+
+
+def test_resident_pair_keeps_original_policy_and_alternates_order():
+    import copy
+    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant
+    cfg=dict(m3_three_frequency=True,m3_low_full=True,H=50,N=5,state_enabled=True,
+             m3_low_full_policy='shared_deadline_v4',rtc_beta=5)
+    before=copy.deepcopy(cfg)
+    assert frequency_pair_views(cfg,0)==('full_two','full_three')
+    assert frequency_pair_views(cfg,1)==('full_three','full_two')
+    for view,enabled in [('full_two',False),('full_three',True)]:
+        child=copy.deepcopy(cfg)
+        configure_frequency_variant(child,view)
+        assert child['m3_three_frequency'] is enabled and child['m3_low_full']
+        for key in ('H','N','state_enabled','m3_low_full_policy','rtc_beta'):
+            assert child[key]==cfg[key]
+    assert cfg==before
+    assert frequency_pair_views({},0)==('full_high','full_low')
+
+
+def test_original_high_low_pair_configuration_does_not_enable_three_states():
+    from perceptbudget.device_quality import configure_frequency_variant
+    for view,low in [('full_high',False),('full_low',True)]:
+        cfg=dict(m3_three_frequency=False)
+        configure_frequency_variant(cfg,view)
+        assert cfg['m3_low_full'] is low and not cfg['m3_three_frequency']
+    with pytest.raises(ValueError):configure_frequency_variant({},'full_three')
+
+
+def test_three_frequency_pair_plan_is_six_episodes_one_model_without_launch(capsys):
+    import json
+    from scripts.run_m4 import main
+    args=['probe','--acceptance-group','m3','--low-full','--three-frequency',
+          '--full-frequency-pair','--task-indices','0','1','2','--critical-wait',
+          '--critical-wait-phases','--first-refresh-step','30','--phase-refresh','--dry-run']
+    with patch('sys.argv',args),patch('scripts.run_m4.subprocess.run') as launch:
+        assert main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['tasks']==[['libero_spatial',i] for i in (0,3,6)]
+    assert plan['episodes']==6 and plan['model_loads']==1
+    assert plan['three_frequency'] and plan['full_frequency_pair']
+    assert plan['Fast']=='disabled' and plan['common_low_tail_seconds']==3.
+    launch.assert_not_called()

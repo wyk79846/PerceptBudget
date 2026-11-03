@@ -1,3 +1,5 @@
+> 2026-11-03三档Spatial0首测成功77步/6.638s，任务68.485J，含推理收尾77.104J；0断供，审计442/频率/恢复均通过。28/65步中频，76步为新松爪79高频响应，任务77结束，不能按事后成功删除。历史原双档76步6.048s/任务67.783J，不宣称首测节能。现可将--three-frequency与--full-frequency-pair并用，比较原full_two/新full_three，Spatial0/3/6共6回合1model，终态统一816/2133+3s。131检查通过，6回合未执行。原双档分支和默认不变。见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md末节。
+
 > 2026-11-03：原Full双档基线保留在baseline/full-two-frequency-20261102（bbe414f）。新增--three-frequency需--low-full --acceptance-group m3：306/2133只Continue，每次中频816/2133 Full先判可行，再高频1173/3199，CPU1497.6；不加Fast，不改FlashRT/模型/RTC。runtime3独立有限协议，未变化域跳过写入；原runtime不变。119项检查及两份原记录审计通过，新GPU闭环尚未跑。先测Spatial0，命令与状态见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md。
 
 > 2026-11-02 GPU railgate：本机chosen/nvidia,tegra-joint_xpu_rail存在，rel36 GA10B驱动据此can_railgate_init=false，开启返回EINVAL。当前独立GPU railgate不可用；probe_gpu_railgate已先只读预检返回unavailable。不重试电源写入，不使用force_idle、不改DT/驱动绕过。旧测试根助手已RESTORED；细节docs/M4_GPU_RAILGATE_PROBE_RESULT_20261102.md。

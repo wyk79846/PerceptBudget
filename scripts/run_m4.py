@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--rtc-delay-sensitivity',action='store_true',help='Five resident one-task trials: initial8/9/10/11 plus unguided, one each')
     parser.add_argument('--rtc-delay-reference-run',type=Path,help='Replay a recorded per-task initial RTC delay; keep online updates enabled')
     parser.add_argument('--frequency-reference-run',type=Path,help='Merge completed Full frequency pairs from an earlier batch; do not rerun them')
-    parser.add_argument('--full-frequency-pair',action='store_true',help='Resident paired high/low Full policies with common LOW terminal energy window')
+    parser.add_argument('--full-frequency-pair',action='store_true',help='Resident Full high/low pair; with --three-frequency compare original two-state and new three-state policies')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
@@ -40,8 +40,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
-    if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.full_frequency_pair or args.rtc_delay_sensitivity):
-        parser.error('--three-frequency requires --low-full --acceptance-group m3, without other frequency experiments')
+    if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.rtc_delay_sensitivity or args.frequency_reference_run):
+        parser.error('--three-frequency requires --low-full --acceptance-group m3, without sensitivity or an old frequency-reference batch')
     if args.full_frequency_pair and (not args.low_full or args.acceptance_group!='m3'):
         parser.error('--full-frequency-pair requires --low-full --acceptance-group m3')
     if args.rtc_delay_sensitivity and (args.acceptance_group!='m3' or args.low_full or args.full_frequency_pair or args.rtc_delay_reference_run or not args.task_indices or len(args.task_indices)!=1):
@@ -183,7 +183,8 @@ def main():
             result['rtc_delay_sensitivity']=summarize_sensitivity(result['episodes'],args.run_dir)
         if args.full_frequency_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
-            result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir)
+            result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
+                groups=('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'
                 combined.mkdir()

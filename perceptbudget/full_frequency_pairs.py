@@ -6,7 +6,9 @@ from pathlib import Path
 from perceptbudget.experiment import _write_json_atomically
 
 
-def summarize_pairs(episodes, directory):
+def summarize_pairs(episodes, directory, *, groups=('full_high','full_low')):
+    if groups not in (('full_high','full_low'),('full_two','full_three')):
+        raise ValueError('Unknown Full policy pair')
     rows=[]
     for e in episodes:
         run=Path(e['run'])
@@ -24,9 +26,10 @@ def summarize_pairs(episodes, directory):
             run=str(run)))
     for suite,tid in {(r['suite'],r['task_id']) for r in rows}:
         pair=[r for r in rows if (r['suite'],r['task_id'])==(suite,tid)]
-        if len(pair)!=2 or {r['group'] for r in pair}!={'full_high','full_low'}:
+        if len(pair)!=2 or {r['group'] for r in pair}!=set(groups):
             raise ValueError('Incomplete Full frequency pair')
-    result=dict(rows=rows,scope='Matched whole tasks; task, inference drain, and common LOW endpoint reported separately; restoration excluded')
+    result=dict(rows=rows,groups=list(groups),
+        scope='Matched whole tasks; task, inference drain, and common LOW endpoint reported separately; restoration excluded')
     directory=Path(directory)
     with (directory/'full_frequency_pairs.csv').open('w') as f:
         w=csv.DictWriter(f,fieldnames=list(rows[0]),lineterminator='\n');w.writeheader();w.writerows(rows)

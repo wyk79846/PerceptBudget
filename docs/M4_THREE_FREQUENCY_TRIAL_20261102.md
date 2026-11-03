@@ -58,3 +58,25 @@ cd /home/wyk/workspace/PerceptBudget
 ```
 
 一模型/一回合，开始前先跑三档实际切换预检，原始数据落M4新目录。已有tmux内需要断开SSH时可将python命令替换为bash scripts/run_m4_ssh.sh并保持其余参数。测试后检查是否真实出现deep_idle、中频/高频的各请求选择、恢复耗时、零断供及成功/完整任务能量，再决定扩大测试。
+
+## 首轮Spatial0与配对验证入口（2026-11-03）
+
+父运行M4/20261103T024232.576458Z-acceptance-m3-4566c1c7；回合M4/20261103T024431.045018Z-record-full-375c6dd7。77步成功，6.638秒，零断供、零关键等待。任务期间68.485J；含在途推理结束与原状态恢复77.104J，7.061秒。模型/专家各加载一次，全部计算频率及RESTORED通过，独立审计442项通过；原始VDD_IN重积分与记录差0J。复核写入回合three_frequency_review.json。
+
+实际请求：初始高频；第28/65步中频Full；第76步高频Full。第2份中频结果在75步提交，带来79步松爪新事件；76步发起高频，任务77步已成功，所以这次结果未执行。先前覆盖的是39步闭爪事件，不是同一个事件。未发现事件重复覆盖失效或切换成本重复计入，不能根据事后任务结束去删这次响应。低→中实际助手9.46/8.96ms，静态3ms先验与完整在线控制路径不同，现有额外控制tick覆盖了该开销；不是只按静态3ms宣称完整恢复。
+
+历史原双档Spatial0为76步、6.048秒、任务期间67.783J。新三档任务能量约+1.04%、时间约+9.74%，未取得该单例的能效提升。初始物理/图像/state及首预测raw相同，但这是跨run对照，在线时间、后续观测、初始RTC延迟估计不同；旧实验另外含3秒共同尾段，禁止直接拿其88.484J与新77.104J当作节能收益。
+
+下一步仅扩到Spatial0/3/6，每任务原双档与新三档各一次，共6回合、1model，组序按任务交替。复用已有--full-frequency-pair，和--three-frequency并用时明确比较full_two/full_three；未开启三档时仍为原full_high/full_low。两组均原Full/RTC/模型、同任务校准和初始噪声，严格比较初始state/图像/首预测raw。原双档子配置关闭三档开关，仍用原runtime及原中频准入规则；新组沿用本轮medium-first，不新增事件规则。
+
+两组统一等在途推理结束后回到GPU816/EMC2133，保持3秒作为共同计量终态，随后才恢复设备原设置。任务期间、在途推理、共同尾段分别统计，避免把收尾成本当Continue收益。尾段不作为生产等待时间。初始配对、动作索引、频率或功率检查不通过则保留原始记录并报invalid，不挑结果。
+
+```bash
+cd /home/wyk/workspace/PerceptBudget
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m4.py \
+  --acceptance-group m3 --low-full --three-frequency --full-frequency-pair \
+  --task-indices 0 1 2 \
+  --critical-wait --critical-wait-phases --first-refresh-step 30 --phase-refresh
+```
+
+配对入口及相关131项测试通过；dry-run为6回合/1model/无Fast，旧双档入口仍通过检查。新6回合尚未执行，原Spatial0结果不覆盖。
