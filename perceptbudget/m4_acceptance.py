@@ -199,6 +199,16 @@ def request_path(run):
     return run/'rtc'/f"q{cfg['candidate_q'][0]}_requests.json"
 
 
+def comparison_energy(episode):
+    """Keep the common measurement tail out of the main task-energy result."""
+    tail=episode.get('terminal_low')
+    return dict(total_energy_j=(tail['task_plus_inference_power'] if tail else
+        episode['including_drain_power'])['total_energy_mj']/1000,
+        measurement_tail_energy_j=tail['power']['total_energy_mj']/1000 if tail else None,
+        common_endpoint_energy_j=episode['including_drain_power']['total_energy_mj']/1000 if tail else None,
+        energy_scope='task_plus_inference' if tail else 'legacy_including_drain')
+
+
 def clock_audit(run):
     from perceptbudget.device_clock_screen import frequency_check
     run = Path(run)
@@ -248,7 +258,7 @@ def summarize(directory, sources, *, task_plan=None):
             item = dict(suite=row['suite'], task_id=row['task_id'], group=group,
                         outcome=row['outcome'], steps=row['steps'],
                         task_seconds=data['real_seconds'], including_drain_seconds=data['including_drain_seconds'],
-                        total_energy_j=data['including_drain_power']['total_energy_mj']/1000,
+                        **comparison_energy(data),
                         underflow_steps=len(data['underflow_steps']), requests=len(requests),
                         full_requests=sum(r.get('context_refresh',{}).get('mode','full')=='full' for r in requests),
                         fast_requests=sum(r.get('context_refresh',{}).get('mode','full')!='full' for r in requests),run=str(run))
@@ -265,11 +275,13 @@ def summarize(directory, sources, *, task_plan=None):
                         and np.array_equal(a[1]['rtc_solver_inputs']['noise'], b[1]['rtc_solver_inputs']['noise']))
         exact = inputs_equal and np.array_equal(a[1]['actions_raw'], b[1]['actions_raw'])
         both = a[2]['outcome'] == b[2]['outcome'] == 'success'
+        equal_energy_scope=a[2]['energy_scope']==b[2]['energy_scope']
         pairs.append(dict(suite=suite, task_id=tid, initial_inputs_equal=bool(inputs_equal),
                           initial_actions_exact=bool(exact), initial_raw_max_abs=float(np.max(np.abs(
                               np.asarray(a[1]['actions_raw'])-np.asarray(b[1]['actions_raw'])))),
-                          both_success=both, energy_saving_percent=(100*(1-b[2]['total_energy_j']/a[2]['total_energy_j'])
-                              if both and inputs_equal else None),
+                          both_success=both, energy_scope_equal=equal_energy_scope,
+                          energy_saving_percent=(100*(1-b[2]['total_energy_j']/a[2]['total_energy_j'])
+                              if both and inputs_equal and equal_energy_scope else None),
                           task_time_difference_seconds=b[2]['task_seconds']-a[2]['task_seconds']))
     result = dict(status='completed', rows=rows, pairs=pairs, sources={k:str(v) for k,v in sources.items()},
                   scope='Fixed seed/init; inexact bootstrap actions explicitly reported; failed attempts retained.')
@@ -280,7 +292,7 @@ def summarize(directory, sources, *, task_plan=None):
              '|---|---:|---|---|---:|---:|---:|---:|']
     for r in rows:
         lines.append(f"|{r['suite']}|{r['task_id']}|{r['group']}|{r['outcome']}|{r['steps']}|{r['task_seconds']:.3f}|{r['total_energy_j']:.3f}|{r['underflow_steps']}|")
-    lines += ['', '能量包含结束时在途推理收尾；任务时间与含收尾时间均保存在CSV。', '',
+    lines += ['', '主能量包含结束时在途推理收尾；统一终态测量尾段单列、不计入主能量。旧记录窗口在CSV的energy_scope字段标明，不跨窗口计算节能率。任务时间与含收尾时间均保存在CSV。', '',
               '|集合|组别|成功/尝试|平均尝试能量J|成功任务平均时间s|', '|---|---|---:|---:|---:|']
     for suite in (*SUITES, 'all'):
         for group in comparison_groups:

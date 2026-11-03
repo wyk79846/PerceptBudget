@@ -13,6 +13,13 @@ from perceptbudget.m4_acceptance import manifest,summarize,clock_audit
 from perceptbudget.m4_planner import POLICY_REVISION
 
 
+def candidate_clock_arguments(args):
+    flags=['--low-full'] if args.low_full else []
+    if args.three_frequency:flags.append('--three-frequency')
+    if args.start_floor_ms:flags.extend(['--start-floor-ms',str(args.start_floor_ms)])
+    return flags
+
+
 def validate_baseline(source,fixed):
     source=Path(source)
     meta=json.loads((source/'run.json').read_text())['config_snapshot']
@@ -49,6 +56,8 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
+    parser.add_argument('--three-frequency',action='store_true',help='M3 medium-first Full with306MHz Continue; requires --low-full')
+    parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,help='With three frequencies: allow same-tick startup within25ms')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
@@ -56,6 +65,8 @@ def main():
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if args.three_frequency and (args.candidate!='m3' or not args.low_full):parser.error('--three-frequency requires --candidate m3 --low-full')
+    if args.start_floor_ms and not args.three_frequency:parser.error('--start-floor-ms requires --three-frequency')
     if args.low_full and args.candidate!='m3':parser.error('--low-full requires M3 without Fast')
     if args.phase_refresh and args.candidate!='m3':parser.error('--phase-refresh requires M3')
     if args.first_refresh_step is not None and args.candidate!='m3':parser.error('--first-refresh-step requires M3')
@@ -86,9 +97,12 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
+            candidate_clock_arguments=candidate_clock_arguments(args),lean_capture=args.candidate=='m3',
+            common_low_tail_seconds=3. if args.candidate=='m3' else None,
             low_full=args.low_full,phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; PACE-inspired key-phase guard and one Full response' if args.fast_key_phases else 'events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
-    subprocess.run(['sudo','-v'],check=True)
+    from perceptbudget.clock_access import authorize
+    authorize()
     session=create_run(dict(cfg,m4_acceptance_manifest=fixed,m4_comparison_tasks=task_plan),'M4','paired-acceptance',repo_root=ROOT)
     print('session_dir='+str(session),flush=True)
     _write_json_atomically(session/'fixed_manifest.json',fixed)
@@ -109,7 +123,9 @@ def main():
             if args.critical_wait_phases and group=='m3':command.append('--critical-wait-phases')
             if args.first_refresh_step is not None and group=='m3':command.extend(['--first-refresh-step',str(args.first_refresh_step)])
             if args.phase_refresh and group=='m3':command.append('--phase-refresh')
-            if args.low_full and group=='m3':command.append('--low-full')
+            if group=='m3':command.extend(candidate_clock_arguments(args))
+            if args.candidate=='m3' and group in ('q30','m3'):
+                command.extend(['--lean-continue','--common-low-tail'])
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
             if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])

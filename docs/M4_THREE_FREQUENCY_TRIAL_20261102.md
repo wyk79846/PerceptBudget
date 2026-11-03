@@ -269,3 +269,9 @@ CPU均1497.6MHz，306MHz等待的EMC为2133MHz。Full从恢复准备（或热态
 产出：M4/20261103T051602.787683Z-lean-cost-refresh-f26690e7/cost_table.json、cost_table.csv、episode_rows.csv、switch_timings.csv及cost_review.json；[条件分组CSV](assets/lean_runtime_costs_20261103.csv)。`m4.json`新增lean_runtime_cost_source指向本表，供下一步选挡使用；当前运行时仍是原中频优先，未直接用小样本替换P95服务模型。
 
 基线重测范围：旧M1/M2/Fast实验保留为当时配置结果；正式用于新结论的基线统一新采集口径重测，先做q30与当前方案的同一套12任务。若后续需要q5/10/20/40静态能耗前沿，再补对应档位；当前成本补测不要求先重跑所有历史实验。
+
+### 新采集口径：12任务两组重测入口已准备
+
+用户要求自行执行，本轮未启动24回合GPU测试。已补齐run_m4_acceptance.py的--three-frequency和--start-floor-ms参数传递，沿用原关键等待/阶段去重/首刷新30规则。q30保持高频Full、0/30/60步启动；当前方案为中频Full优先、高频回退、306MHz Continue、25ms启动点。双方精简采集、H50/N5/BF16/state/RTC及seed7/init0一致；Spatial/Object/Goal/LIBERO-10各task0/3/6，共24回合，每组一次模型加载。
+
+主能量统一为任务启动至在途推理完成，排除后续统一低频3秒测量尾段；尾段和共同终态能量另存CSV。新--common-low-tail只增加测量后收尾，不改变任务内q30的高频保持策略。若复用旧记录导致统计窗口不同，报告不计算跨窗口节能率。65项相关检查与24回合dry-run通过；有限免密授权通过，支持普通用户systemd后台运行，无需保持SSH。父会话自动保存两个子运行路径、comparison.json/csv/md，等待用户运行后审查。

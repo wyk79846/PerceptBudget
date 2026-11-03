@@ -9,6 +9,40 @@ from perceptbudget.baseline import FROZEN
 from perceptbudget.m4_acceptance import manifest, configure_baseline, request_path, summarize
 
 
+def test_common_endpoint_tail_is_separate_from_comparison_energy():
+    from perceptbudget.m4_acceptance import comparison_energy
+    episode=dict(including_drain_power={'total_energy_mj':16000},terminal_low={
+        'task_plus_inference_power':{'total_energy_mj':10000},'power':{'total_energy_mj':6000}})
+    result=comparison_energy(episode)
+    assert result['total_energy_j']==10.
+    assert result['measurement_tail_energy_j']==6.
+    assert result['common_endpoint_energy_j']==16.
+    assert result['energy_scope']=='task_plus_inference'
+    del episode['terminal_low']
+    assert comparison_energy(episode)['total_energy_j']==16.
+
+
+def test_new_twelve_task_command_forwards_current_clock_policy_without_loading(monkeypatch,capsys):
+    from scripts import run_m4_acceptance, run_m4
+    args=['run_m4_acceptance.py','--candidate','m3','--low-full','--three-frequency',
+        '--start-floor-ms','25','--critical-wait','--critical-wait-phases',
+        '--first-refresh-step','30','--phase-refresh','--dry-run']
+    monkeypatch.setattr(sys,'argv',args)
+    assert run_m4_acceptance.main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['groups_to_run']==['q30','m3'] and plan['episodes']==24 and plan['model_loads']==2
+    assert plan['lean_capture'] and plan['common_low_tail_seconds']==3.
+    assert plan['candidate_clock_arguments']==['--low-full','--three-frequency','--start-floor-ms','25']
+    for group in ('q30','m3'):
+        flags=plan['candidate_clock_arguments'] if group=='m3' else []
+        monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group',group,
+            '--common-low-tail','--lean-continue','--dry-run',*flags])
+        assert run_m4.main()==0
+        child=json.loads(capsys.readouterr().out)
+        assert child['episodes']==12 and child['lean_continue'] and child['common_low_tail_seconds']==3.
+        assert child['three_frequency']==(group=='m3')
+
+
 def test_render_noise_does_not_mask_physics_or_visible_image_change():
     from perceptbudget.m4_acceptance import render_parity
     case=dict(physical_max_abs=0.,state_max_abs=0.,success_equal=True,pixel_max_abs=1,max_changed_pixels=8)

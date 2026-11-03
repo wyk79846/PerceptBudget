@@ -30,6 +30,7 @@ def main():
     capture_options.add_argument('--full-capture',dest='lean_continue',action='store_false',
         help='Retain original per-step camera/recording behavior for reproduction')
     parser.add_argument('--continue-overhead-pair',action='store_true',help='Resident same-policy pair: original capture versus lean Continue, for M3 or q30')
+    parser.add_argument('--common-low-tail',action='store_true',help='After pending inference finishes, record the same3s LOW endpoint separately from task energy')
     parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,
         help='Three-state startup-point floor: permit at most25ms intra-tick clock acknowledgement before inference')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
@@ -94,7 +95,7 @@ def main():
     cfg['m4_rtc_delay_sensitivity']=args.rtc_delay_sensitivity
     if args.rtc_delay_reference_run:cfg['rtc_initial_delay_reference_run']=str(args.rtc_delay_reference_run.resolve())
     cfg['m4_full_frequency_pair']=args.full_frequency_pair
-    if args.full_frequency_pair or args.continue_overhead_pair:cfg['m4_common_low_tail_seconds']=3.
+    if args.common_low_tail or args.full_frequency_pair or args.continue_overhead_pair:cfg['m4_common_low_tail_seconds']=3.
     cfg['m3_phase_refresh']=args.phase_refresh
     cfg['m3_first_refresh_step']=args.first_refresh_step
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
@@ -251,6 +252,7 @@ def main():
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')
+            if args.common_low_tail:command.append('--common-low-tail')
             if args.start_floor_ms:command.extend(['--start-floor-ms',str(args.start_floor_ms)])
             if args.full_frequency_pair:command.append('--full-frequency-pair')
             if args.rtc_delay_sensitivity:command.append('--rtc-delay-sensitivity')
