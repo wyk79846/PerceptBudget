@@ -371,6 +371,10 @@ def audit(run):
                     and g.get('state_in_prompt') is True,pid)
             if expected_mode=='pool2_agent':
                 check('fresh_visual_pooled_camera',visual.get('pooled_view')=='agent',pid)
+            if expected_mode=='selective320':
+                check('selective320_camera_counts',visual.get('pooled_view')=='both'
+                    and visual.get('compression')=='redundancy_selected_32_of64_blocks_per_camera'
+                    and visual.get('external_tokens')==160 and visual.get('wrist_tokens')==160,pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})

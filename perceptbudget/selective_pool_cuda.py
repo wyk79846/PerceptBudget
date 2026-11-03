@@ -17,6 +17,9 @@ def load():
     directory=Path(__file__).resolve().parents[2]/'任务产出/perceptbudget/build'/('selective-pool-'+key)
     directory.mkdir(parents=True,exist_ok=True);library=directory/'selective_pool.so'
     if not library.exists():subprocess.run(['/usr/local/cuda/bin/nvcc',*flags,str(source),'-o',str(library)],check=True)
-    lib=ctypes.CDLL(str(library));lib.selective_pool416.argtypes=[ctypes.c_void_p]*6
-    lib.selective_pool416.restype=ctypes.c_int
+    lib=ctypes.CDLL(str(library))
+    for name in ('selective_pool416','selective_pool320'):
+        function=getattr(lib,name)
+        function.argtypes=[ctypes.c_void_p]*6
+        function.restype=ctypes.c_int
     _LIB=lib;return lib

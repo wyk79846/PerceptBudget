@@ -46,6 +46,8 @@
 
 # 项目协作与当前状态
 
+> 2026-11-03用户明确停止衔接/稳定性排查，保留现状，继续能耗优化。新增selective320候选：每路合并32/64冗余2×2块，各160视觉token，Full保留state、Fast沿用省略state；无训练、无FlashRT/RTC/正式配置变更。脚本profile_selective_fast.py与独立前端，非生产Fast默认。CPU51检查、GPU320/416参考/同分/图新输入/实际特征布局精确。固定输入b1d45c97一模型：Full467.7ms/12.106J、旧Fast320.7/7.893、新319.7/7.873，16次每档热VDD_IN，非任务35%节能；三观测next10-arm6均值.06122→.02856但有夹爪一步差、尾段不一致。三任务同批2c03f0d2六回合/1模型/缓存MJB：Spatial0两组成功77步77.19→72.31J；Object0 Full成功144步118.42J、新超时280步211.23J；Goal3 Full超时300步238.28J、新成功170步130.81J。各2/3、共同成功仅Spatial0；所有尝试433.89→414.34J少4.51%，时间+0.49%，不认定质量通过。初态/首raw精确、审计/高频/RESTORED、零欠载、功率复算通过。Object3另批8fae3f50两组超时280步224.27→212.02J保留负例，不混称同一模型批次。原正式Full+Continue不替换。备份archive/before-dual-selective-fast-20261103；见docs/FAST_DUAL_SELECTIVE_20261103.md。下一步若继续Fast应改善可用性或验证其他温和输入，勿据单次35%直接声称整体收益，也不自动重开已叫停的衔接排查。
+
 ## 唯一有效基线
 
 - M3正式动态刷新采用原版机制一，见m3.json formal.trigger_strategy=events_only及run_m3 --mode comparison；A组仍保留下面的原始固定q5基线作比较。

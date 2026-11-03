@@ -39,7 +39,7 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
         adapter.prepare_step_bank(list(range(650,668))+wrist)
 
 
-@pytest.mark.parametrize('fast_mode',['wrist','pool2','pool2_agent'])
+@pytest.mark.parametrize('fast_mode',['wrist','pool2','pool2_agent','selective320'])
 @pytest.mark.parametrize('fast_no_state',[False,True])
 def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode,fast_no_state):
     calls=[]

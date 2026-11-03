@@ -28,3 +28,25 @@ def test_redundant_half_selected_and_ties_stable():
     assert mask[:32].all() and not mask[32:].any()
     _,tie=compact(torch.ones_like(v),32)
     assert tie[:32].all()
+
+
+def test_both_cameras_preserve_distinct_details_and_camera_order():
+    from perceptbudget.selective_pool import compact_both
+    v=torch.ones(2,16,16,4)
+    # Each view has a different detailed half; homogeneous backgrounds merge.
+    v[0,8:]=torch.eye(4).reshape(2,2,4).repeat(4,8,1)
+    v[1,:8]=torch.eye(4).reshape(2,2,4).repeat(4,8,1)
+    output,mask=compact_both(v)
+    assert output.shape==(320,4) and mask.shape==(2,64)
+    assert mask[0,:32].all() and not mask[0,32:].any()
+    assert not mask[1,:32].any() and mask[1,32:].all()
+    assert torch.equal(output[32:160],v[0,8:].reshape(128,4))
+    assert torch.equal(output[160:288],v[1,:8].reshape(128,4))
+
+
+def test_both_cameras_native_rounding_reference_and_stable_ties():
+    from perceptbudget.selective_pool import compact_both
+    v=torch.ones(2,16,16,4,dtype=torch.bfloat16)
+    output,mask=compact_both(v)
+    assert mask[:,:32].all() and not mask[:,32:].any()
+    assert torch.equal(output,torch.ones(320,4,dtype=torch.bfloat16))

@@ -27,3 +27,14 @@ def test_policy_guards():
     pipe.pipeline = object()
     with pytest.raises(RuntimeError):
         apply_policy(pipe, 'heuristic-first')
+
+
+def test_probe_keeps_shared_algorithms_when_frontends_have_same_shape():
+    from scripts.profile_selective_fast import TuneOnce
+    calls=[]
+    native=SimpleNamespace(autotune_bf16_nn=lambda *a,**kw:calls.append((a,kw)),marker=3)
+    proxy=TuneOnce(native)
+    proxy.autotune_bf16_nn(1,2,3,256,3072,1024)
+    proxy.autotune_bf16_nn(10,20,30,256,3072,1024)
+    proxy.autotune_bf16_nn(10,20,30,340,3072,1024)
+    assert len(calls)==2 and proxy.skipped==1 and proxy.marker==3

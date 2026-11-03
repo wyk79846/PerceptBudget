@@ -1,0 +1,7 @@
+suite,task_id,condition,run,outcome,steps,seconds,energy_j,underflow_steps,audit_checks
+libero_spatial,0,Full_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064223.843242Z-dual-fast-q30-a10d12a8,success,77,5.546221360564232,77.19193228966328,0,397
+libero_spatial,0,DualFast_alternating_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064232.393451Z-dual-fast-q30-49b167d9,success,77,5.377017603255808,72.30911331350367,0,395
+libero_object,0,Full_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064258.378275Z-dual-fast-q30-01558c26,success,144,8.073971079662442,118.41791288689646,0,739
+libero_object,0,DualFast_alternating_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064308.903096Z-dual-fast-q30-92bdab8e,timeout,280,14.983829672448337,211.22530304641774,0,1444
+libero_goal,3,Full_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064334.733285Z-dual-fast-q30-bc0816e3,timeout,300,15.972001527436078,238.28385420402972,0,1539
+libero_goal,3,DualFast_alternating_q30,/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T064353.224943Z-dual-fast-q30-59cc6cab,success,170,9.375406047329307,130.80548443257945,0,871
