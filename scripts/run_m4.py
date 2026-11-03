@@ -25,8 +25,10 @@ def main():
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--three-frequency',action='store_true',help='Opt-in306MHz Continue; medium Full first, high fallback; requires --low-full')
     parser.add_argument('--full-energy',action='store_true',help='At the original Full preparation trigger, compare complete service and remaining Continue energy for HIGH/MID')
-    parser.add_argument('--idle-min-ms',type=int,choices=(50,100,150,200),
-        help='Minimum predicted Continue gap before entering306MHz; with --full-frequency-pair compare200ms against this value')
+    parser.add_argument('--idle-min-ms',type=int,choices=(40,50,100,150,200),
+        help='Minimum predicted Continue gap before entering306MHz; with --full-frequency-pair compare the reference threshold against this value')
+    parser.add_argument('--idle-reference-ms',type=int,choices=(100,200),default=200,
+        help='Reference for an idle threshold pair;200 reproduces the original comparison')
     parser.add_argument('--ordinary-fast',action='store_true',help='Replace one ordinary Full with selective320 Fast; keep Full schedule/frequency, then require Full')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     capture_options=parser.add_mutually_exclusive_group()
@@ -54,6 +56,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.idle_reference_ms!=200 and (args.idle_min_ms is None or not args.full_frequency_pair):
+        parser.error('--idle-reference-ms requires --idle-min-ms and --full-frequency-pair')
     if args.idle_min_ms is not None and (not args.three_frequency or args.acceptance_group!='m3' or args.full_energy or args.ordinary_fast or args.continue_overhead_pair):
         parser.error('--idle-min-ms requires three-frequency M3, without energy-selection, Fast or capture comparisons')
     if args.full_energy and (not args.three_frequency or args.acceptance_group!='m3' or args.ordinary_fast or args.continue_overhead_pair):
@@ -98,7 +102,8 @@ def main():
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
     cfg['m3_full_energy']=args.full_energy
-    if args.idle_min_ms is not None:cfg['m3_idle_min_ms']=args.idle_min_ms
+    if args.idle_min_ms is not None:
+        cfg.update(m3_idle_min_ms=args.idle_min_ms,m3_idle_reference_ms=args.idle_reference_ms)
     cfg['m3_start_floor_ms']=args.start_floor_ms
     cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group in ('m3','q30')
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
@@ -192,7 +197,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[200,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -231,7 +236,7 @@ def main():
         if args.full_frequency_pair or args.ordinary_fast_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
-                groups=('full_idle200','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else ('full_three_strict','full_three_start25') if args.start_floor_ms else
+                groups=(f'full_idle{args.idle_reference_ms}','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else ('full_three_strict','full_three_start25') if args.start_floor_ms else
                        ('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'
@@ -279,6 +284,7 @@ def main():
             if args.three_frequency:command.append('--three-frequency')
             if args.full_energy:command.append('--full-energy')
             if args.idle_min_ms is not None:command.extend(['--idle-min-ms',str(args.idle_min_ms)])
+            if args.idle_reference_ms!=200:command.extend(['--idle-reference-ms',str(args.idle_reference_ms)])
             if args.ordinary_fast:command.append('--ordinary-fast')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if cfg['m4_lean_continue']:command.append('--lean-continue')

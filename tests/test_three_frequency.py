@@ -146,13 +146,16 @@ def test_short_idle_does_not_add_a_new_ack_tick_to_an_unchanged_compute_profile(
     assert changes==['deep_idle'] and out['continue_idle_gate']['reason']=='original_idle_rule'
 
 
-def test_idle_threshold_pair_keeps_clock_policy_and_history_bins():
+@pytest.mark.parametrize('reference,candidate',[(200,100),(100,50),(100,40)])
+def test_idle_threshold_pair_keeps_clock_policy_and_history_bins(reference,candidate):
     import copy
     from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant,camera_view_for_condition
-    cfg=dict(config(),m3_three_frequency=True,m3_idle_min_ms=100,m3_start_floor_ms=25)
-    assert frequency_pair_views(cfg,0)==('full_idle200','full_idle_candidate')
-    assert frequency_pair_views(cfg,1)==('full_idle_candidate','full_idle200')
-    for label,value in (('full_idle200',.2),('full_idle_candidate',.1)):
+    cfg=dict(config(),m3_three_frequency=True,m3_idle_min_ms=candidate,
+             m3_idle_reference_ms=reference,m3_start_floor_ms=25)
+    base=f'full_idle{reference}'
+    assert frequency_pair_views(cfg,0)==(base,'full_idle_candidate')
+    assert frequency_pair_views(cfg,1)==('full_idle_candidate',base)
+    for label,value in ((base,reference/1000),('full_idle_candidate',candidate/1000)):
         child=copy.deepcopy(cfg);configure_frequency_variant(child,label)
         assert child['m3_timing']['minimum_low_idle_seconds']==value
         assert child['m3_three_frequency'] and child['m3_start_floor_ms']==25
@@ -176,14 +179,16 @@ def test_idle_threshold_is_forwarded_to_actual_model_worker(tmp_path):
         assert '--prepare-environments' in command
         return 0
     args=['probe','--acceptance-group','m3','--low-full','--three-frequency',
-          '--full-frequency-pair','--idle-min-ms','100','--task-indices','4','--start-floor-ms','25']
+          '--full-frequency-pair','--idle-min-ms','50','--idle-reference-ms','100',
+          '--task-indices','2','--start-floor-ms','25']
     with patch('sys.argv',args),patch.object(run_m4,'load_config',return_value=cfg), \
          patch('perceptbudget.three_frequency.transition_costs',return_value=transitions), \
          patch('perceptbudget.three_frequency.preflight'),patch('perceptbudget.clock_access.authorize'), \
          patch('scripts.profile_clock_screen.monitored_worker',side_effect=stop_before_model):
         with pytest.raises(RuntimeError,match='test stopped before model load'):run_m4.main()
     worker=next(c for c in calls if '--worker' in c)
-    assert worker[worker.index('--idle-min-ms')+1]=='100'
+    assert worker[worker.index('--idle-min-ms')+1]=='50'
+    assert worker[worker.index('--idle-reference-ms')+1]=='100'
     assert '--full-frequency-pair' in worker and '--three-frequency' in worker
 
 
