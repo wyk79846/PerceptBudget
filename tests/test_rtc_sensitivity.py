@@ -44,6 +44,7 @@ def test_bootstrap_comparison_accepts_all_five_trials(tmp_path):
     request=dict(observation_raw_state=[0.],model_state=[0.],actions_raw=[[0.]],actions=[[0.]],rtc_solver_inputs={'noise':[[1.]]})
     for i,label in enumerate(variants()):
         run=tmp_path/str(i);(run/'rtc').mkdir(parents=True)
+        (run/'run.json').write_text(json.dumps({'config_snapshot':{'candidate_q':[5]}}))
         (run/'rtc/q5_requests.json').write_text(json.dumps([request]))
         episodes.append(dict(suite='libero_10',task_id=3,run=str(run),view=label,initial={'initial_hashes':{'state':'same'}}))
     result=audit_paired_bootstraps(episodes)

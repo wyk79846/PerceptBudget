@@ -67,9 +67,10 @@ def build_ledger(episode, requests, *, max_gap_seconds=.3, forbid_hot_fast=False
 
 
 def write_run_ledger(run, *, forbid_hot_fast=False):
+    from perceptbudget.m4_acceptance import request_path
     run=Path(run)
     episode=json.loads((run/'summary.json').read_text())['episode']
-    requests=json.loads((run/'rtc/q5_requests.json').read_text())
+    requests=json.loads(request_path(run).read_text())
     ledger=build_ledger(episode,requests,forbid_hot_fast=forbid_hot_fast)
     (run/'service_continue_ledger.json').write_text(json.dumps(ledger,indent=2)+'\n')
     return dict(path=str(run/'service_continue_ledger.json'),totals=ledger['totals'],partition_verified=True)

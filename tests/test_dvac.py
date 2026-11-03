@@ -229,7 +229,8 @@ def test_resident_dedup_pair_has_two_coverage_policies_and_one_model(capsys,abla
 
 @pytest.mark.parametrize('changed',[None,'noise','actions_raw','actions','model_state','observation_raw_state','initial'])
 @pytest.mark.parametrize('count',[2,3])
-def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path,changed,count):
+@pytest.mark.parametrize('execution_q',[5,30])
+def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path,changed,count,execution_q):
     import copy
     from perceptbudget.device_quality import audit_paired_bootstraps
     episodes=[]
@@ -237,13 +238,14 @@ def test_bootstrap_pair_rejects_any_starting_input_or_output_difference(tmp_path
         observation_raw_state=[0.]*8,rtc_solver_inputs={'noise':[[0.]*32]*2})
     for i in range(count):
         run=tmp_path/str(i);(run/'rtc').mkdir(parents=True)
+        (run/'run.json').write_text(json.dumps({'config_snapshot':{'candidate_q':[execution_q]}}))
         q=copy.deepcopy(request);hashes={'initial_sim_state_sha256':'physics','initial_frames_sha256':'pixels','initial_raw_state_sha256':'state'}
         if i==count-1 and changed:
             if changed=='initial':hashes['initial_sim_state_sha256']='different'
             elif changed=='noise':q['rtc_solver_inputs']['noise'][0][0]=1e-7
             elif changed in ('actions_raw','actions'):q[changed][0][0]=1e-7
             else:q[changed][0]=1e-7
-        (run/'rtc/q5_requests.json').write_text(json.dumps([q]))
+        (run/'rtc'/f'q{execution_q}_requests.json').write_text(json.dumps([q]))
         episodes.append(dict(suite='libero_10',task_id=1,run=str(run),initial={'initial_hashes':hashes}))
     result=audit_paired_bootstraps(episodes)
     assert result['passed']==(changed is None)

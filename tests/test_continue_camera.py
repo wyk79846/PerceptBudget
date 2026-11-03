@@ -94,7 +94,7 @@ def test_capture_pair_keeps_clock_state_and_model_configuration_identical():
         assert all(child[k] == cfg[k] for k in cfg)
 
 
-def test_pair_cli_has_two_episodes_one_model_and_cannot_change_q30(monkeypatch,capsys):
+def test_pair_cli_has_two_episodes_one_model(monkeypatch,capsys):
     import json
     import sys
     from scripts import run_m4
@@ -105,7 +105,18 @@ def test_pair_cli_has_two_episodes_one_model_and_cannot_change_q30(monkeypatch,c
     plan=json.loads(capsys.readouterr().out)
     assert plan['episodes'] == 2 and plan['model_loads'] == 1
     assert plan['continue_overhead_pair'] and plan['Fast'] == 'disabled'
-    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','q30','--lean-continue','--dry-run'])
-    with pytest.raises(SystemExit) as exc:
-        run_m4.main()
-    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize('capture_flags,enabled',[([],True),(['--lean-continue'],True),(['--full-capture'],False)])
+def test_q30_capture_is_enabled_by_default_and_old_behavior_can_be_reproduced(monkeypatch,capsys,capture_flags,enabled):
+    import json
+    import sys
+    from scripts import run_m4
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','q30',
+        '--task-indices','0','--continue-overhead-pair','--dry-run',*capture_flags])
+    assert run_m4.main() == 0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['lean_continue'] is enabled
+    assert plan['tasks']==[['libero_spatial',0]] and plan['episodes']==2
+    assert plan['compute_profiles']==['baseline'] and plan['Full'] and plan['Fast']=='disabled'
+    assert not plan['low_full'] and not plan['three_frequency']

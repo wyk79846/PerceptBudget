@@ -34,3 +34,15 @@ def test_missing_samples_and_uncommitted_drain():
     assert ledger['total_energy_j'] is None
     assert not ledger['totals']['Recovery Fast']['complete']
     assert ledger['partition_verified']
+
+
+def test_saved_q30_ledger_reads_the_q30_request_file(tmp_path):
+    import json
+    from perceptbudget.service_ledger import write_run_ledger
+    (tmp_path/'rtc').mkdir()
+    (tmp_path/'run.json').write_text(json.dumps({'config_snapshot':{'candidate_q':[30]}}))
+    (tmp_path/'summary.json').write_text(json.dumps({'episode':episode()}))
+    (tmp_path/'rtc/q30_requests.json').write_text(json.dumps(requests()))
+    result=write_run_ledger(tmp_path)
+    assert result['partition_verified']
+    assert result['totals']['Continue']['covered_energy_j']==pytest.approx(20.)

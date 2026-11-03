@@ -45,19 +45,20 @@ def test_drain_stops_energy_at_low_endpoint_not_later_restoration(monkeypatch):
     monitor.stop.assert_called_once()
 
 
-@pytest.mark.parametrize('groups',[('full_high','full_low'),('full_two','full_three')])
-def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups):
+@pytest.mark.parametrize('groups,q',[(('full_high','full_low'),5),(('full_two','full_three'),5),(('full_capture','lean_continue'),30)])
+def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups,q):
     import json
     from perceptbudget.full_frequency_pairs import summarize_pairs
     episodes=[]
     for group in groups:
         run=tmp_path/group;(run/'rtc').mkdir(parents=True)
+        (run/'run.json').write_text(json.dumps({'config_snapshot':{'candidate_q':[q]}}))
         episode=dict(real_seconds=4.,steps=76,power={'total_energy_mj':10000},
             including_drain_power={'total_energy_mj':18000},
             terminal_low={'power':{'total_energy_mj':6000},'task_plus_inference_power':{'total_energy_mj':12000}},
             commits=[{'prediction_id':0,'commit_step':0},{'prediction_id':1,'commit_step':76}])
         (run/'summary.json').write_text(json.dumps({'episode':episode}))
-        (run/'rtc/q5_requests.json').write_text(json.dumps([{'prediction_id':i} for i in (0,1)]))
+        (run/'rtc'/f'q{q}_requests.json').write_text(json.dumps([{'prediction_id':i} for i in (0,1)]))
         episodes.append(dict(run=str(run),suite='libero_spatial',task_id=0,view=group,outcome='success',steps=76))
     report=summarize_pairs(episodes,tmp_path,groups=groups)
     assert report['groups']==list(groups)

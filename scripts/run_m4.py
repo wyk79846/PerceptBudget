@@ -24,8 +24,12 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--three-frequency',action='store_true',help='Opt-in306MHz Continue; medium Full first, high fallback; requires --low-full')
-    parser.add_argument('--lean-continue',action='store_true',help='M3 only: skip camera rendering in Continue and save request frames only')
-    parser.add_argument('--continue-overhead-pair',action='store_true',help='Resident same-policy pair: original capture versus lean Continue; q30 unchanged')
+    capture_options=parser.add_mutually_exclusive_group()
+    capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
+        help='Skip idle camera rendering and save request frames only; default for new q30 runs')
+    capture_options.add_argument('--full-capture',dest='lean_continue',action='store_false',
+        help='Retain original per-step camera/recording behavior for reproduction')
+    parser.add_argument('--continue-overhead-pair',action='store_true',help='Resident same-policy pair: original capture versus lean Continue, for M3 or q30')
     parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,
         help='Three-state startup-point floor: permit at most25ms intra-tick clock acknowledgement before inference')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
@@ -44,8 +48,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
-    if (args.lean_continue or args.continue_overhead_pair) and (args.acceptance_group!='m3' or args.full_frequency_pair or args.rtc_delay_sensitivity):
-        parser.error('Continue capture requires --acceptance-group m3, without other pair/sensitivity modes')
+    if (args.lean_continue is not None or args.continue_overhead_pair) and (args.acceptance_group not in ('m3','q30') or args.full_frequency_pair or args.rtc_delay_sensitivity):
+        parser.error('Continue capture requires --acceptance-group m3 or q30, without other pair/sensitivity modes')
     if args.start_floor_ms and not args.three_frequency:
         parser.error('--start-floor-ms requires --three-frequency')
     if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.rtc_delay_sensitivity or args.frequency_reference_run):
@@ -71,15 +75,15 @@ def main():
     if args.fast_selective416 and (not args.fast_reserve_full or args.full_only):parser.error('--fast-selective416 requires --fast-advance without --full-only')
     if args.fast_key_phases and (not args.fast_reserve_full or args.fast_selective416 or args.full_only):parser.error('--fast-key-phases requires --fast-advance with320 Fast')
     if args.full_only and args.acceptance_group!='m3_fast':parser.error('--full-only requires m3_fast')
-    if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Three-task screen is for the M3 candidate')
-    if args.task_indices and (args.acceptance_group not in ('m3','m3_fast') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
-        parser.error('Explicit indices require M3, default first-tasks and unique indices')
+    if args.first_tasks!=12 and args.acceptance_group not in ('m3','m3_fast','q30'):parser.error('Three-task screen requires an M3 or q30 candidate')
+    if args.task_indices and (args.acceptance_group not in ('m3','m3_fast','q30') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
+        parser.error('Explicit indices require M3 or q30, default first-tasks and unique indices')
     if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
     cfg['m3_start_floor_ms']=args.start_floor_ms
-    cfg['m4_lean_continue']=args.lean_continue
+    cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group=='q30'
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
@@ -114,6 +118,7 @@ def main():
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
             cfg.update(m4_enabled=False,m3_hold_high_clocks=True)
+            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
         if args.acceptance_group in ('m3','m3_fast'):
             from perceptbudget.m4_acceptance import configure_m3,configure_m3_fast
             (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
@@ -156,7 +161,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            three_frequency=args.three_frequency,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=args.lean_continue,continue_overhead_pair=args.continue_overhead_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if args.full_frequency_pair or args.continue_overhead_pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            three_frequency=args.three_frequency,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if args.full_frequency_pair or args.continue_overhead_pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -241,7 +246,8 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
-            if args.lean_continue:command.append('--lean-continue')
+            if cfg['m4_lean_continue']:command.append('--lean-continue')
+            elif args.lean_continue is False:command.append('--full-capture')
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')
             if args.start_floor_ms:command.extend(['--start-floor-ms',str(args.start_floor_ms)])
             if args.full_frequency_pair:command.append('--full-frequency-pair')

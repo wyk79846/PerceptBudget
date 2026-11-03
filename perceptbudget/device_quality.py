@@ -58,7 +58,8 @@ def audit_paired_bootstraps(episodes):
         pair=[e for e in episodes if e['suite']==suite and e['task_id']==tid]
         if len(pair)<2:
             raise ValueError('Require at least two resident episodes per task')
-        requests=[json.loads((Path(e['run'])/'rtc/q5_requests.json').read_text())[0] for e in pair]
+        from perceptbudget.m4_acceptance import request_path
+        requests=[json.loads(request_path(Path(e['run'])).read_text())[0] for e in pair]
         for i in range(1,len(pair)):
             checks={'initial_hashes_equal':pair[0]['initial']['initial_hashes']==pair[i]['initial']['initial_hashes']}
             for field in ('observation_raw_state','model_state','actions_raw','actions'):

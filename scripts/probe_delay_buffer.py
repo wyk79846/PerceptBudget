@@ -801,11 +801,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             terminal_low = None
             try:
                 if config.get('m4_common_low_tail_seconds') and status != 'invalid':
-                    if scheduler is None or scheduler.clocks is None:
+                    endpoint_clocks = scheduler.clocks if scheduler is not None else fixed_clocks
+                    if endpoint_clocks is None:
                         raise RuntimeError('Common LOW endpoint requires runtime clocks')
                     executor.shutdown(wait=True)
                     from perceptbudget.terminal_energy import settle_low
-                    terminal_low = settle_low(scheduler.clocks, seconds=config['m4_common_low_tail_seconds'])
+                    terminal_low = settle_low(endpoint_clocks, seconds=config['m4_common_low_tail_seconds'])
             finally:
                 try:
                     if scheduler is not None:

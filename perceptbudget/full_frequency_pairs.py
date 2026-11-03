@@ -14,7 +14,8 @@ def summarize_pairs(episodes, directory, *, groups=('full_high','full_low'), ste
         run=Path(e['run'])
         v=json.loads((run/'summary.json').read_text())['episode']
         tail=v['terminal_low']
-        requests=json.loads((run/'rtc/q5_requests.json').read_text())
+        from perceptbudget.m4_acceptance import request_path
+        requests=json.loads(request_path(run).read_text())
         rows.append(dict(suite=e['suite'],task_id=e['task_id'],group=e['view'],
             outcome=e['outcome'],steps=e['steps'],task_seconds=v['real_seconds'],
             task_j=v['power']['total_energy_mj']/1000,
