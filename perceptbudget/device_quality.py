@@ -18,12 +18,14 @@ def camera_view_for_condition(condition):
         if condition not in variants():raise ValueError('Unknown sensitivity view')
         return 'full'
     return 'full' if condition in ('full_capture', 'lean_continue', 'full_high', 'full_low', 'full_two', 'full_three',
-                                  'full_three_strict','full_three_start25','ordinary_full','ordinary_fast') else condition
+                                  'full_three_strict','full_three_start25','ordinary_full','ordinary_fast',
+                                  'full_three_medium','full_three_energy') else condition
 
 
 def frequency_pair_views(config, task_index):
     """Rotate paired policies; capture pairs keep the same clock policy in both."""
     labels=(('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
+            ('full_three_medium','full_three_energy') if config.get('m3_full_energy') else
             ('full_capture','lean_continue') if config.get('m4_continue_overhead_pair') else
             ('full_three_strict','full_three_start25') if config.get('m3_start_floor_ms') else
             ('full_two','full_three') if config.get('m3_three_frequency') else ('full_high','full_low'))
@@ -32,7 +34,11 @@ def frequency_pair_views(config, task_index):
 
 def configure_frequency_variant(config, view):
     """Select clock/capture variants without changing model geometry or RTC rules."""
-    if view in ('ordinary_full','ordinary_fast'):
+    if view in ('full_three_medium','full_three_energy'):
+        if not config.get('m3_full_energy'):raise ValueError('Full energy pair requires its opt-in')
+        config['m3_full_energy']=view=='full_three_energy'
+        if view=='full_three_medium':config['m4_policy_revision']='not_applicable_original_m3'
+    elif view in ('ordinary_full','ordinary_fast'):
         if not config.get('m3_ordinary_fast_pair'):raise ValueError('Ordinary Fast pair is not enabled')
         config['m3_ordinary_fast']=view=='ordinary_fast'
     elif view in ('full_capture','lean_continue'):

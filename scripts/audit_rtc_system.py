@@ -16,6 +16,13 @@ def latest_commit_at_step(commits, step):
                key=lambda c:(c['commit_step'],c['commit_monotonic'],c['prediction_id']))
 
 
+def phase_active_at_decision(phase,timing,events):
+    # A copied clock-recovery plan may be submitted on a later control step.
+    steps=[e['step'] for e in events if e['event']=='m3_decision'
+           and e.get('decision_monotonic')==timing.get('decision_monotonic')]
+    return bool(steps) and phase['completed_step']<=min(steps)<phase['stop_step']
+
+
 def decode_raw(raw,stats,profile=None):
     import numpy as np
     if profile=='lerobot_h50_quantiles_v044':
@@ -461,10 +468,30 @@ def audit(run):
                             check('three_frequency_candidate_feasibility',
                                 abs(row['latest_start']-latest)<1e-8 and row['feasible']==(latest>=now-1e-9),pid)
                         expected=candidates[0] if candidates[0]['feasible'] else candidates[1]
+                        policy='medium_first_v1'
+                        if cfg.get('m3_full_energy'):
+                            from perceptbudget.full_energy import audit_record,POLICY
+                            policy=POLICY;energy=f.get('energy',{})
+                            check('full_energy_original_trigger',f.get('baseline_selected')==expected
+                                  and t.get('energy_prepare_anchor',{}).get('latest_start')==expected['latest_start'],pid)
+                            if energy:
+                                check('full_energy_feasibility_bound',len(energy['candidates'])==len(candidates)
+                                    and all(e['profile']==c['profile'] and e['feasible']==c['feasible']
+                                            for e,c in zip(energy['candidates'],candidates)),pid)
+                                errors=audit_record(energy,cfg['m3_full_energy_costs'],current_profile=t['current_profile'],
+                                    minimum_idle=cfg['m3_timing']['minimum_low_idle_seconds'])
+                                check('full_energy_calibration_and_segments',not errors,(pid,errors))
+                                check('full_energy_common_window',energy['window_start']==t['decision_monotonic']
+                                      and abs(energy['window_end']-(t['decision_monotonic']+
+                                          t['admitted_remaining_actions']*t['estimated_control_period_seconds']))<1e-8
+                                      and energy.get('window_basis')=='current_admitted_buffer',pid)
+                                if energy['selected']:
+                                    expected=next(c for c in candidates if c['profile']==energy['profile'])
+                            check('full_energy_choice_present',bool(energy),pid)
                         check('three_frequency_medium_first',f['selected']==expected
                             and request.get('m4_compute_profile')==expected['profile']
                             and request.get('m3_full_frequency')==expected['profile']
-                            and request.get('m3_three_frequency_policy')=='medium_first_v1'
+                            and request.get('m3_three_frequency_policy')==policy
                             and abs(t['service_seconds']-expected['service_seconds'])<1e-8,pid)
                 if cfg.get('m3_low_full') and not cfg.get('m3_three_frequency'):
                     profile=request.get('m4_compute_profile')
@@ -548,7 +575,8 @@ def audit(run):
                         phases=absolute_intervals(source.get('actions',[]),source.get('observation_step',0),EventConfig(**cfg.get('m3_events',{})))
                         check('m3_refresh_phase_provenance',bool(response) and bool(matched)
                             and all(phase.get(k)==response.get(k) for k in response)
-                            and phase['completed_step']==matched[0]['commit_step']<=origin<phase['stop_step']
+                            and phase['completed_step']==matched[0]['commit_step']
+                            and phase_active_at_decision(phase,d,events)
                             and any(p['end_observed'] and p['start_step']==phase['start_step']
                                 and p['stop_step']==phase['stop_step'] for p in phases),pid)
                     check('m3_refresh_phase_suppression',all(covered_by_phase(e,phase)
@@ -632,6 +660,9 @@ def audit(run):
                     if first_start<expected_start:expected_constraint='first_refresh'
                     expected_start=min(expected_start,first_start)
                 if d.get('rtc_latest_submit_step') is not None or d.get('first_refresh_cap'):
+                    anchor=d.get('energy_prepare_anchor')
+                    if cfg.get('m3_full_energy') and anchor and anchor['latest_start']<expected_start-1e-9:
+                        expected_start=anchor['latest_start'];expected_constraint='full_energy_fixed_prepare'
                     check('m3_start_constraint',d['start_constraint']==expected_constraint,pid)
                 if d.get('fast_reserve_full') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
                     expected_start-=math.ceil((d['fast_full_reserve_service_seconds']+d['margin_seconds'])/d['estimated_control_period_seconds']-1e-9)*d['estimated_control_period_seconds']

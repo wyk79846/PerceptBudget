@@ -71,6 +71,8 @@ def extract(run):
             raise ValueError('Failed audit: '+str(run/name))
     episode = record['episode']
     requests = json.loads(request_path(run).read_text())
+    if any(q.get('m3_fast_choice',{}).get('mode','Full')!='Full' for q in requests):
+        raise ValueError('Full/Continue cost extraction cannot include Fast requests')
     clocks = []
     lines = (run/'rtc/runtime_clocks.jsonl').read_text().splitlines()
     if 'RESTORED' not in lines:
@@ -129,6 +131,8 @@ def extract(run):
             if event['command_monotonic'] < endpoint:
                 transitions.append(dict(from_profile=previous, profile=event['profile'],
                     milliseconds=1000*(event['observed_match_monotonic']-event['command_monotonic']),
+                    switch_window_energy_j=energy(event['command_monotonic'],event['observed_match_monotonic']),
+                    during_task=event['command_monotonic']<episode['stop_monotonic'],
                     run=str(run), separate_energy_j=None,
                     energy_scope='Already included in Full service or Continue; do not charge twice'))
             previous = event['profile']

@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--three-frequency',action='store_true',help='Opt-in306MHz Continue; medium Full first, high fallback; requires --low-full')
+    parser.add_argument('--full-energy',action='store_true',help='At the original Full preparation trigger, compare complete service and remaining Continue energy for HIGH/MID')
     parser.add_argument('--ordinary-fast',action='store_true',help='Replace one ordinary Full with selective320 Fast; keep Full schedule/frequency, then require Full')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     capture_options=parser.add_mutually_exclusive_group()
@@ -51,6 +52,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.full_energy and (not args.three_frequency or args.acceptance_group!='m3' or args.ordinary_fast or args.continue_overhead_pair):
+        parser.error('--full-energy requires three-frequency M3, without Fast or capture changes')
     if args.ordinary_fast and (not args.three_frequency or args.acceptance_group!='m3' or args.full_frequency_pair or args.continue_overhead_pair):
         parser.error('--ordinary-fast requires the three-frequency M3 path, without other paired policies')
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
@@ -90,6 +93,7 @@ def main():
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
+    cfg['m3_full_energy']=args.full_energy
     cfg['m3_start_floor_ms']=args.start_floor_ms
     cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group in ('m3','q30')
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
@@ -155,6 +159,10 @@ def main():
         cfg.update(m3_ordinary_fast=True,m3_ordinary_fast_context=True,m3_ordinary_fast_pair=args.ordinary_fast_pair,
             m2_fast_no_state=True,m4_fast_prompt_capacity=20,m4_policy_revision=POLICY)
         cfg['ordinary_fast_costs']=fast_costs(m4['ordinary_fast_cost_source'],cfg)
+    if args.full_energy:
+        from perceptbudget.full_energy import load_costs as energy_costs,POLICY as ENERGY_POLICY
+        cfg.update(m3_full_energy=True,m3_full_energy_costs=energy_costs(m4['full_energy_cost_source'],cfg),
+                   m4_policy_revision=ENERGY_POLICY)
     pair=bool(args.full_frequency_pair or args.continue_overhead_pair or args.ordinary_fast_pair)
     if args.ordinary_fast_pair:cfg['m4_common_low_tail_seconds']=3.
     continuation=None
@@ -176,7 +184,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            three_frequency=args.three_frequency,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            three_frequency=args.three_frequency,full_energy=args.full_energy,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -215,7 +223,7 @@ def main():
         if args.full_frequency_pair or args.ordinary_fast_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
-                groups=('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else ('full_three_strict','full_three_start25') if args.start_floor_ms else
+                groups=('full_three_medium','full_three_energy') if args.full_energy else ('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else ('full_three_strict','full_three_start25') if args.start_floor_ms else
                        ('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'
@@ -227,7 +235,7 @@ def main():
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['continue_overhead_pairs']=summarize_pairs(result['episodes'],args.run_dir,
                 groups=('full_capture','lean_continue'),stem='continue_overhead_pairs')
-        result.update(mode=('ordinary_fast_pair' if args.ordinary_fast_pair else 'ordinary_fast') if args.ordinary_fast else 'm3_three_frequency' if args.three_frequency else ('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
+        result.update(mode='full_energy' if args.full_energy else ('ordinary_fast_pair' if args.ordinary_fast_pair else 'ordinary_fast') if args.ordinary_fast else 'm3_three_frequency' if args.three_frequency else ('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
     from perceptbudget.clock_access import authorize
@@ -261,6 +269,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
+            if args.full_energy:command.append('--full-energy')
             if args.ordinary_fast:command.append('--ordinary-fast')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if cfg['m4_lean_continue']:command.append('--lean-continue')

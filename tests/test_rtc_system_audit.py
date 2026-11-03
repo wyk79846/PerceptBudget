@@ -4,6 +4,17 @@ import pytest
 from scripts.audit_rtc_system import audit,decode_raw
 
 
+def test_phase_provenance_uses_decision_before_clock_acknowledgement():
+    from scripts.audit_rtc_system import phase_active_at_decision
+    phase=dict(completed_step=86,stop_step=104)
+    timing=dict(decision_monotonic=10.)
+    events=[dict(event='m3_decision',step=103,decision_monotonic=10.,clock_wait=True),
+            dict(event='m3_decision',step=104,decision_monotonic=10.,start_now=True)]
+    assert phase_active_at_decision(phase,timing,events)
+    assert not phase_active_at_decision(phase,timing,events[1:])
+    assert not phase_active_at_decision(phase,timing,[])
+
+
 def fixture(tmp_path):
     (tmp_path/'rtc').mkdir()
     stats={'state':{'q01':[-1.]*8,'q99':[1.]*8},'actions':{'q01':[-1.]*7,'q99':[1.]*7}}
