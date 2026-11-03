@@ -32,3 +32,11 @@ def test_bootstrap_is_separate_from_guided_full_service_and_source_profile():
     cells=aggregate(rows)
     assert len(cells)==3
     assert sorted(c['mean_request_energy_j'] for c in cells if c['mode']=='Full')==[8.,9.]
+
+
+def test_continue_after_high_and_medium_full_are_not_mixed():
+    rows=[dict(mode='Continue',profile='deep_idle',from_profile='deep_idle',
+        history='under_0.2s',after_full_profile=source,run='a',seconds=1.,energy_j=j)
+        for source,j in [('baseline',12.),('gpu_emc',9.)]]
+    cells=aggregate(rows)
+    assert len(cells)==2 and sorted(c['mean_power_w'] for c in cells)==[9.,12.]

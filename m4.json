@@ -34,5 +34,6 @@
   "absolute_service_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T034454.820208Z-absolute-energy-recovery-b5a59320/summary.json",
   "preferred_hot_energy_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T040346.605365Z-energy-repeat-session-5d9441e9/energy_review.json",
   "wait_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T045545.990701Z-wait-cost-extraction-1a16a71e/summary.json",
+  "lean_runtime_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T051602.787683Z-lean-cost-refresh-f26690e7/cost_table.json",
   "directional_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T051938.446649Z-m4-directional-transitions-ba4c1014/m4_transitions.json"
 }

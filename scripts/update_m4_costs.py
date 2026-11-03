@@ -42,12 +42,13 @@ def continue_segments(start, stop, clocks, ready_times):
 def aggregate(rows):
     groups = defaultdict(list)
     for row in rows:
-        groups[row['mode'], row['profile'], row['from_profile'], row['history']].append(row)
+        groups[row['mode'], row['profile'], row['from_profile'], row['history'],
+               row.get('after_full_profile', 'unspecified')].append(row)
     cells = []
     for key, group in sorted(groups.items()):
         seconds = sum(r['seconds'] for r in group)
         energy = sum(r['energy_j'] for r in group)
-        cells.append(dict(zip(('mode', 'profile', 'from_profile', 'history'), key),
+        cells.append(dict(zip(('mode', 'profile', 'from_profile', 'history', 'after_full_profile'), key),
             observations=len(group), episodes=len({r['run'] for r in group}),
             total_seconds=seconds, total_energy_j=energy, mean_power_w=energy/seconds,
             mean_seconds=seconds/len(group),
@@ -97,7 +98,10 @@ def extract(run):
             continue
         if window['activity'] == 'Continue':
             for left, right, profile, age in continue_segments(a, b, clocks, ready):
+                prior_full=max((q for q in requests if q['ready_monotonic']<=left+1e-9),
+                               key=lambda q:q['ready_monotonic'], default=None)
                 rows.append(dict(mode='Continue', profile=profile, from_profile=profile,
+                    after_full_profile=prior_full.get('m4_compute_profile','baseline') if prior_full else 'none',
                     history=age, seconds=right-left, energy_j=energy(left, right),
                     start_monotonic=left, stop_monotonic=right, run=str(run)))
         else:
@@ -170,6 +174,7 @@ def main():
         switch_energy='Included in observed service/Continue windows; no separate switch-energy estimate',
         latency_scope='Observed complete service to commit/ready; small-sample means, not a new tail-latency calibration',
         wait_scope='History-dependent transient power during execution; not a steady idle or railgate claim',
+        response_tail='Continue is conditioned on preceding Full frequency as well as elapsed quiet time; power-response tails remain in the measured whole-window sum',
         sources=list(map(str, args.source_runs)), runtime_defaults_changed=False)
     _write_json_atomically(run/'cost_table.json', result)
     for name, values in (('cost_table', cells), ('episode_rows', tasks), ('switch_timings', transitions)):
