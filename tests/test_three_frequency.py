@@ -232,3 +232,88 @@ def test_start_point_pair_changes_only_dispatch_option(capsys):
     assert plan['episodes']==2 and plan['model_loads']==1 and plan['start_floor_ms']==25
     assert plan['eta_ms']==25
     launch.assert_not_called()
+
+
+def ordinary_costs():
+    return dict(cells={p:dict(hold_power_w=8.,modes={
+        'Full':dict(mean_seconds=.5,mean_energy_j=11.),
+        'Fast':dict(mean_seconds=.3,mean_energy_j=7.)}) for p in ('baseline','gpu_emc')})
+
+
+def test_ordinary_fast_keeps_the_full_schedule_and_phase_rules():
+    a=ThreeFullRuntime(config())
+    b=ThreeFullRuntime(dict(config(),m3_ordinary_fast=True,ordinary_fast_costs=ordinary_costs(),
+        m3_phase_refresh=True,m3_first_refresh_step=30))
+    # Use the same event/first-refresh settings in the comparison.
+    a.phase_refresh=True;a.first_refresh_step=30
+    for runtime in (a,b):
+        runtime.clocks=SimpleNamespace(profile='deep_idle',pending=None,last_low=9.,poll=lambda:None)
+        runtime.fast_delays={'baseline':6,'gpu_emc':8}
+        actions=[[1.,0.,0.,0.,0.,0.,-1.]]*50
+        runtime.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=9.,actions=actions),
+                          dict(commit_step=0,commit_monotonic=9.5))
+    queue={i:(x,0,0,i) for i,x in enumerate(actions)}
+    args=dict(now=10.,step=10,queue=queue,rows=[],inflight=False,rtc_delay_steps=10)
+    reference=a.decide(**args);candidate=b.decide(**args)
+    assert candidate['m3_fast_formula']['mode']=='Fast'
+    assert {k:v for k,v in candidate.items() if k!='m3_fast_formula'}==reference
+    b.ordinary_previous='Fast'
+    assert b.decide(**args)['m3_fast_formula']['mode']=='Full'
+    b.ordinary_previous='Full'
+    b.events=[dict(kind='gripper_close',target_step=30)]
+    critical=b.decide(**args)
+    assert critical['reason']=='action_event' and critical['m3_fast_formula']['mode']=='Full'
+
+
+def test_fast_service_cannot_replace_full_duration_samples():
+    import copy
+    r=ThreeFullRuntime(dict(config(),m3_ordinary_fast=True,ordinary_fast_costs=ordinary_costs()))
+    original=copy.deepcopy((r.times.samples,r.times.recovery_samples,r.low_histories))
+    request=dict(prediction_id=1,observation_step=10,observation_monotonic=1.,
+        actions=[[0.,0.,0.,0.,0.,0.,-1.]]*50,m3_fast_choice=dict(mode='Fast'),
+        m4_compute_profile='gpu_emc',m3_timing=dict(deadline=3.,critical_step=None,reason='buffer',history='hot',
+            low_full_formula=dict(selected=dict(history='short'))))
+    r.committed(request,dict(commit_step=16,commit_monotonic=1.3))
+    assert (r.times.samples,r.times.recovery_samples,r.low_histories)==original
+    assert r.ordinary_previous=='Fast' and r.chunks[1]['context_mode']=='Fast'
+
+
+def test_cheaper_fast_request_can_still_lose_on_the_common_window():
+    from perceptbudget.ordinary_fast import choose
+    d=dict(decision_monotonic=1.,deadline=1.525,margin_seconds=.025,latest_start=1.,
+        compute_profile='baseline',service_seconds=.5,rtc_delay_steps=10,
+        estimated_control_period_seconds=.05,reason='buffer',deadline_already_unreachable=False,
+        start_constraint='service_deadline')
+    costs=ordinary_costs();costs['cells']['baseline']['hold_power_w']=10.
+    costs['cells']['baseline']['modes']['Fast'].update(mean_energy_j=9.5,mean_seconds=.1)
+    row=choose(d,step=30,previous_mode='Full',phases=[],events=[],costs=costs,fast_delay=5)
+    assert row['mode']=='Full' and row['estimated_saving_j']<0
+    assert row['candidates'][1]['service_energy_j']<row['candidates'][0]['service_energy_j']
+
+
+def test_active_key_phase_and_slower_fast_delay_keep_full():
+    from perceptbudget.ordinary_fast import choose
+    d=dict(decision_monotonic=1.,deadline=2.,margin_seconds=.025,latest_start=1.4,
+        compute_profile='gpu_emc',service_seconds=.5,rtc_delay_steps=10,
+        estimated_control_period_seconds=.05,reason='buffer',deadline_already_unreachable=False,
+        start_constraint='service_deadline')
+    args=dict(step=30,previous_mode='Full',events=[],costs=ordinary_costs(),fast_delay=5)
+    assert choose(d,phases=[dict(start_step=28,stop_step=35)],**args)['mode']=='Full'
+    assert choose(d,phases=[],**dict(args,fast_delay=11))['mode']=='Full'
+
+
+def test_clock_preparation_rechecks_current_phase_without_moving_full_plan():
+    r=ThreeFullRuntime(dict(config(),m3_ordinary_fast=True,ordinary_fast_costs=ordinary_costs()))
+    d=dict(decision_monotonic=1.,deadline=2.,margin_seconds=.025,latest_start=1.4,
+        compute_profile='gpu_emc',service_seconds=.5,rtc_delay_steps=10,
+        estimated_control_period_seconds=.05,reason='buffer',deadline_already_unreachable=False,
+        start_constraint='service_deadline',start_now=True)
+    r.recovering_plan=dict(d)
+    r.recovery_target='gpu_emc'
+    r.clocks=SimpleNamespace(profile='gpu_emc',pending=None,poll=lambda:None)
+    r.ordinary_step=31;r.ordinary_phases=[dict(start_step=31,stop_step=40)]
+    r.fast_delays={'gpu_emc':5}
+    result=r.control_clocks(dict(d),inflight=False)
+    assert result['m3_fast_formula']['mode']=='Full'
+    assert result['m3_fast_formula']['observation_step']==31
+    assert all(result[k]==v for k,v in d.items())

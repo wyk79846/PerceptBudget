@@ -320,10 +320,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             raise ValueError('Split delay requires explicit expert-recompute RTC experiment')
         mode_delay_queues={mode:DelayQueue(config['rtc_initial_delays_by_mode'][mode],config['rtc_delay_buffer_size'])
                            for mode in config.get('m2_delay_modes', ('full','expert_only'))}
-    if config.get('m4_enabled') and mode_delay_queues is not None:
+    if (config.get('m4_enabled') or config.get('m3_ordinary_fast_context')) and mode_delay_queues is not None:
         mode_delay_queues={key:DelayQueue(value,config['rtc_delay_buffer_size']) for key,value in config['rtc_initial_delays_by_compute'].items()}
     frequency_delay_queues=None
-    if config.get('m3_low_full') and config.get('m3_low_full_policy')!='original_m3_slot_v3':
+    if config.get('m3_low_full') and config.get('m3_low_full_policy')!='original_m3_slot_v3' and not config.get('m3_ordinary_fast_context'):
         if delay_queue is None or mode_delay_queues is not None:
             raise ValueError('Low Full requires paper RTC without visual mode delay queues')
         frequency_delay_queues=dict(baseline=delay_queue,
@@ -396,13 +396,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if capture is not None:
             request['camera_acquisition'] = acquisition
             request['input_frame_step'] = step
-        if config.get('m3_fast_enabled'):
+        if config.get('m3_fast_enabled') or config.get('m3_ordinary_fast_context'):
             decision=dict(scheduler.plan or {})
             formula=decision.get('m3_fast_formula')
-            if step and formula is None:raise RuntimeError('Full/Fast request has no evaluated deadline/energy plan')
+            if step and formula is None and (config.get('m3_fast_enabled') or config.get('m3_ordinary_fast')):raise RuntimeError('Full/Fast request has no evaluated deadline/energy plan')
             request['m3_fast_decision']=decision
             request['m3_fast_choice']=(dict(mode=formula['mode'],reason=formula['reason'])
-                if step else dict(mode='Full',reason='bootstrap_full'))
+                if step and formula else dict(mode='Full',reason='bootstrap_full' if not step else 'full_control'))
             rtc_adapter.select_next_mode(request['m3_fast_choice']['mode'])
         if scheduler is not None:
             scheduler.requested(request)
@@ -413,7 +413,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if mode_delay_queues is not None:
             mode=rtc_adapter.context_mode(task['instruction'],step,guided=step>0)
             request['planned_context_mode' if config.get('m2_visual_alternation') else 'planned_kv_mode']=mode
-            delay_key=mode+':'+request['m4_compute_profile'] if config.get('m4_enabled') else mode
+            delay_key=mode+':'+request['m4_compute_profile'] if config.get('m4_enabled') or config.get('m3_ordinary_fast_context') else mode
             request['planned_delay_key']=delay_key
             selected_delay_queue=mode_delay_queues[delay_key]
         rtc_previous_raw = None
@@ -628,6 +628,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     scheduler.low_delay_steps=frequency_delay_queues['gpu_emc'].estimate
                 if (config.get('m4_enabled') or config.get('m3_fast_enabled')) and mode_delay_queues:
                     rtc_delay=max(q.estimate for q in mode_delay_queues.values())
+                if config.get('m3_ordinary_fast_context'):
+                    rtc_delay=mode_delay_queues['full:baseline'].estimate
+                    scheduler.low_delay_steps=mode_delay_queues['full:gpu_emc'].estimate
+                    scheduler.fast_delays={p:mode_delay_queues['selective320:'+p].estimate for p in ('baseline','gpu_emc')}
                 if config.get('rtc_fixed_delay_estimate') is not None:
                     rtc_delay=config['rtc_fixed_delay_estimate']
                     if frequency_delay_queues is not None:scheduler.low_delay_steps=rtc_delay

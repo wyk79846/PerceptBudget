@@ -18,12 +18,13 @@ def camera_view_for_condition(condition):
         if condition not in variants():raise ValueError('Unknown sensitivity view')
         return 'full'
     return 'full' if condition in ('full_capture', 'lean_continue', 'full_high', 'full_low', 'full_two', 'full_three',
-                                  'full_three_strict','full_three_start25') else condition
+                                  'full_three_strict','full_three_start25','ordinary_full','ordinary_fast') else condition
 
 
 def frequency_pair_views(config, task_index):
     """Rotate paired policies; capture pairs keep the same clock policy in both."""
-    labels=(('full_capture','lean_continue') if config.get('m4_continue_overhead_pair') else
+    labels=(('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
+            ('full_capture','lean_continue') if config.get('m4_continue_overhead_pair') else
             ('full_three_strict','full_three_start25') if config.get('m3_start_floor_ms') else
             ('full_two','full_three') if config.get('m3_three_frequency') else ('full_high','full_low'))
     return labels if task_index%2==0 else labels[::-1]
@@ -31,7 +32,10 @@ def frequency_pair_views(config, task_index):
 
 def configure_frequency_variant(config, view):
     """Select clock/capture variants without changing model geometry or RTC rules."""
-    if view in ('full_capture','lean_continue'):
+    if view in ('ordinary_full','ordinary_fast'):
+        if not config.get('m3_ordinary_fast_pair'):raise ValueError('Ordinary Fast pair is not enabled')
+        config['m3_ordinary_fast']=view=='ordinary_fast'
+    elif view in ('full_capture','lean_continue'):
         if not config.get('m4_continue_overhead_pair'):
             raise ValueError('Continue capture pair requires its explicit opt-in')
         config['m4_lean_continue'] = view == 'lean_continue'
@@ -242,9 +246,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     from perceptbudget.measurement import timed
     from perceptbudget.experiment import create_run, _write_json_atomically
 
-    explicit_visual=bool(config.get('m4_enabled') or config.get('m3_fast_enabled'))
+    explicit_visual=bool(config.get('m4_enabled') or config.get('m3_fast_enabled') or config.get('m3_ordinary_fast_context'))
     dual_visual=visual_comparison or explicit_visual
-    if explicit_visual:visual_fast_mode='selective416' if config.get('m3_fast_selective416') else 'pool2_agent'
+    if explicit_visual:visual_fast_mode='selective320' if config.get('m3_ordinary_fast_context') else 'selective416' if config.get('m3_fast_selective416') else 'pool2_agent'
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
     if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
@@ -256,7 +260,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
-    if visual_fast_mode not in ('wrist','pool2','pool2_agent','selective416'):
+    if visual_fast_mode not in ('wrist','pool2','pool2_agent','selective416','selective320'):
         raise ValueError('Unsupported visual Fast mode')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
@@ -423,7 +427,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if cfg.get('m3_trigger_comparison') and task_plan is not None:
                         cfg['m3_trigger_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
-                if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair'):
+                if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair'):
                     views=frequency_pair_views(cfg,list(task_plan).index((suite,tid)))
                 if cfg.get('m4_rtc_delay_sensitivity'):
                     from perceptbudget.rtc_sensitivity import variants
@@ -510,7 +514,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             raise RuntimeError('Selective416 changed prompt/state tokenization')
                         coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode='selective416',fast_state_enabled=True)
                         lengths=full_lengths+fast_lengths
-                    elif cfg.get('m4_acceptance_group') in ('joint','m3_fast'):
+                    elif cfg.get('m4_acceptance_group') in ('joint','m3_fast') or cfg.get('m3_ordinary_fast_context'):
                         from perceptbudget.m4_acceptance import visual_prefixes
                         lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'])
                     else:
@@ -593,11 +597,18 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     from perceptbudget.m3_low_full import initial_low_delay
                     cfg['m3_low_full_initial_delay']=initial_low_delay(
                         cfg['m3_low_full_costs'],calibration['median_seconds'])
+                if cfg.get('m3_ordinary_fast_context'):
+                    from perceptbudget.deadline_controller import percentile
+                    cfg['rtc_initial_delays_by_compute']={
+                        'full:baseline':cfg['rtc_initial_delay_steps'],
+                        'full:gpu_emc':cfg['m3_low_full_initial_delay'],
+                        **{'selective320:'+p:math.ceil(percentile(c['modes']['Fast']['samples_seconds'])/calibration['median_seconds'])
+                           for p,c in cfg['ordinary_fast_costs']['cells'].items()}}
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)
                     child_cfg = copy.deepcopy(cfg)
-                    if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair'):
+                    if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair'):
                         configure_frequency_variant(child_cfg,view)
                     if cfg.get('m4_rtc_delay_sensitivity'):
                         from perceptbudget.rtc_sensitivity import configure
@@ -762,12 +773,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m4_rtc_delay_sensitivity'):
+            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_rtc_delay_sensitivity'):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 record['comparison_initials_exact']=paired['passed']
-                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair')) and not paired['passed']:
+                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair')) and not paired['passed']:
                     raise RuntimeError('Resident policy comparison requires identical bootstrap inputs and actions')
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     tuple(cfg.get('m3_trigger_variants') or []) in (('events_only','events_and_variance'),('events_only','variance_only')) or

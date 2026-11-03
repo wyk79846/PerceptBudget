@@ -209,10 +209,10 @@ def audit(run):
     history=[] if synchronous else [cfg['rtc_initial_delay_steps']]
     frequency_histories=({'baseline':[cfg['rtc_initial_delay_steps']],
         'gpu_emc':[cfg['m3_low_full_initial_delay']]} if cfg.get('m3_low_full')
-        and cfg.get('m3_low_full_policy')!='original_m3_slot_v3' else None)
+        and cfg.get('m3_low_full_policy')!='original_m3_slot_v3' and not cfg.get('m3_ordinary_fast_context') else None)
     mode_histories=({mode:[cfg['rtc_initial_delays_by_mode'][mode]] for mode in cfg.get('m2_delay_modes', ('full','expert_only'))}
                     if cfg.get('m2_split_delay') else None)
-    if cfg.get('m4_enabled') and mode_histories is not None:
+    if (cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context')) and mode_histories is not None:
         mode_histories={key:[value] for key,value in cfg['rtc_initial_delays_by_compute'].items()}
     service_history=None
     if cfg.get('m3_fast_policy') in ('m3_two_mode_deadline_energy_v2','m3_full_fast_execution_window_v3','m3_service_ledger_fast_advance_v4'):
@@ -262,6 +262,44 @@ def audit(run):
             visual=request.get('context_refresh',{})
             expected_mode=scheduled_visual_mode(pid,cfg.get('m2_visual_fast_mode','wrist'),
                 cfg.get('m2_visual_fast_enabled'),cfg.get('m2_full_per_fast',1))
+            if cfg.get('m3_ordinary_fast_context'):
+                choice=request.get('m3_fast_choice',{})
+                declared=choice.get('mode');decision=request.get('m3_fast_decision',{})
+                expected='Full'
+                if origin and cfg.get('m3_ordinary_fast'):
+                    f=decision['m3_fast_formula'];profile=decision['compute_profile']
+                    c=cfg['ordinary_fast_costs']['cells'][profile]
+                    prior=by_id[pid-1].get('m3_fast_choice',{}).get('mode','Full')
+                    from perceptbudget.action_events import EventConfig,detect_events
+                    from perceptbudget.key_phases import absolute_intervals
+                    source=by_id[previous['prediction_id']];ec=EventConfig(**cfg['m3_events'])
+                    phases=absolute_intervals(source['actions'],source['observation_step'],ec)
+                    active=[p for p in phases if p['start_step']<=origin<p['stop_step']]
+                    forecast=detect_events(source['actions'],ec,start_offset=max(0,previous['commit_step']-source['observation_step']))
+                    near=[dict(e,target_step=source['observation_step']+e['offset']) for e in forecast
+                        if source['observation_step']+e['offset']>=origin and
+                        (source['observation_step']+e['offset']-origin)*decision['estimated_control_period_seconds']<=decision['service_seconds']+decision['margin_seconds']]
+                    ordinary=decision['reason']=='buffer' and not active and not near
+                    check('ordinary_phase_gate',f['ordinary']==ordinary and f['active_phases']==active,pid)
+                    check('ordinary_previous_mode',f['previous_mode']==prior,pid)
+                    check('ordinary_full_schedule_preserved',all(decision[k]==v for k,v in f['full_schedule'].items()),pid)
+                    window=max(0.,decision['deadline']-decision['margin_seconds']-max(decision['decision_monotonic'],decision['latest_start']))
+                    energy=[]
+                    for proposal,mode in zip(f['candidates'],('Full','Fast')):
+                        cell=c['modes'][mode];tail=max(0.,window-cell['mean_seconds'])
+                        total=cell['mean_energy_j']+tail*c['hold_power_w'];energy.append(total)
+                        check('ordinary_same_window_energy',proposal['mode']==mode and abs(proposal['service_energy_j']-cell['mean_energy_j'])<1e-8
+                            and abs(proposal['continue_energy_j']-tail*c['hold_power_w'])<1e-8
+                            and abs(proposal['comparable_window_energy_j']-total)<1e-8,pid)
+                    estimate=max(mode_histories['selective320:'+profile])
+                    check('ordinary_fast_delay_history',f['fast_delay_steps']==estimate,pid)
+                    allowed=(ordinary and prior!='Fast' and not decision['deadline_already_unreachable']
+                        and estimate<=decision['rtc_delay_steps'] and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds'])
+                    expected='Fast' if allowed and energy[1]<energy[0] else 'Full'
+                    check('ordinary_choice_formula',f['mode']==expected,pid)
+                check('ordinary_explicit_mode',declared==expected,pid)
+                check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
+                expected_mode='selective320' if declared=='Fast' else 'full'
             if cfg.get('m3_fast_enabled'):
                 choice=request.get('m3_fast_choice',{})
                 declared=choice.get('mode')
@@ -567,6 +605,8 @@ def audit(run):
                             if cfg.get('m3_low_full_rtc_policy')=='per_profile_v2'
                             else max(max(v) for v in frequency_histories.values()))
                         if cfg.get('rtc_fixed_delay_estimate') is not None:delay=cfg['rtc_fixed_delay_estimate']
+                    if cfg.get('m3_ordinary_fast_context'):
+                        delay=max(mode_histories['full:'+request['m4_compute_profile']])
                     latest_submit=old['observation_step']+cfg['H']-delay
                     changing=(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else d['path']=='low_continue_recovery'
                     guard=int(changing)+math.ceil(d['margin_seconds']/period-1e-9)
@@ -641,8 +681,8 @@ def audit(run):
                     check('planned_delay_mode_matches_execution',request.get('planned_context_mode' if cfg.get('m2_visual_alternation') else 'planned_kv_mode')==mode,pid)
                     check('delay_history_mode',g.get('delay_history_mode')==mode
                         and g.get('delay_estimate_mode')=='mode_history_max',pid)
-                    key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') else mode
-                    if cfg.get('m4_enabled'):
+                    key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context') else mode
+                    if cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context'):
                         check('m4_compute_delay_key',request.get('planned_delay_key')==key and g.get('delay_history_key')==key,pid)
                     expected_history=mode_histories.get(key,[])
                 check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
@@ -679,7 +719,7 @@ def audit(run):
                 frequency_histories[profile]=(frequency_histories[profile]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
             if mode_histories is not None:
                 mode=request['context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute']['mode']
-                key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') else mode
+                key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context') else mode
                 mode_histories[key]=(mode_histories[key]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
         if service_history is not None and origin:
             timing=request['m3_timing'];mode=request['m3_fast_choice']['mode']

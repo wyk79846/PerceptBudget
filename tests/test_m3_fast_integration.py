@@ -24,6 +24,7 @@ def test_fast_setup_preserves_m3_deadline_and_device_rules():
 def test_fast_completion_cannot_shrink_full_service_history():
     runtime=object.__new__(DeadlineRuntime)
     runtime.chunks={};runtime.dvac_enabled=False;runtime.action_events_enabled=False
+    runtime.phase_refresh=False
     runtime.merge_gap=None;runtime.open_probe=None;runtime.event_coverage_mode='event_only'
     runtime.settings={'margin_updates':False};runtime.fast_selection=True
     runtime.times=FullServiceTimes({k:[.5] for k in ('hot','short','long')})

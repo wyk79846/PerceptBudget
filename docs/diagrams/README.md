@@ -2,6 +2,8 @@
 
 2026-11-03。此图描述当前 Full＋Continue 主流程，以及准备增加的 Fast 选择规则；本次仅绘图，没有修改运行逻辑。
 
+后续已实现独立实验开关，并完成成本补测与三任务配对，见[普通阶段Fast接入结果](../FAST_ORDINARY_INTEGRATION_20261103.md)。原Full＋Continue基线保留；下图是接入前的设计记录。
+
 ![整体机制](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T071408.773361Z-mechanism-flow-e5437335/mechanism.png>)
 
 [矢量图 SVG](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T071408.773361Z-mechanism-flow-e5437335/mechanism.svg>) · [可编辑 Mermaid 源文件](perceptbudget_mechanism_fast_plan.mmd) · [导出脚本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T071408.773361Z-mechanism-flow-e5437335/render_flow.py>)

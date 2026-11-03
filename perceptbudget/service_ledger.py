@@ -23,7 +23,7 @@ def build_ledger(episode, requests, *, max_gap_seconds=.3, forbid_hot_fast=False
         a=max(start,a);b=min(stop,b)
         if b<a:raise ValueError('Invalid service interval')
         label=('Recovery ' if recovery else 'Hot ')+mode
-        if request.get('m3_full_frequency')=='gpu_emc':label='Low Full'
+        if request.get('m3_full_frequency')=='gpu_emc':label='Low '+mode
         services.append((a,b,label,request['prediction_id']))
     windows=[];cursor=start
     for a,b,label,pid in sorted(services):

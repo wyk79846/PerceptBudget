@@ -31,6 +31,58 @@ class TuneOnce:
         return result
 
 
+def clock_costs(infer, records, torch, run, write):
+    """Hot request/hold costs after clock acknowledgement; one resident model."""
+    from perceptbudget.three_frequency import ThreeClocks
+    from perceptbudget.power import PowerMonitor
+    from perceptbudget.device_clock_screen import energy_window,frequency_check
+    clock=ThreeClocks(run);monitor=PowerMonitor(.02,max_gap_seconds=.1)
+    result=dict(status='running',cells={},rows=[],restored=False,
+        scope='Fixed-input request energy after frequency acknowledgement; shared entry cost cancels in the same-time same-frequency mode comparison')
+    entered=False
+    try:
+        clock.__enter__();entered=True;monitor.start();time.sleep(.2)
+        for profile in ('baseline','gpu_emc'):
+            if clock.profile!=profile:
+                clock.switch(profile)
+                end=time.monotonic()+3.
+                while clock.pending is not None:
+                    clock.poll()
+                    if time.monotonic()>end:raise TimeoutError('Cost probe clock acknowledgement')
+                    time.sleep(.002)
+            for label in ('Full','DualFast'):infer(label,records[0])
+            time.sleep(.3);monitor.sample();a=time.monotonic()
+            time.sleep(.6);b=time.monotonic();monitor.sample()
+            hold=energy_window(monitor,a,b)
+            if hold['energy_j'] is None:raise RuntimeError('Hold power coverage incomplete')
+            cell=dict(hold_power_w=hold['energy_j']/(b-a),modes={})
+            for label in ('Full','DualFast','DualFast','Full'):
+                times=[];time.sleep(.1);monitor.sample();a=time.monotonic()
+                for record in records:
+                    tick=time.monotonic();infer(label,record);times.append(time.monotonic()-tick)
+                b=time.monotonic();time.sleep(.1);monitor.sample()
+                energy=energy_window(monitor,a,b)
+                if energy['energy_j'] is None:raise RuntimeError('Request power coverage incomplete')
+                actual=frequency_check(clock.lease.events,profile,a,b)
+                if not actual['matches']:raise RuntimeError('Cost frequency mismatch')
+                mode='Full' if label=='Full' else 'Fast'
+                row=dict(profile=profile,mode=mode,samples_seconds=times,energy_j=energy['energy_j'],count=len(times),actual=actual)
+                result['rows'].append(row)
+                sample=cell['modes'].setdefault(mode,dict(samples_seconds=[],energy_j=0.,count=0))
+                sample['samples_seconds'].extend(times);sample['energy_j']+=energy['energy_j'];sample['count']+=len(times)
+                print('fast_clock_cost='+json.dumps(row),flush=True)
+            for sample in cell['modes'].values():
+                sample['mean_seconds']=sum(sample['samples_seconds'])/sample['count']
+                sample['mean_energy_j']=sample['energy_j']/sample['count']
+            result['cells'][profile]=cell;write(run/'ordinary_fast_costs.json',result)
+        result['status']='completed'
+    finally:
+        if entered:clock.close();result['restored']=True
+        monitor.stop();write(run/'clock_cost_power.json',[asdict(r) for r in monitor.readings])
+        write(run/'ordinary_fast_costs.json',result)
+    return result
+
+
 def kernel_checks(torch,np):
     from perceptbudget.selective_pool import compact,compact_both
     from perceptbudget.selective_pool_cuda import load
@@ -149,12 +201,14 @@ def main():
     parser.add_argument('--rollout-only',action='store_true',help='Skip fixed-input comparisons and power blocks; run paired tasks with one model')
     parser.add_argument('--rollout-tasks',nargs='+',help='Explicit suite:task pairs, e.g. libero_spatial:0 libero_object:0 libero_goal:3')
     parser.add_argument('--author-audit-only',action='store_true',help='Compare current RTC graph with author function on saved inputs; no power blocks or rollout')
+    parser.add_argument('--clock-costs',action='store_true',help='Measure Full/DualFast at HIGH and MID for ordinary-stage substitution')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
     if args.rollout_pair and args.environment_cache is None:parser.error('--rollout-pair needs --environment-cache')
     if (args.rollout_only or args.rollout_tasks) and not args.rollout_pair:parser.error('Rollout options require --rollout-pair')
     if args.author_audit_only and (args.kernel_only or args.rollout_pair):parser.error('Author audit is a standalone fixed-input comparison')
+    if args.clock_costs and (args.kernel_only or args.rollout_pair or args.author_audit_only):parser.error('Clock costs are a standalone measurement')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically as write
@@ -215,7 +269,7 @@ def main():
             tuning=TuneOnce(model._pipe.gemm);model._pipe.gemm=tuning
             enable(model);base._infer_actions(model,records[0]['snapshot'],task['instruction'],cfg['H'],{})
             models={'Full':model}
-            peers=[('DualFast','selective320')] if args.rollout_only or args.author_audit_only else [('OldFast','pool2_agent'),('DualFast','selective320')]
+            peers=[('DualFast','selective320')] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast','selective320')]
             for label,kind in peers:
                 frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=20)
                 peer=VLAModel(frontend,'torch');enable(peer)
@@ -269,6 +323,10 @@ def main():
                 s=record['request']['rtc_solver_inputs']
                 raw,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'])
                 return raw.detach().cpu().numpy().copy()
+            if args.clock_costs:
+                result['clock_costs']=clock_costs(infer,records,torch,run,write)
+                result.update(status='completed',clocks_changed=True,production_default_changed=False)
+                return 0
             if args.author_audit_only:
                 from perceptbudget.rtc_author_source import sample_author_source
                 from perceptbudget.openpi_reference import sample_original_rtc

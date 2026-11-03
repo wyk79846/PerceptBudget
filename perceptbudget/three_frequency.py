@@ -112,6 +112,10 @@ class ThreeClocks(RuntimeClocks):
 class ThreeFullRuntime(LowFullRuntime):
     def __init__(self,config):
         super().__init__(config)
+        self.ordinary_fast=bool(config.get('m3_ordinary_fast'))
+        self.ordinary_costs=config.get('ordinary_fast_costs')
+        self.ordinary_previous='Full'
+        self.fast_delays={}
         self.transitions=config['m3_three_frequency_transitions']
         self.start_floor_seconds=config.get('m3_start_floor_ms',0)/1000
         if self.start_floor_seconds not in (0.,.025):raise ValueError('Startup floor supports0 or25ms')
@@ -122,6 +126,9 @@ class ThreeFullRuntime(LowFullRuntime):
         self.clocks.__enter__()
 
     def decide(self,*,now,step,queue,rows,inflight,rtc_delay_steps=None):
+        self.ordinary_step=step
+        item_now=queue.get(step)
+        self.ordinary_phases=self.chunks[item_now[1]].get('low_full_phases',[]) if item_now else []
         d=DeadlineRuntime.decide(self,now=now,step=step,queue=queue,rows=rows,
                                  inflight=inflight,rtc_delay_steps=rtc_delay_steps)
         if inflight or self.recovering_plan is not None or self.clocks.pending is not None:
@@ -169,10 +176,41 @@ class ThreeFullRuntime(LowFullRuntime):
             rtc_submit_guard_steps=guard if medium_chosen else d['rtc_submit_guard_steps'],
             deadline_already_unreachable=now+chosen['service_seconds']+self.margin.seconds>d['deadline'])
         if startup is not None:d['start_point_rounding']=startup
+        if self.ordinary_fast:
+            from perceptbudget.ordinary_fast import choose
+            d['m3_fast_formula']=choose(d,step=step,previous_mode=self.ordinary_previous,
+                phases=self.chunks[item[1]].get('low_full_phases',[]),events=self.events,
+                costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']])
         self.plan=d
         return d
 
+    def committed(self,request,commit):
+        # Fast may change future action events, but cannot shorten Full budgets.
+        fast=request.get('m3_fast_choice',{}).get('mode')=='Fast'
+        if fast:
+            samples={k:list(v) for k,v in self.times.samples.items()}
+            recovery=list(self.times.recovery_samples)
+            low={k:list(v) for k,v in self.low_histories.items()}
+        super().committed(request,commit)
+        if fast:
+            for k,v in samples.items():self.times.samples[k].clear();self.times.samples[k].extend(v)
+            self.times.recovery_samples.clear();self.times.recovery_samples.extend(recovery)
+            for k,v in low.items():self.low_histories[k].clear();self.low_histories[k].extend(v)
+        self.ordinary_previous=request.get('m3_fast_choice',{}).get('mode','Full')
+
     def control_clocks(self,decision,*,inflight):
+        decision=self._control_full_clocks(decision,inflight=inflight)
+        if self.ordinary_fast and not inflight and decision.get('start_now'):
+            # Preparation can consume a control step. Recheck only the mode;
+            # never move the retained Full start/deadline/frequency plan.
+            from perceptbudget.ordinary_fast import choose
+            decision['m3_fast_formula']=choose(decision,step=self.ordinary_step,
+                previous_mode=self.ordinary_previous,phases=self.ordinary_phases,events=self.events,
+                costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']])
+            self.plan=decision
+        return decision
+
+    def _control_full_clocks(self,decision,*,inflight):
         self.clocks.poll()
         if inflight:
             if self.clocks.pending is not None or self.clocks.profile!=self.active_profile or self.clocks.profile=='deep_idle':
