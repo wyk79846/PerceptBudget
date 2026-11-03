@@ -275,7 +275,21 @@ class ThreeFullRuntime(LowFullRuntime):
                 return dict(decision,start_now=False,clock_wait=True)
             return decision
         wait=decision['latest_start']-decision['decision_monotonic']
-        if self.clocks.profile!='deep_idle' and wait>=self.settings['minimum_low_idle_seconds']:
+        threshold=self.settings['minimum_low_idle_seconds']
+        # A newly admitted short gap must not introduce an unbudgeted clock-ACK
+        # control tick. That would advance Full and can change MID/HIGH choice.
+        # Existing >=200ms behavior is retained; shorter gaps reuse an already
+        # planned compute-frequency change. History bins stay at0.2/1s.
+        short=threshold<.2 and wait<.2
+        budgeted_change=decision.get('compute_profile') not in (None,self.clocks.profile)
+        can_lower=not short or budgeted_change
+        decision['continue_idle_gate']=dict(predicted_gap_seconds=wait,minimum_gap_seconds=threshold,
+            current_profile=self.clocks.profile,short_gap=short,
+            planned_compute_profile=decision.get('compute_profile'),
+            existing_clock_change=budgeted_change,
+            reason='existing_clock_budget' if short and can_lower else 'extra_ack_tick_not_budgeted' if short else 'original_idle_rule',
+            downclock=self.clocks.profile!='deep_idle' and wait>=threshold and can_lower)
+        if decision['continue_idle_gate']['downclock']:
             self.clocks.switch('deep_idle')
         return decision
 

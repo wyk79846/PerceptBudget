@@ -113,6 +113,80 @@ def test_wait_can_enter_low_but_short_gap_does_not_switch():
     r.control_clocks(d,inflight=False);assert changes==['deep_idle']
 
 
+def test_shorter_idle_threshold_only_changes_continue_entry():
+    original=config()
+    candidate=config()
+    candidate['m3_timing']['minimum_low_idle_seconds']=.1
+    for cfg,expected in ((original,[]),(candidate,['deep_idle'])):
+        r=ThreeFullRuntime(cfg);changes=[]
+        r.clocks=SimpleNamespace(profile='baseline',pending=None,poll=lambda:None,switch=changes.append)
+        d=dict(start_now=False,latest_start=10.15,decision_monotonic=10.,
+               service_seconds=.8,deadline=11.,margin_seconds=.025,rtc_delay_steps=14,
+               compute_profile='gpu_emc')
+        out=r.control_clocks(d,inflight=False)
+        assert changes==expected
+        assert (out['latest_start'],out['deadline'],out['service_seconds'],out['rtc_delay_steps'])==(10.15,11.,.8,14)
+        assert out['continue_idle_gate']['downclock']==bool(expected)
+        r.clocks.profile='gpu_emc';r.active_profile='gpu_emc';changes.clear()
+        r.control_clocks(dict(d),inflight=True)
+        assert changes==[]
+        r.control_clocks(dict(d,start_now=True,compute_profile='gpu_emc'),inflight=False)
+        assert changes==[]
+
+
+def test_short_idle_does_not_add_a_new_ack_tick_to_an_unchanged_compute_profile():
+    cfg=config();cfg['m3_timing']['minimum_low_idle_seconds']=.1
+    r=ThreeFullRuntime(cfg);changes=[]
+    r.clocks=SimpleNamespace(profile='gpu_emc',pending=None,poll=lambda:None,switch=changes.append)
+    d=dict(start_now=False,latest_start=10.18,decision_monotonic=10.,compute_profile='gpu_emc')
+    out=r.control_clocks(d,inflight=False)
+    assert changes==[] and out['continue_idle_gate']['reason']=='extra_ack_tick_not_budgeted'
+    assert out['latest_start']==10.18
+    out=r.control_clocks(dict(d,latest_start=10.3),inflight=False)
+    assert changes==['deep_idle'] and out['continue_idle_gate']['reason']=='original_idle_rule'
+
+
+def test_idle_threshold_pair_keeps_clock_policy_and_history_bins():
+    import copy
+    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant,camera_view_for_condition
+    cfg=dict(config(),m3_three_frequency=True,m3_idle_min_ms=100,m3_start_floor_ms=25)
+    assert frequency_pair_views(cfg,0)==('full_idle200','full_idle_candidate')
+    assert frequency_pair_views(cfg,1)==('full_idle_candidate','full_idle200')
+    for label,value in (('full_idle200',.2),('full_idle_candidate',.1)):
+        child=copy.deepcopy(cfg);configure_frequency_variant(child,label)
+        assert child['m3_timing']['minimum_low_idle_seconds']==value
+        assert child['m3_three_frequency'] and child['m3_start_floor_ms']==25
+        assert camera_view_for_condition(label)=='full'
+        runtime=ThreeFullRuntime(child)
+        assert runtime.settings['minimum_low_idle_seconds']==value
+        assert runtime.low_histories.keys()==ThreeFullRuntime(config()).low_histories.keys()
+    assert cfg['m3_timing']['minimum_low_idle_seconds']==.2
+
+
+def test_idle_threshold_is_forwarded_to_actual_model_worker(tmp_path):
+    from scripts import run_m4
+    cfg=run_m4.load_config(repo_root=run_m4.ROOT)
+    from perceptbudget.three_frequency import transition_costs
+    transitions=transition_costs(cfg['output_root'])
+    cfg['output_root']=str(tmp_path)
+    calls=[]
+    def stop_before_model(command,*unused,**kwargs):
+        calls.append(command)
+        if '--worker' in command:raise RuntimeError('test stopped before model load')
+        assert '--prepare-environments' in command
+        return 0
+    args=['probe','--acceptance-group','m3','--low-full','--three-frequency',
+          '--full-frequency-pair','--idle-min-ms','100','--task-indices','4','--start-floor-ms','25']
+    with patch('sys.argv',args),patch.object(run_m4,'load_config',return_value=cfg), \
+         patch('perceptbudget.three_frequency.transition_costs',return_value=transitions), \
+         patch('perceptbudget.three_frequency.preflight'),patch('perceptbudget.clock_access.authorize'), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=stop_before_model):
+        with pytest.raises(RuntimeError,match='test stopped before model load'):run_m4.main()
+    worker=next(c for c in calls if '--worker' in c)
+    assert worker[worker.index('--idle-min-ms')+1]=='100'
+    assert '--full-frequency-pair' in worker and '--three-frequency' in worker
+
+
 @pytest.mark.parametrize('acknowledged',[True,False])
 def test_startup_wait_can_submit_in_same_tick_or_fall_back_without_changing_budget(acknowledged):
     r=ThreeFullRuntime(dict(config(),m3_start_floor_ms=25));changes=[]

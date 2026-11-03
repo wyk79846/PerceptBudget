@@ -7,7 +7,7 @@ from perceptbudget.experiment import _write_json_atomically
 
 
 def summarize_pairs(episodes, directory, *, groups=('full_high','full_low'), stem='full_frequency_pairs'):
-    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25'),('full_capture','lean_continue'),('ordinary_full','ordinary_fast'),('full_three_medium','full_three_energy')):
+    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25'),('full_capture','lean_continue'),('ordinary_full','ordinary_fast'),('full_three_medium','full_three_energy'),('full_idle200','full_idle_candidate')):
         raise ValueError('Unknown Full policy pair')
     rows=[]
     for e in episodes:
