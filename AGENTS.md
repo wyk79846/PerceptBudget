@@ -46,6 +46,8 @@
 
 # 项目协作与当前状态
 
+> 2026-11-03最新用户决定暂不加入Fast，停止Object0单例失败分析，主线继续现有Full＋Continue。Fast实验代码保留且默认关闭，后续主线不传--ordinary-fast/--ordinary-fast-pair。单例诊断改动已收起到4ab03ef5产出，生产代码未因诊断更改。当前只核对关键点＋关键操作区间：区间服务于阶段刷新/等待去重，刷新截止仍取关键点；边界不完整退回点事件，开合相反的新事件仍需处理。未经新指示不继续单例归因或Fast扩测。
+
 > 2026-11-03用户批准在现有三频Full+Continue的普通阶段加入Fast，保持Full启动时间/中频优先/首次30/关键等待/阶段去重。新增ordinary_fast.py及run_m4 --ordinary-fast [--ordinary-fast-pair]，仅该路径启用selective320/no-state；legacy m3_fast_enabled保持False，不用旧Fast排除窗口或改刷新时间。Fast后必须Full，耗时样本不进Full预算，RTC按模式×计算频率各自历史，规划仍取Full历史。成本b4a3c6ec同模型24请求/6每条件，高Full474ms11.276J/Fast339ms7.932J；中Full677ms10.539J/Fast488ms7.402J，热固定输入/频率确认后，不冒充恢复或闭环总成本。配对11d83a4d一模型一专家6回合：Spatial0 Full75/候选76均成功69.47→67.84J；Object0 Full145成功110.52J/候选280超时218.62J；Goal3均成功174→172步127.80→128.22J。原3/3、候选2/3，共同成功两例仅省0.61%，不替换原基线。6实际Fast均中频、后次Full，6065系统检查/三对初态首raw精确/频率/恢复通过，零欠载。增加提交前阶段复核，保存23请求离线同模式，另单测；该补充不移动Full计划。service_ledger修正中频Fast标签为Low Fast，不混记Low Full。FlashRT未改；备份archive/before-three-frequency-ordinary-fast-20261103，报告docs/FAST_ORDINARY_INTEGRATION_20261103.md，日志/tmp/perceptbudget-ordinary-fast-pair.log；本轮测试均结束且1173/3199/1497.6恢复。继续能耗主线，勿把负例隐藏或自动开12任务扩测。
 
 > 2026-11-03用户追问RTC是否严格实现，已只做算法/已存记录核查，未改生产RTC或重开调度优化。依据2506.07339v2 Algorithm1和PI real-time-chunking-kinetix 9296f31源码。新增profile_selective_fast --author-audit-only（与rollout互斥），当前H50/N5真实专家、Object0两份保存输入×Full/Fast，d7/10,s30四组，原作者采样体经Torch桥接与eager/stepgraph每步input/velocity/clean/error/VJP/output和最终raw全0，重复全0，run97f5d0f9。只证明同一当前专家/KV/噪声下采样实现，不是作者JAX/XLA/真机/原checkpoint复现。8近期真实回合前缀/实际裁剪/来源审计通过；H50CPU非线性8组最终max2.4e-7，run5f0d563d。早先479817d0严格要求CPU零误差导致未完成，已标invalid，不能计为通过。延迟估计偶差1步仍有，Full/Fast输入和动态时序为项目扩展，不能据采样0差声称整套异步绝无bug，也不能凭接触处失败判RTC公式错。见docs/M4_STABILITY_DIAGNOSIS_20261103.md新增节。此后继续用户授权的能耗主线；如需再深入执行层要明确具体小实验，不自动加入新的等待规则。
