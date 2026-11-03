@@ -1,3 +1,5 @@
+> 2026-11-03用户澄清25ms针对启动点：30.2→30，不是推理时长取整。误解实现已撤回，archive/misread-duration-rounding-20261103保存原代码/数据，--short-wait-ms废弃。正确新开关--start-floor-ms25（有空格）：启动点提前量<=25ms时，本步最多等25ms频率确认，确认即本步提交；超时仍用原异步流程，不停止任务。原推理/安全预算、RTC/delay/实际裁剪不改，原基线保留。配对标签full_three_strict/full_three_start25，先Spatial0两回合1model，146项检查及旧6回合审计通过，新GPU未跑。见三档文档末节命令。
+
 > 2026-11-03的25ms小测完成：M4/20261103T033811.439691Z-acceptance-m3-1ce5d972，Spatial0严格/25ms两组均成功（76/77步），6.3775/6.5608s，任务＋在途推理74.588/75.470J（+1.18%）、共同终态99.248/100.166J（+0.92%）。首刷新27→28，取整许可12.098ms，推理均4次/中频2次，实际短等0次，不能称已验证实际暂停。初态/bootstrap精确、系统/频率/恢复及功率重积分通过；暂保留实验开关默认0，不替换基线。原始复核short_wait_review.json，细节见三档文档末节。
 
 > 2026-11-03新增独立--short-wait-ms25试验（命令参数有空格）：三档完整预算含原25ms余量，整数步向下取整缺口<=25ms才允许对应放宽，RTC delay/实际裁剪/H50硬界不改。边界未就绪时暂停动作最多25ms，超限记录outcome=short_wait_limit_exceeded并结束该回合，正常在途推理收尾/恢复，不补零掩盖。和--full-frequency-pair并用比较full_three_strict/full_three_wait25，先Spatial0两回合1model；无开关仍原三档/双档。152项检查及旧6回合重审通过，新GPU未跑。备份archive/before-short-wait-25ms-20261103，命令/口径见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md末节。

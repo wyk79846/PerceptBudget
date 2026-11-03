@@ -328,11 +328,6 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     missed_triggers, underflows = [], []
     from perceptbudget.critical_wait import PhaseWait
     phase_wait = PhaseWait()
-    short_wait_seconds=config.get('m3_short_wait_ms',0)/1000
-    short_waits=[]
-    if short_wait_seconds and (short_wait_seconds!=.025 or not config.get('m3_three_frequency')
-                               or not config.get('m3_critical_wait')):
-        raise ValueError('25ms short wait requires three-frequency critical-wait trial')
     prefix_rejection = None
     if config.get('m3_critical_wait') and config.get('controlled_delay_steps') is not None:
         raise ValueError('Critical wait requires actual async completion, not controlled step delay')
@@ -671,35 +666,16 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     current_request['critical_wait_review'] = review
                 else:
                     review = dict(wait=False)
-                if short_wait_seconds and step not in queue:
-                    review=dict(wait=True,reason='buffer_empty')
                 if review['wait']:
                     waiting_request = current_request
                     wait_started = time.monotonic()
                     target = wait_target(waiting_request)
                     # No env.step and no queue consumption while waiting. Poll
                     # through harvest so the normal request watchdog stays live.
-                    if short_wait_seconds:
-                        from perceptbudget.critical_wait import bounded_result_wait
-                        hold=bounded_result_wait(future,short_wait_seconds)
-                        hold.update(step=step,prediction_id=waiting_request['prediction_id'],
-                            reason=review['reason'],target_step=target)
-                        short_waits.append(hold)
-                        waiting_request.setdefault('short_waits',[]).append(hold)
-                        base._trace(stream,'short_wait',**hold)
-                        if hold['budget_exceeded']:
-                            # End the experimental episode before env.step;
-                            # drain the running inference and restore as usual.
-                            # Do not hide an overrun behind a zero-action step.
-                            status='short_wait_limit_exceeded'
-                            frames.pop()
-                            break
+                    while future is not None:
                         harvest(step)
-                    else:
-                        while future is not None:
-                            harvest(step)
-                            if future is not None:
-                                time.sleep(.002)
+                        if future is not None:
+                            time.sleep(.002)
                     critical_wait_seconds = time.monotonic() - wait_started
                     phase_wait.complete(review)
                     waiting_request['critical_wait'] = dict(step=step, target_step=target,
@@ -860,9 +836,6 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         'real_seconds': stop - start,
         'critical_wait_count': sum(r.get('critical_wait_seconds', 0) > 0 for r in rows),
         'critical_wait_seconds': sum(r.get('critical_wait_seconds', 0) for r in rows),
-        **({'short_wait_limit_seconds':short_wait_seconds,'short_waits':short_waits,
-            'short_wait_budget_exceeded':any(w['budget_exceeded'] for w in short_waits)}
-           if short_wait_seconds else {}),
         'start_monotonic': start,
         'stop_monotonic': stop,
         'inference_busy_seconds': busy,

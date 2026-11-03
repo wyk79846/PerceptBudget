@@ -45,8 +45,7 @@ def test_drain_stops_energy_at_low_endpoint_not_later_restoration(monkeypatch):
     monitor.stop.assert_called_once()
 
 
-@pytest.mark.parametrize('groups',[('full_high','full_low'),('full_two','full_three'),
-                                   ('full_three_strict','full_three_wait25')])
+@pytest.mark.parametrize('groups',[('full_high','full_low'),('full_two','full_three')])
 def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups):
     import json
     from perceptbudget.full_frequency_pairs import summarize_pairs
@@ -67,8 +66,7 @@ def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups):
     assert all(r['task_plus_inference_j']+r['terminal_low_j']==r['common_endpoint_j'] for r in rows)
 
 
-@pytest.mark.parametrize('condition', ['full_high','full_low','full_two','full_three',
-                                     'full_three_strict','full_three_wait25'])
+@pytest.mark.parametrize('condition', ['full_high','full_low','full_two','full_three'])
 def test_frequency_groups_use_both_images_during_warmup_and_episode(condition):
     from perceptbudget.device_quality import camera_view_for_condition
     from perceptbudget.device_profile import select_images

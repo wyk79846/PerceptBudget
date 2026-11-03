@@ -24,8 +24,8 @@ def main():
     parser.add_argument('--fast-selective416',action='store_true',help='Experimental416 visual tokens with state retained')
     parser.add_argument('--critical-wait-phases',action='store_true',help='With critical wait: one completed wait per finite predicted motion phase')
     parser.add_argument('--three-frequency',action='store_true',help='Opt-in306MHz Continue; medium Full first, high fallback; requires --low-full')
-    parser.add_argument('--short-wait-ms',type=int,choices=(0,25),default=0,
-                        help='Three-state trial: allow fractional rounding with at most25ms paused execution')
+    parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,
+        help='Three-state startup-point floor: permit at most25ms intra-tick clock acknowledgement before inference')
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
     parser.add_argument('--rtc-delay-sensitivity',action='store_true',help='Five resident one-task trials: initial8/9/10/11 plus unguided, one each')
     parser.add_argument('--rtc-delay-reference-run',type=Path,help='Replay a recorded per-task initial RTC delay; keep online updates enabled')
@@ -42,8 +42,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
-    if args.short_wait_ms and (not args.three_frequency or not args.critical_wait):
-        parser.error('--short-wait-ms25 requires --three-frequency and --critical-wait')
+    if args.start_floor_ms and not args.three_frequency:
+        parser.error('--start-floor-ms requires --three-frequency')
     if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.rtc_delay_sensitivity or args.frequency_reference_run):
         parser.error('--three-frequency requires --low-full --acceptance-group m3, without sensitivity or an old frequency-reference batch')
     if args.full_frequency_pair and (not args.low_full or args.acceptance_group!='m3'):
@@ -74,7 +74,7 @@ def main():
     cfg=load_config(repo_root=ROOT);validate(cfg)
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
-    cfg['m3_short_wait_ms']=args.short_wait_ms
+    cfg['m3_start_floor_ms']=args.start_floor_ms
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
         enable_profiles()
@@ -150,7 +150,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            three_frequency=args.three_frequency,short_wait_ms=args.short_wait_ms,full_frequency_pair=args.full_frequency_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if args.full_frequency_pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            three_frequency=args.three_frequency,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if args.full_frequency_pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -189,7 +189,7 @@ def main():
         if args.full_frequency_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
-                groups=('full_three_strict','full_three_wait25') if args.short_wait_ms else
+                groups=('full_three_strict','full_three_start25') if args.start_floor_ms else
                        ('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'
@@ -230,7 +230,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
-            if args.short_wait_ms:command.extend(['--short-wait-ms',str(args.short_wait_ms)])
+            if args.start_floor_ms:command.extend(['--start-floor-ms',str(args.start_floor_ms)])
             if args.full_frequency_pair:command.append('--full-frequency-pair')
             if args.rtc_delay_sensitivity:command.append('--rtc-delay-sensitivity')
             if args.rtc_delay_reference_run:command.extend(['--rtc-delay-reference-run',str(args.rtc_delay_reference_run)])

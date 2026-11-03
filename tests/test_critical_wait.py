@@ -1,34 +1,6 @@
 from perceptbudget.critical_wait import should_wait
 
 
-def test_bounded_wait_returns_immediately_for_completed_prediction():
-    from concurrent.futures import Future
-    from perceptbudget.critical_wait import bounded_result_wait
-    future=Future();future.set_result('actions')
-    row=bounded_result_wait(future,.025)
-    assert row['ready'] and not row['budget_exceeded']
-    assert row['simulation_frozen'] and not row['queue_consumed']
-
-
-def test_bounded_wait_stops_without_cancelling_or_executing_actions():
-    from concurrent.futures import Future
-    from perceptbudget.critical_wait import bounded_result_wait
-    future=Future()
-    row=bounded_result_wait(future,.025)
-    assert row['budget_exceeded'] and not row['ready']
-    assert row['limit_seconds']==.025
-    assert not future.done() and not future.cancelled()
-
-
-def test_bounded_wait_does_not_hide_worker_failure_as_shortfall():
-    import pytest
-    from concurrent.futures import Future,TimeoutError
-    from perceptbudget.critical_wait import bounded_result_wait
-    future=Future();future.set_exception(TimeoutError('worker failed'))
-    with pytest.raises(TimeoutError,match='worker failed'):
-        bounded_result_wait(future,.025)
-
-
 def test_execute_available_prefix_then_wait_only_at_boundary():
     request = {'m3_timing': {'reason': 'action_event', 'critical_step': 15}}
     assert not should_wait(request, 10)

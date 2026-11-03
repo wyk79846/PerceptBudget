@@ -8,30 +8,30 @@ from perceptbudget.three_frequency import select_full,ThreeFullRuntime
 from perceptbudget.device_clocks import runtime_trace
 
 
-@pytest.mark.parametrize('required,expected',[(.720,.020),(.725,.025),(.726,0.),(.700,0.),(.750,0.)])
-def test_fractional_step_rounding_is_limited_to25ms(required,expected):
-    from perceptbudget.three_frequency import rounding_allowance
-    row=rounding_allowance(required,.07,.025)
-    assert row['allowance_seconds']==pytest.approx(expected)
-    assert row['uses_floor']==(expected>0)
-    assert rounding_allowance(required,.07,0.)['allowance_seconds']==0
+@pytest.mark.parametrize('point,expected',[(30.2,True),(30.3,True),(30.6,False),(30.,True)])
+def test_floor_applies_to_start_point_not_duration(point,expected):
+    from perceptbudget.three_frequency import start_point
+    #74ms per control step:30.2 ->30 is14.8ms early,30.6 is44.4ms.
+    row=start_point(30,10.,10.+(point-30)*.074,.074,.025)
+    assert row['continuous_start_step']==pytest.approx(point)
+    assert row['floor_allowed'] is expected
+    assert row['advance_seconds']==pytest.approx((point-30)*.074)
 
 
-def test_short_wait_preserves_raw_service_margin_and_rtc_hard_limit():
-    d=decision(10.71)
-    # Medium .700s plus unchanged25ms margin: gap over10*70ms is25ms.
-    d.update(estimated_control_period_seconds=.07,margin_seconds=.025)
-    args=dict(medium_seconds=.7,medium_cap=20.,current_profile='gpu_emc',
-              transitions=dict(medium_seconds=.003,high_seconds=.019,high_to_medium_seconds=.018))
-    strict=select_full(d,**args)
-    relaxed=select_full(d,**args,short_wait_seconds=.025)
-    assert strict['selected']['profile']=='baseline'
-    assert relaxed['selected']['profile']=='gpu_emc'
-    assert relaxed['selected']['service_seconds']==.7
-    assert d['margin_seconds']==.025
-    assert relaxed['selected']['rounding']['allowance_seconds']==pytest.approx(.025)
-    limited=select_full(d,**dict(args,medium_cap=9.99),short_wait_seconds=.025)
-    assert limited['selected']['profile']=='baseline'
+@pytest.mark.parametrize('ready_at,expected_end',[(.005,.005),(.1,.025)])
+def test_intra_tick_clock_wait_obeys25ms_without_a_whole_control_step(ready_at,expected_end):
+    from perceptbudget.three_frequency import wait_for_clock
+    timer=SimpleNamespace(now=0.)
+    clocks=SimpleNamespace(pending='gpu_emc')
+    def poll():
+        if timer.now>=ready_at:clocks.pending=None
+    clocks.poll=poll
+    with patch('perceptbudget.three_frequency.time.monotonic',lambda:timer.now), \
+         patch('perceptbudget.three_frequency.time.sleep',lambda dt:setattr(timer,'now',timer.now+dt)):
+        result=wait_for_clock(clocks,.025)
+    assert result['seconds']==pytest.approx(expected_end)
+    assert result['acknowledged']==(ready_at<=.025)
+    assert result['simulation_frozen'] and not result['queue_consumed']
 
 
 def decision(end=12.):
@@ -113,6 +113,35 @@ def test_wait_can_enter_low_but_short_gap_does_not_switch():
     r.control_clocks(d,inflight=False);assert changes==['deep_idle']
 
 
+@pytest.mark.parametrize('acknowledged',[True,False])
+def test_startup_wait_can_submit_in_same_tick_or_fall_back_without_changing_budget(acknowledged):
+    r=ThreeFullRuntime(dict(config(),m3_start_floor_ms=25));changes=[]
+    r.clocks=SimpleNamespace(profile='deep_idle',pending=None,poll=lambda:None,switch=changes.append)
+    d=dict(start_now=True,compute_profile='gpu_emc',service_seconds=.8,margin_seconds=.025,
+           latest_start=10.0148,decision_monotonic=10.,
+           start_point_rounding=dict(floor_allowed=True))
+    def waiting(clock,limit):
+        assert limit==.025
+        if acknowledged:clock.profile='gpu_emc'
+        return dict(acknowledged=acknowledged)
+    with patch('perceptbudget.three_frequency.wait_for_clock',side_effect=waiting) as wait:
+        result=r.control_clocks(d,inflight=False)
+        wait.assert_called_once()
+    assert changes==['gpu_emc'] and result['start_now'] is acknowledged
+    assert r.recovering_plan['service_seconds']==.8 and r.recovering_plan['latest_start']==10.0148
+    assert r.recovering_plan['margin_seconds']==.025
+
+
+def test_outside25ms_prepares_frequency_but_does_not_wait_or_submit_early():
+    r=ThreeFullRuntime(dict(config(),m3_start_floor_ms=25));changes=[]
+    r.clocks=SimpleNamespace(profile='deep_idle',pending=None,poll=lambda:None,switch=changes.append)
+    d=dict(start_now=True,compute_profile='gpu_emc',start_point_rounding=dict(floor_allowed=False))
+    with patch('perceptbudget.three_frequency.wait_for_clock') as wait:
+        assert not r.control_clocks(d,inflight=False)['start_now']
+        wait.assert_not_called()
+    assert changes==['gpu_emc']
+
+
 def test_three_state_runtime_protocol_and_acknowledgement():
     read,write=os.pipe();events=[]
     tokens={b'HIGH':'baseline',b'MID':'gpu_emc',b'IDLE':'deep_idle'}
@@ -184,37 +213,22 @@ def test_three_frequency_pair_plan_is_six_episodes_one_model_without_launch(caps
     launch.assert_not_called()
 
 
-def test_wait_pair_changes_only_short_wait_budget():
-    import copy
-    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant
-    cfg=dict(m3_three_frequency=True,m3_low_full=True,m3_short_wait_ms=25,H=50,N=5,rtc_beta=5)
-    assert frequency_pair_views(cfg,0)==('full_three_strict','full_three_wait25')
-    assert frequency_pair_views(cfg,1)==('full_three_wait25','full_three_strict')
-    a,b=copy.deepcopy(cfg),copy.deepcopy(cfg)
-    configure_frequency_variant(a,'full_three_strict')
-    configure_frequency_variant(b,'full_three_wait25')
-    assert a['m3_short_wait_ms']==0 and b['m3_short_wait_ms']==25
-    assert a['m3_three_frequency'] and b['m3_three_frequency']
-    for key in ('H','N','rtc_beta','m3_low_full'):
-        assert a[key]==b[key]
-
-
-def test_wait_pair_dry_run_is_two_episodes_with_unchanged25ms_margin(capsys):
-    import json
+def test_start_point_pair_changes_only_dispatch_option(capsys):
+    import json,copy
     from scripts.run_m4 import main
+    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant
+    cfg=dict(m3_three_frequency=True,m3_low_full=True,m3_start_floor_ms=25,H=50,N=5)
+    assert frequency_pair_views(cfg,0)==('full_three_strict','full_three_start25')
+    for label,limit in [('full_three_strict',0),('full_three_start25',25)]:
+        c=copy.deepcopy(cfg);configure_frequency_variant(c,label)
+        assert c['m3_three_frequency'] and c['m3_start_floor_ms']==limit
+        assert c['H']==50 and c['N']==5
     args=['probe','--acceptance-group','m3','--low-full','--three-frequency',
-          '--full-frequency-pair','--short-wait-ms','25','--task-indices','0',
-          '--critical-wait','--critical-wait-phases','--first-refresh-step','30',
-          '--phase-refresh','--dry-run']
+          '--full-frequency-pair','--start-floor-ms','25','--task-indices','0',
+          '--critical-wait','--critical-wait-phases','--first-refresh-step','30','--phase-refresh','--dry-run']
     with patch('sys.argv',args),patch('scripts.run_m4.subprocess.run') as launch:
         assert main()==0
     plan=json.loads(capsys.readouterr().out)
-    assert plan['episodes']==2 and plan['model_loads']==1 and plan['short_wait_ms']==25
-    assert plan['eta_ms']==25 and plan['Full'] and plan['Fast']=='disabled'
+    assert plan['episodes']==2 and plan['model_loads']==1 and plan['start_floor_ms']==25
+    assert plan['eta_ms']==25
     launch.assert_not_called()
-
-
-def test_wait_flag_requires_three_frequency_and_critical_boundary():
-    from scripts.run_m4 import main
-    with patch('sys.argv',['probe','--short-wait-ms','25','--dry-run']):
-        with pytest.raises(SystemExit):main()

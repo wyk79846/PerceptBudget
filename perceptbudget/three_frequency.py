@@ -35,22 +35,7 @@ def transition_costs(output_root):
         scope='Measured static readback maxima; control-tick acknowledgement separately reserved')
 
 
-def rounding_allowance(required_seconds, period, limit_seconds):
-    """Permit one fractional-step shortfall, never grant a whole extra step."""
-    if (not all(math.isfinite(x) for x in (required_seconds,period,limit_seconds))
-            or required_seconds<=0 or period<=0 or limit_seconds not in (0.,.025)):
-        raise ValueError('Invalid bounded-rounding budget')
-    lower=math.floor(required_seconds/period+1e-9)
-    upper=math.ceil(required_seconds/period-1e-9)
-    gap=max(0.,required_seconds-lower*period)
-    grant=gap if lower>=1 and upper>lower and gap<=limit_seconds+1e-9 else 0.
-    return dict(required_seconds=required_seconds,period_seconds=period,
-        ceil_steps=upper,floor_steps=lower,shortfall_seconds=gap,
-        limit_seconds=limit_seconds,allowance_seconds=grant,uses_floor=grant>0)
-
-
-def select_full(decision, *, medium_seconds, medium_cap, current_profile, transitions,
-                short_wait_seconds=0., high_cap=None):
+def select_full(decision, *, medium_seconds, medium_cap, current_profile, transitions):
     """Always test medium feasibility first; energy is not a selection criterion."""
     now=decision['decision_monotonic']
     end=decision['deadline']-decision['margin_seconds']
@@ -60,8 +45,7 @@ def select_full(decision, *, medium_seconds, medium_cap, current_profile, transi
     # Compute budgets already include one normal commit/control tick. Reserve
     # one additional tick only when waiting for a clock acknowledgement.
     for profile,compute,cap in [('gpu_emc',medium_seconds,medium_cap),
-                                ('baseline',decision['service_seconds'],
-                                 decision['latest_start'] if high_cap is None else high_cap)]:
+                                ('baseline',decision['service_seconds'],decision['latest_start'])]:
         change=current_profile!=profile
         switch=0. if not change else transitions['high_to_medium_seconds'] if profile=='gpu_emc' and current_profile=='baseline' else transitions['medium_seconds' if profile=='gpu_emc' else 'high_seconds']
         # Existing recovery Full history includes the old high frequency change.
@@ -69,17 +53,44 @@ def select_full(decision, *, medium_seconds, medium_cap, current_profile, transi
         extra=(switch+ack) if profile=='gpu_emc' and change else 0.
         service=compute+extra
         first_cap=(first['latest_start']+(first.get('recovery_ticks',0)-int(change))*ack) if first else end
-        rounding=rounding_allowance(service+decision['margin_seconds'],ack,short_wait_seconds)
-        latest=min(end-service+rounding['allowance_seconds'],cap,first_cap)
+        latest=min(end-service,cap,first_cap)
         rows.append(dict(profile=profile,service_seconds=service,compute_seconds=compute,
             switch_seconds=switch,ack_reserve_seconds=ack if change else 0.,
-            latest_start=latest,rtc_cap=cap,first_cap=first_cap,rounding=rounding,feasible=latest>=now-1e-9))
+            latest_start=latest,rtc_cap=cap,first_cap=first_cap,feasible=latest>=now-1e-9))
     selected=rows[0] if rows[0]['feasible'] else rows[1]
     return dict(policy='medium_first_v1',selected=selected,candidates=rows,
         selection_order=['gpu_emc','baseline'],
         reason='medium_meets_deadline' if selected is rows[0] else
                'high_medium_too_late' if rows[1]['feasible'] else 'high_emergency',
         deadline=decision['deadline'],energy_used_for_selection=False)
+
+
+def start_point(step, now, latest_start, period, limit_seconds):
+    """Round the startup point, never the duration of the required computation."""
+    if not all(math.isfinite(x) for x in (now,latest_start,period,limit_seconds)) or period<=0:
+        raise ValueError('Invalid startup timing')
+    if limit_seconds not in (0.,.025):raise ValueError('Startup floor supports0 or25ms')
+    remaining=latest_start-now
+    fractional=step+remaining/period
+    floor_allowed=remaining<=limit_seconds+1e-9
+    return dict(decision_step=step,continuous_start_step=fractional,
+        advance_seconds=max(0.,remaining),limit_seconds=limit_seconds,
+        floor_allowed=floor_allowed,overdue=remaining<0,
+        requested_rule='start_point_floor_within_limit')
+
+
+def wait_for_clock(clocks, limit_seconds):
+    """Bounded frequency acknowledgement in this control tick; no env.step."""
+    if limit_seconds!=.025:raise ValueError('Startup acknowledgement wait must be25ms')
+    start=time.monotonic();end=start+limit_seconds
+    while True:
+        clocks.poll()
+        now=time.monotonic()
+        if clocks.pending is None or now>=end:break
+        time.sleep(min(.001,end-now))
+    return dict(start_monotonic=start,stop_monotonic=now,seconds=now-start,
+        limit_seconds=limit_seconds,acknowledged=clocks.pending is None,
+        simulation_frozen=True,queue_consumed=False)
 
 
 class ThreeClocks(RuntimeClocks):
@@ -103,8 +114,8 @@ class ThreeFullRuntime(LowFullRuntime):
     def __init__(self,config):
         super().__init__(config)
         self.transitions=config['m3_three_frequency_transitions']
-        self.short_wait_seconds=config.get('m3_short_wait_ms',0)/1000
-        if self.short_wait_seconds not in (0.,.025):raise ValueError('Short wait supports0 or25ms')
+        self.start_floor_seconds=config.get('m3_start_floor_ms',0)/1000
+        if self.start_floor_seconds not in (0.,.025):raise ValueError('Startup floor supports0 or25ms')
         self.recovery_target=None
 
     def start_clocks(self,directory):
@@ -123,12 +134,8 @@ class ThreeFullRuntime(LowFullRuntime):
         submit=self.chunks[item[1]]['origin']+self.horizon-self.low_delay_steps
         cap=now+(submit-step-guard)*period
         medium=max(percentile(list(v),self.settings['service_quantile']) for v in self.low_histories.values())
-        high_cap=(now+(d['rtc_latest_submit_step']-step-d['rtc_submit_guard_steps'])*period
-                  if d.get('rtc_latest_submit_step') is not None else d['deadline'])
         formula=select_full(d,medium_seconds=medium,medium_cap=cap,
-                            current_profile=self.clocks.profile,transitions=self.transitions,
-                            short_wait_seconds=self.short_wait_seconds,
-                            high_cap=high_cap if self.short_wait_seconds else None)
+                            current_profile=self.clocks.profile,transitions=self.transitions)
         chosen=formula['selected']
         # Preserve LowFullRuntime's separate medium measurement history and RTC
         # queue; it uses the old low_full_formula selected.history field.
@@ -136,11 +143,17 @@ class ThreeFullRuntime(LowFullRuntime):
         history='hot' if age<.2 else 'short' if age<1. else 'long'
         medium_chosen=chosen['profile']=='gpu_emc'
         due=chosen['latest_start']-now<period-1e-9
+        startup=None
+        if self.start_floor_seconds:
+            startup=start_point(step,now,chosen['latest_start'],period,self.start_floor_seconds)
+            # When a clock change is needed, start its preparation in the
+            # existing window. Only submit this tick after a timely real ack.
+            # At an already-ready frequency, bound the early submission itself.
+            if self.clocks.profile==chosen['profile']:due=startup['floor_allowed']
         if d.get('first_refresh_cap'):
             d['first_refresh_cap']=dict(d['first_refresh_cap'],latest_start=chosen['first_cap'],
                 recovery_ticks=int(self.clocks.profile!=chosen['profile']))
-        allowance=chosen['rounding']['allowance_seconds']
-        expected_start=d['deadline']-chosen['service_seconds']-self.margin.seconds+allowance
+        expected_start=d['deadline']-chosen['service_seconds']-self.margin.seconds
         constraint='service_deadline'
         chosen_cap=cap if medium_chosen else now+(d['rtc_latest_submit_step']-step-d['rtc_submit_guard_steps'])*period if d.get('rtc_latest_submit_step') is not None else float('inf')
         if chosen_cap<expected_start:expected_start=chosen_cap;constraint='rtc_prefix'
@@ -152,11 +165,11 @@ class ThreeFullRuntime(LowFullRuntime):
             service_seconds=chosen['service_seconds'],
             latest_start=chosen['latest_start'],wait_seconds=0. if due else max(0.,chosen['latest_start']-now),
             start_now=due,path='three_frequency',
-            short_wait_limit_seconds=self.short_wait_seconds,short_wait_allowance_seconds=allowance,
             rtc_delay_steps=self.low_delay_steps if medium_chosen else rtc_delay_steps,
             rtc_latest_submit_step=submit if medium_chosen else d['rtc_latest_submit_step'],
             rtc_submit_guard_steps=guard if medium_chosen else d['rtc_submit_guard_steps'],
-            deadline_already_unreachable=now+chosen['service_seconds']+self.margin.seconds>d['deadline']+allowance)
+            deadline_already_unreachable=now+chosen['service_seconds']+self.margin.seconds>d['deadline'])
+        if startup is not None:d['start_point_rounding']=startup
         self.plan=d
         return d
 
@@ -179,6 +192,13 @@ class ThreeFullRuntime(LowFullRuntime):
                 self.recovering_plan=dict(decision)
                 self.recovery_target=target
                 self.clocks.switch(target)
+                if self.start_floor_seconds and decision.get('start_point_rounding',{}).get('floor_allowed'):
+                    ack=wait_for_clock(self.clocks,self.start_floor_seconds)
+                    self.recovering_plan['startup_ack_wait']=ack
+                    if ack['acknowledged']:
+                        if self.clocks.profile!=target:raise RuntimeError('Wrong frequency acknowledged')
+                        self.plan=dict(self.recovering_plan,start_now=True,wait_seconds=0.)
+                        return self.plan
                 return dict(decision,start_now=False,clock_wait=True)
             return decision
         wait=decision['latest_start']-decision['decision_monotonic']
@@ -194,6 +214,7 @@ class ThreeFullRuntime(LowFullRuntime):
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile
         request['m3_three_frequency_policy']='medium_first_v1'
+        if self.start_floor_seconds:request['m3_start_floor_ms']=self.start_floor_seconds*1000
         if request['observation_step'] and self.active_profile=='gpu_emc':
             request['m3_timing']['low_full_measurement_history']=self.plan['low_full_formula']['selected']['history']
 
