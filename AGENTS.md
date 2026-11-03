@@ -46,6 +46,8 @@
 
 # 项目协作与当前状态
 
+> 2026-11-03用户追问RTC是否严格实现，已只做算法/已存记录核查，未改生产RTC或重开调度优化。依据2506.07339v2 Algorithm1和PI real-time-chunking-kinetix 9296f31源码。新增profile_selective_fast --author-audit-only（与rollout互斥），当前H50/N5真实专家、Object0两份保存输入×Full/Fast，d7/10,s30四组，原作者采样体经Torch桥接与eager/stepgraph每步input/velocity/clean/error/VJP/output和最终raw全0，重复全0，run97f5d0f9。只证明同一当前专家/KV/噪声下采样实现，不是作者JAX/XLA/真机/原checkpoint复现。8近期真实回合前缀/实际裁剪/来源审计通过；H50CPU非线性8组最终max2.4e-7，run5f0d563d。早先479817d0严格要求CPU零误差导致未完成，已标invalid，不能计为通过。延迟估计偶差1步仍有，Full/Fast输入和动态时序为项目扩展，不能据采样0差声称整套异步绝无bug，也不能凭接触处失败判RTC公式错。见docs/M4_STABILITY_DIAGNOSIS_20261103.md新增节。此后继续用户授权的能耗主线；如需再深入执行层要明确具体小实验，不自动加入新的等待规则。
+
 > 2026-11-03用户明确停止衔接/稳定性排查，保留现状，继续能耗优化。新增selective320候选：每路合并32/64冗余2×2块，各160视觉token，Full保留state、Fast沿用省略state；无训练、无FlashRT/RTC/正式配置变更。脚本profile_selective_fast.py与独立前端，非生产Fast默认。CPU51检查、GPU320/416参考/同分/图新输入/实际特征布局精确。固定输入b1d45c97一模型：Full467.7ms/12.106J、旧Fast320.7/7.893、新319.7/7.873，16次每档热VDD_IN，非任务35%节能；三观测next10-arm6均值.06122→.02856但有夹爪一步差、尾段不一致。三任务同批2c03f0d2六回合/1模型/缓存MJB：Spatial0两组成功77步77.19→72.31J；Object0 Full成功144步118.42J、新超时280步211.23J；Goal3 Full超时300步238.28J、新成功170步130.81J。各2/3、共同成功仅Spatial0；所有尝试433.89→414.34J少4.51%，时间+0.49%，不认定质量通过。初态/首raw精确、审计/高频/RESTORED、零欠载、功率复算通过。Object3另批8fae3f50两组超时280步224.27→212.02J保留负例，不混称同一模型批次。原正式Full+Continue不替换。备份archive/before-dual-selective-fast-20261103；见docs/FAST_DUAL_SELECTIVE_20261103.md。下一步若继续Fast应改善可用性或验证其他温和输入，勿据单次35%直接声称整体收益，也不自动重开已叫停的衔接排查。
 
 ## 唯一有效基线

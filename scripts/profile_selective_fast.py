@@ -148,11 +148,13 @@ def main():
     parser.add_argument('--environment-cache',type=Path,help='Read-only passed MuJoCo binary cache for --rollout-pair')
     parser.add_argument('--rollout-only',action='store_true',help='Skip fixed-input comparisons and power blocks; run paired tasks with one model')
     parser.add_argument('--rollout-tasks',nargs='+',help='Explicit suite:task pairs, e.g. libero_spatial:0 libero_object:0 libero_goal:3')
+    parser.add_argument('--author-audit-only',action='store_true',help='Compare current RTC graph with author function on saved inputs; no power blocks or rollout')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
     if args.rollout_pair and args.environment_cache is None:parser.error('--rollout-pair needs --environment-cache')
     if (args.rollout_only or args.rollout_tasks) and not args.rollout_pair:parser.error('Rollout options require --rollout-pair')
+    if args.author_audit_only and (args.kernel_only or args.rollout_pair):parser.error('Author audit is a standalone fixed-input comparison')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically as write
@@ -167,7 +169,7 @@ def main():
         print('run_dir='+str(run),flush=True)
         result=dict(status='running',model_loads=0,clocks_changed=False,source=str(args.source_run),
             cases=[],power_blocks=[],probe_arguments=dict(request_ids=args.request_ids,block_requests=args.block_requests,
-                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache)),
+                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache),author_audit_only=args.author_audit_only),
             scope=('Paired fixedq30 task attempts; Full versus alternating Full/DualFast, high clocks, no production policy change'
                 if args.rollout_pair else 'Fixed-input comparison only; no task execution or energy-saving claim for closed-loop deployment'))
         adapter=monitor=None
@@ -213,7 +215,7 @@ def main():
             tuning=TuneOnce(model._pipe.gemm);model._pipe.gemm=tuning
             enable(model);base._infer_actions(model,records[0]['snapshot'],task['instruction'],cfg['H'],{})
             models={'Full':model}
-            peers=[('DualFast','selective320')] if args.rollout_only else [('OldFast','pool2_agent'),('DualFast','selective320')]
+            peers=[('DualFast','selective320')] if args.rollout_only or args.author_audit_only else [('OldFast','pool2_agent'),('DualFast','selective320')]
             for label,kind in peers:
                 frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=20)
                 peer=VLAModel(frontend,'torch');enable(peer)
@@ -267,6 +269,33 @@ def main():
                 s=record['request']['rtc_solver_inputs']
                 raw,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'])
                 return raw.detach().cpu().numpy().copy()
+            if args.author_audit_only:
+                from perceptbudget.rtc_author_source import sample_author_source
+                from perceptbudget.openpi_reference import sample_original_rtc
+                source=Path(cfg['output_root'])/'rtc-author-reference/src/model.py'
+                result['scope']='Same current frozen expert/context and recorded noise/old tail; author sampler body versus eager and optimized graph. Not author checkpoint or JAX/XLA deployment reproduction.'
+                result['author_audit']=[]
+                for record in records:
+                    s=record['request']['rtc_solver_inputs']
+                    for label in models:
+                        raw=infer(label,record)
+                        valid=models[label]._pipe.pipeline.vision_seq_enc+models[label]._pipe.current_prompt_len
+                        expert,graph=adapter.step_bank.select(valid)
+                        reference,ref_norms=sample_original_rtc(expert,record['noise'],record['previous'],s['delay'],s['executed'],beta=cfg['rtc_beta'],author_order=True)
+                        author,trace,mask,sha=sample_author_source(expert,record['noise'],record['previous'],s['delay'],s['executed'],source=source,beta=cfg['rtc_beta'])
+                        graph_trace=[]
+                        got,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'],trace=graph_trace)
+                        errors={key:max(float((a[key]-z[key]).abs().max()) for a,z in zip(graph_trace,trace))
+                            for key in ('input','velocity','clean','error','vjp','output')}
+                        error=float(np.max(np.abs(raw-author.detach().cpu().numpy())))
+                        row=dict(request_id=record['request']['prediction_id'],condition=label,valid=valid,delay=s['delay'],executed=s['executed'],
+                            graph_vs_author_max_abs=error,eager_vs_author_max_abs=float((reference-author).abs().max()),per_step_max_abs=errors,
+                            graph_repeat_max_abs=float(np.max(np.abs(raw-got.detach().cpu().numpy()))),author_source_sha256=sha)
+                        result['author_audit'].append(row);save();print('author_audit='+json.dumps(row),flush=True)
+                        if max(error,*errors.values(),row['eager_vs_author_max_abs'],row['graph_repeat_max_abs'])>1e-4:
+                            raise RuntimeError('Current real-input RTC differs from author sampler')
+                result.update(status='completed',production_default_changed=False,author_audit_passed=True)
+                return 0
             outputs={}
             for record in records:
                 pid=record['request']['prediction_id'];start=record['request']['rtc_solver_inputs']['delay']
