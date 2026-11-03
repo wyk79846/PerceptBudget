@@ -1,3 +1,5 @@
+> 2026-11-03：原Full双档基线保留在baseline/full-two-frequency-20261102（bbe414f）。新增--three-frequency需--low-full --acceptance-group m3：306/2133只Continue，每次中频816/2133 Full先判可行，再高频1173/3199，CPU1497.6；不加Fast，不改FlashRT/模型/RTC。runtime3独立有限协议，未变化域跳过写入；原runtime不变。119项检查及两份原记录审计通过，新GPU闭环尚未跑。先测Spatial0，命令与状态见docs/M4_THREE_FREQUENCY_TRIAL_20261102.md。
+
 > 2026-11-02 GPU railgate：本机chosen/nvidia,tegra-joint_xpu_rail存在，rel36 GA10B驱动据此can_railgate_init=false，开启返回EINVAL。当前独立GPU railgate不可用；probe_gpu_railgate已先只读预检返回unavailable。不重试电源写入，不使用force_idle、不改DT/驱动绕过。旧测试根助手已RESTORED；细节docs/M4_GPU_RAILGATE_PROBE_RESULT_20261102.md。
 
 > 2026-11-02当前：完整路线长窗实测已完成，M4/20261102T023320.273423Z-full-long-window-pairs-c9c8a51a。20次/10对，一模型；共同4秒、同LOW起终态。高频往返34.43897J，低频31.28471J，少3.15427J/9.159%，10对全低频较低。功率覆盖1、输入/输出相同、频率和恢复全通过，尾段至少3.221秒、末端约5.915W。确认该条件低频Full整路线省电，不能再用短窗+6.2%否定，也不能外推整任务省9%。见docs/FULL_LONG_WINDOW_RESULT_20261102.md。闭环旧12批仅完成2项，其余RAM中止未测。以下为历史。

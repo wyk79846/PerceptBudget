@@ -52,6 +52,16 @@ def test_apply_and_restore_all_profiles(control, profile):
     assert all(name not in ('governor', 'scaling_governor', 'state') for name, _ in writes)
 
 
+def test_three_state_optimized_apply_skips_unchanged_emc_and_cpu(control):
+    c,writes=control
+    c.apply('gpu_emc')
+    writes.clear()
+    c.apply_changed('gpu_emc')
+    assert writes==[]
+    c.apply_changed('emc2133')
+    assert {name for name,value in writes}=={'min_freq','max_freq'}
+
+
 def test_unsupported_emc_rejected_before_any_write(control):
     c, writes = control
     (c.emc/'dvfs_table').write_text('vdd_core 3199000000 1')

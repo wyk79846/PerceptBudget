@@ -347,6 +347,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if config.get('m4_enabled'):
             from perceptbudget.m4_runtime import M4Runtime
             scheduler=M4Runtime(config,rtc_adapter)
+        elif config.get('m3_three_frequency'):
+            from perceptbudget.three_frequency import ThreeFullRuntime
+            scheduler=ThreeFullRuntime(config)
         elif config.get('m3_low_full'):
             from perceptbudget.m3_low_full import LowFullRuntime
             scheduler=LowFullRuntime(config)

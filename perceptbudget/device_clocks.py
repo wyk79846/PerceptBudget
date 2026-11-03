@@ -20,7 +20,7 @@ SCREEN_PROFILES = ('baseline', 'gpu816', 'emc2133', 'cpu1190')
 MATRIX_PROFILES = ('baseline', 'balanced', 'gpu_emc')
 
 
-def runtime_trace(control, emit, fd, *, seconds=120):
+def runtime_trace(control, emit, fd, *, seconds=120, tokens=None):
     """Finite online HIGH/LOW/STOP protocol; caller owns action timing."""
     import os
     import select
@@ -28,6 +28,7 @@ def runtime_trace(control, emit, fd, *, seconds=120):
     if type(seconds) is not int or not 1 <= seconds <= 600:
         raise ValueError('Runtime clock lifetime must be1..600 seconds')
     deadline, current, data, index = time.monotonic()+seconds, 'baseline', b'', 0
+    tokens = tokens or {b'HIGH':'baseline', b'LOW':'gpu_emc'}
     while time.monotonic() < deadline:
         emit(dict(status='SAMPLE', monotonic=time.monotonic(), actual=control.actual()))
         ready, _, _ = select.select([fd], [], [], min(.02,max(0.,deadline-time.monotonic())))
@@ -47,9 +48,9 @@ def runtime_trace(control, emit, fd, *, seconds=120):
         if token == b'STOP':
             emit(dict(status='STOPPED', monotonic=time.monotonic()))
             return
-        if token not in (b'HIGH',b'LOW'):
-            raise ValueError('Only HIGH/LOW/STOP accepted')
-        target = 'baseline' if token==b'HIGH' else 'gpu_emc'
+        if token not in tokens:
+            raise ValueError('Unknown runtime clock token')
+        target = tokens[token]
         changed = observed_switch(control,target,current)
         emit(dict(status='APPLIED', profile=target, request_index=index, **changed))
         current, index = target, index+1
@@ -217,6 +218,19 @@ class ClockControl:
                 raise RuntimeError(f'EMC readback mismatch after0.5s: requested={requested}, '
                                    f'actual={actual}, locked={locked}; no rounding tolerance applied')
             time.sleep(.002)
+
+    def apply_changed(self, name):
+        """Opt-in three-state helper: skip unchanged domains, validate all first."""
+        gpu, emc, cpu = self.validate(name)
+        if (self.read(self.gpu/'min_freq'), self.read(self.gpu/'max_freq')) != (gpu,gpu):
+            self.bounds(self.gpu/'min_freq',self.gpu/'max_freq',gpu,gpu)
+        if self.read(self.emc/'rate') != emc or self.read(self.emc/'mrq_rate_locked') != 1:
+            self.write(self.emc/'mrq_rate_locked',1)
+            self.write(self.emc/'rate',emc)
+            self.wait_emc(emc)
+        for policy in self.cpus:
+            if (self.read(policy/'scaling_min_freq'),self.read(policy/'scaling_max_freq')) != (cpu,cpu):
+                self.bounds(policy/'scaling_min_freq',policy/'scaling_max_freq',cpu,cpu)
 
     def restore(self, saved):
         expected = {str(p.relative_to(self.root)) for p in self.paths()}

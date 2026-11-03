@@ -570,7 +570,7 @@ class RuntimeClocks:
             if event.get('status')=='APPLIED':
                 if self.pending != event['profile'] or event['request_index'] != self.changes:
                     raise RuntimeError('Runtime frequency acknowledgement mismatch')
-                if event['profile']=='gpu_emc':
+                if event['profile'] in ('gpu_emc','deep_idle'):
                     self.last_low = event['observed_match_monotonic']
                 elif self.last_low is not None:
                     event['low_dwell_seconds'] = event['command_monotonic']-self.last_low

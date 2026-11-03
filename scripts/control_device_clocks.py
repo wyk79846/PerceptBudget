@@ -37,10 +37,15 @@ def main():
     runtime = sub.add_parser('runtime', help='Bounded HIGH/LOW/STOP commands for one real task')
     runtime.add_argument('--seconds', type=int, default=120, choices=range(1,601))
     runtime.set_defaults(profile='baseline')
+    runtime3 = sub.add_parser('runtime3', help='Opt-in HIGH/MID/IDLE/STOP three-state protocol')
+    runtime3.add_argument('--seconds',type=int,default=120,choices=range(1,601))
+    runtime3.set_defaults(profile='baseline')
     sub.add_parser('restore')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Run this tool with sudo; never run the model as root')
+    if args.command=='runtime3':
+        PROFILES['deep_idle']=(306000000,2133000000,1497600)
     os.umask(0o077)
     STATE.mkdir(mode=0o700, exist_ok=True)
     if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
@@ -67,8 +72,10 @@ def main():
         control.validate(args.profile)
         if args.command in ('cycles', 'recovery', 'paired-idle'):
             control.validate('baseline')
-        if args.command == 'runtime':
+        if args.command in ('runtime','runtime3'):
             control.validate('gpu_emc')
+        if args.command=='runtime3':
+            control.validate('deep_idle')
         if args.command == 'paired-idle':
             args.serve_profile = 'baseline'
         if args.command in ('recovery', 'paired-idle'):
@@ -83,11 +90,13 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, interrupted)
         try:
-            if args.command == 'runtime':
+            if args.command in ('runtime','runtime3'):
+                if args.command=='runtime3':control.apply=control.apply_changed
                 control.apply('baseline')
                 print(json.dumps(dict(status='READY',monotonic=time.monotonic(),profile='baseline',
                     settings=control.snapshot(),actual=control.actual(),lease_seconds=args.seconds)),flush=True)
-                runtime_trace(control,lambda e:print(json.dumps(e),flush=True),sys.stdin.fileno(),seconds=args.seconds)
+                runtime_trace(control,lambda e:print(json.dumps(e),flush=True),sys.stdin.fileno(),seconds=args.seconds,
+                    tokens={b'HIGH':'baseline',b'MID':'gpu_emc',b'IDLE':'deep_idle'} if args.command=='runtime3' else None)
                 return
             if args.command in ('cycles', 'recovery', 'paired-idle'):
                 control.apply(args.serve_profile if args.command in ('recovery', 'paired-idle') else 'baseline')

@@ -407,7 +407,24 @@ def audit(run):
             if m3:
                 d=decisions.get(origin,{})
                 t=request.get('m3_timing',{})
-                if cfg.get('m3_low_full'):
+                if cfg.get('m3_three_frequency'):
+                    f=t.get('three_frequency_formula',{})
+                    candidates=f.get('candidates',[])
+                    valid=len(candidates)==2 and [r['profile'] for r in candidates]==['gpu_emc','baseline']
+                    check('three_frequency_candidates_recorded',valid,pid)
+                    if valid:
+                        now=t['decision_monotonic'];end=t['deadline']-t['margin_seconds']
+                        for row in candidates:
+                            latest=min(end-row['service_seconds'],row['rtc_cap'],row['first_cap'])
+                            check('three_frequency_candidate_feasibility',
+                                abs(row['latest_start']-latest)<1e-8 and row['feasible']==(latest>=now-1e-9),pid)
+                        expected=candidates[0] if candidates[0]['feasible'] else candidates[1]
+                        check('three_frequency_medium_first',f['selected']==expected
+                            and request.get('m4_compute_profile')==expected['profile']
+                            and request.get('m3_full_frequency')==expected['profile']
+                            and request.get('m3_three_frequency_policy')=='medium_first_v1'
+                            and abs(t['service_seconds']-expected['service_seconds'])<1e-8,pid)
+                if cfg.get('m3_low_full') and not cfg.get('m3_three_frequency'):
                     profile=request.get('m4_compute_profile')
                     check('m3_full_profile_declared',profile in ('baseline','gpu_emc')
                           and request.get('m3_full_frequency')==profile,pid)
@@ -503,6 +520,8 @@ def audit(run):
                     expected_budget='recovery' if group=='D_joint' and d.get('path')=='low_continue_recovery' else 'hot'
                     if (cfg.get('m3_low_full') and request.get('m4_compute_profile')=='gpu_emc'
                             and cfg.get('m3_low_full_policy')!='original_m3_slot_v3'):expected_budget='low'
+                    if cfg.get('m3_three_frequency') and request.get('m4_compute_profile')=='baseline':
+                        expected_budget='recovery' if d.get('current_profile')!='baseline' else 'hot'
                     check('formal_device_service_budget',d.get('dvfs_policy')==expected_policy
                           and d.get('service_budget_history')==expected_budget,pid)
                 if 'signal_policy' in d:
@@ -545,7 +564,8 @@ def audit(run):
                             else max(max(v) for v in frequency_histories.values()))
                         if cfg.get('rtc_fixed_delay_estimate') is not None:delay=cfg['rtc_fixed_delay_estimate']
                     latest_submit=old['observation_step']+cfg['H']-delay
-                    guard=(1 if d['path']=='low_continue_recovery' else 0)+math.ceil(d['margin_seconds']/period-1e-9)
+                    changing=(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else d['path']=='low_continue_recovery'
+                    guard=int(changing)+math.ceil(d['margin_seconds']/period-1e-9)
                     prefix_start=d['decision_monotonic']+(latest_submit-decision_step-guard)*period
                     if cfg.get('m3_fast_advance') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
                         prefix_start-=math.ceil((d['service_seconds']+d['margin_seconds'])/period-1e-9)*period
@@ -559,7 +579,7 @@ def audit(run):
                     originals=[e for e in events if e['event']=='m3_decision'
                                and e.get('decision_monotonic')==d.get('decision_monotonic')]
                     decision_step=min(e['step'] for e in originals)
-                    recovery_ticks=1 if d['path']=='low_continue_recovery' else 0
+                    recovery_ticks=int(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else (1 if d['path']=='low_continue_recovery' else 0)
                     first_start=d['decision_monotonic']+(30-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
                     check('m3_first_refresh_cap_inputs',cfg.get('m3_first_refresh_step')==30
                           and old['prediction_id']==0 and d.get('critical_step') is None
