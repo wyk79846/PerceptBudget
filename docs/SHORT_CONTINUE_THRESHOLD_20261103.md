@@ -61,4 +61,54 @@ Object3再次配对，两回合共用一个模型，采用上述变挡预算检�
   --critical-wait --critical-wait-phases --first-refresh-step 30 --phase-refresh
 ```
 
-不加`--full-frequency-pair`时只运行候选。50/150ms也可选，但当前306MHz路径尚未闭环验证；先不扩大任务数或重测q30。
+不加`--full-frequency-pair`时只运行候选。此轮未测50/150ms；下方继续记录后续50ms验证。
+
+## 下探50ms
+
+用户认可短空档方向后，新增100ms参照选项，与50ms候选同模型配对。40ms也已开放为实验参数。门槛以预计还能等待多久开始Full设备准备为准，实际低频驻留另行记录。保留原变挡预算检查、Full中频优先及关键动作规则，不改变模型或RTC。
+
+从22条已有三频Full记录中先检查新门槛是否有实际触发机会。Spatial task6的第40步距计划准备高频Full还有73.929ms，当前中频，原计划已有变挡预算；该位置100ms会跳过、50ms允许降频。因此选Spatial6，seed7/init0，参照/候选各一回合，共用一个模型。77项相关检查通过，覆盖100/50及100/40的配置、标签、历史分类和真实子进程参数转发。代码`6a49a54`，改前分支`archive/before-idle50-20261103`。
+
+原12任务环境缓存要求完全相同任务列表，无法直接取出单个Spatial6，首次入口在模型加载前拒绝。随后正常编译单任务环境24.89秒再开始一模型两回合，未放宽缓存校验。
+
+[本轮运行](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T091301.946695Z-acceptance-m3-2fe06818/summary.json>) · [选例和设置](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T091301.946695Z-acceptance-m3-2fe06818/experiment_design.json>)。
+
+|Spatial6门槛|结果|任务时间|任务＋在途推理|Full次数|
+|---|---:|---:|---:|---:|
+|100ms|113步成功|8.296s|96.940J|5|
+|50ms|113步成功|8.400s|97.695J|5|
+
+两组零断供，各638项记录检查及频率/恢复检查通过，初态精确相同。5次请求均在0/29/41/76/105步，计算频率相同，全部预测和实际执行动作完全一致。本次没有出现额外的50–100ms低频空档，因此能量多0.755J（0.78%）不能解释为50ms门槛更耗电，也没有直接验证线上新短降频的效果。
+
+## 固定40/50ms空档测量
+
+随后补定点测量：固定真实保存的双图、state、旧动作、噪声，Full H50/N5；一次模型加载，24个计量请求、24次相同前置负载。测试原计划本就要变挡的两条路线：
+
+- 高频等待后用中频Full，对比高频先降306MHz、等待后用同样的中频Full。
+- 中频等待后用高频Full，对比中频先降306MHz、等待后用同样的高频Full。
+
+每条路线的40/50ms各3对，交替先后顺序。空档从前置Full结束后的控制命令时刻计时，降频确认占用其中一部分；到空档末尾恢复计划计算频率并计算Full。能量从空档起点积分到“空档＋3秒”，包含降频、恢复、Full及相同频率的采样尾段，已经包含全部切换成本，不重复相加。另用少1秒的积分窗核对。静态固定输入测试不含实际动作执行、新观测采集和动作提交。
+
+|等待前→Full频率|空档门槛|实际低频驻留均值|完整同窗平均少耗|正收益对数|
+|---|---:|---:|---:|---:|
+|高→中|40ms|22.45ms|0.448J|3/3|
+|高→中|50ms|31.97ms|0.112J|3/3|
+|中→高|40ms|30.79ms|−0.076J|0/3|
+|中→高|50ms|40.70ms|0.044J|3/3|
+
+40ms高→中三对收益0.906/0.108/0.331J，首对偏大、波动明显，不能根据均值认为40ms比50ms更优。50ms两条路线收益范围分别0.055–0.150J、0.005–0.078J；提前1秒停止积分时平均仍分别少0.108/0.039J。50ms各对的Full结果没有延后，结果返回较保持原档平均早12.7/1.8ms；这里只记录该路线耗时，不当作神经网络加速。
+
+24次计量输出最大差0，图与VJP检查通过，计算频率匹配、两条路线全部恢复。48个能量窗从原始功率重积分误差0，59条变挡回执保留。最终1173/3199/1497.6MHz恢复。代码`1a114af`，入口[probe_short_idle.py](../scripts/probe_short_idle.py)。
+
+结论：**下一轮采用50ms试验门槛，40ms先不采用**。恢复预算限制继续保留；原200ms默认入口留作对照。当前只证明这两条固定输入路线有小额节能机会，闭环小测未触发新增短空档，不报整任务节能百分比。本次工作合计2次模型加载：闭环2回合、定点24个计量请求；缓存拒绝那次未加载模型。
+
+[定点结果与独立审核](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T091948.445938Z-short-idle40-50-a39f41fe/postrun_review.json>) · [成对CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T091948.445938Z-short-idle40-50-a39f41fe/pairs.csv>) · [逐请求与原始结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T091948.445938Z-short-idle40-50-a39f41fe/short_idle.json>)。
+
+```bash
+/home/wyk/venvs/lutvla/bin/python -u scripts/run_m4.py \
+  --acceptance-group m3 --low-full --three-frequency --start-floor-ms 25 \
+  --idle-min-ms 50 --idle-reference-ms 100 --full-frequency-pair --task-indices 2 \
+  --critical-wait --critical-wait-phases --first-refresh-step 30 --phase-refresh
+```
+
+单独运行50ms候选时，同时去掉`--full-frequency-pair`和`--idle-reference-ms 100`。固定空档复查命令为`python -u scripts/probe_short_idle.py`，一批只加载一次模型。
