@@ -244,3 +244,27 @@ Spatial3为96/92/88步，三组均成功。此前历史版220步失败在本批�
 
 - [冻结计划与运行源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/plan.json>)、[三条件汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/summary.json>)、[六回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/results.csv>)
 - [独立审查及原始功率重算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/postrun_review.json>)、[方向判定实际生效记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/identity_intervention_review.json>)
+
+## 旧40任务的强制刷新排查
+
+用户明确只看旧seed7/init0。本次只读日志、动作和请求图像，未启动模型或修改策略，未使用seed17/init1样例。历史动态40任务是8b3f1fa版本：尚无当前剩余动作提取器，仍有首次30步限制，且早于RTC暂停前缀修复。因此历史40、近期旧12任务V2基线、新方向版两个开发任务分别统计，不拼接成同一版本结论。
+
+历史40共有327次Full：启动40次、事件132次、缓冲155次。按实际启动限制，另有30次由RTC提交界限提前，23次由首次30步限制提前；后者当前已经移除。缓冲和RTC供给底线不列为直接删除对象。
+
+|诊断项|历史40|近期V2基线12|新方向版2|
+|---|---:|---:|---:|
+|Full总数|327|168|33|
+|提交后当步或下一步又发起Full|55|76|18|
+|其中缓冲Full→动作事件Full|41|5|0|
+|其中闭爪Full→减速Full|6|11|2|
+|任务终止前最后一次预测未直接执行动作|22|9|1|
+|预测只执行1至3个控制动作|9|20|3|
+
+这些标签可以重叠，不相加。连续刷新不等于无用：历史41次“缓冲→事件”两次输入之间，末端位移中位105.37mm，没有双图完全相同的情况。中途零直接动作使用的两次预测也可能影响后续RTC目标，不能按零使用直接删除。历史任务结束后仍在完成推理的实测窗口61.78J，约为总能量5682.86J的1.09%，结束收尾不是最大的空间。
+
+更值得验证的是平缓累计转向。当前提取器会在累计方向超过60°时产生事件；局部相邻窗口可能只变化十几度，也未位于已有低幅度区间或临近夹爪切换。沿用现有60°、5步规则只作离线排序：近期V2基线12中有57次这种候选，新方向版两任务中仍有13次。对应服务窗口分别645.82J、154.06J，包含并行控制和保持能量，不能当成全部可节省量，更不能由离线候选断言跳过不影响成功。
+
+建议先单次消融方向版Spatial3的12步请求：其目标26步，局部变化约15.10°、夹爪切换提示距17步，没有检测到该位置的低幅度阶段。只验证这一条普通转向提示，保留缓冲/RTC底线及后续关键事件；不一次性删除13条，也不继续整体提高转向角阈值。
+
+- [完整审计汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/summary.json>)、[旧40逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/historical40_requests.csv>)、[近期12逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/recent_v2_12_requests.csv>)、[新方向版逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/direction_2_requests.csv>)
+- [逐条转向候选及依据](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/turn_context_review.json>)、[只读审计源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/audit.py>)、[候选排序源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/rank_turns.py>)
