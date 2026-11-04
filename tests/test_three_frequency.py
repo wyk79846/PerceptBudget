@@ -86,6 +86,26 @@ def config():
         rtc_initial_control_period_seconds=.05)
 
 
+@pytest.mark.parametrize('phase',('ordinary','event','active_phase'))
+def test_critical_high_only_changes_frequency_for_existing_key_hints(phase):
+    def build(enabled):
+        r=ThreeFullRuntime(dict(config(),m3_critical_high_full=enabled,m3_max_refresh_interval=30))
+        r.clocks=SimpleNamespace(profile='deep_idle',pending=None,last_low=0.)
+        actions=[[1.,0.,0.,0.,0.,0.,-1.] for _ in range(50)]
+        r.committed(dict(prediction_id=1,observation_step=30,observation_monotonic=0.,actions=actions),
+            dict(commit_step=40,commit_monotonic=.5))
+        if phase=='event':r.events=[dict(kind='gripper_close',target_step=65,prediction_id=1)]
+        if phase=='active_phase':r.chunks[1]['low_full_phases']=[dict(start_step=40,stop_step=55)]
+        q={30+i:(a,1,30,i) for i,a in enumerate(actions)}
+        return r.decide(now=.75,step=45,queue=q,rows=[],inflight=False,rtc_delay_steps=10)
+    old,new=build(False),build(True)
+    assert old['compute_profile']=='gpu_emc'
+    assert new['compute_profile']==('gpu_emc' if phase=='ordinary' else 'baseline')
+    assert new['critical_step']==old['critical_step'] and new['deadline']==old['deadline']
+    assert new['first_refresh_cap']['request_step']==old['first_refresh_cap']['request_step']==60
+    assert new['three_frequency_formula']['critical_high_gate']['critical']==(phase!='ordinary')
+
+
 def test_no_inference_in_deep_idle_and_no_switch_during_compute():
     r=ThreeFullRuntime(config())
     changes=[]

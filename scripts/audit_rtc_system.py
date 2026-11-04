@@ -473,6 +473,21 @@ def audit(run):
                                 abs(row['latest_start']-latest)<1e-8 and row['feasible']==(latest>=now-1e-9),pid)
                         expected=candidates[0] if candidates[0]['feasible'] else candidates[1]
                         policy='medium_first_v1'
+                        if cfg.get('m3_critical_high_full'):
+                            from perceptbudget.key_phases import absolute_intervals
+                            from perceptbudget.action_events import EventConfig
+                            originals=[e for e in events if e['event']=='m3_decision'
+                                and e.get('decision_monotonic')==t['decision_monotonic']]
+                            at=min(e['step'] for e in originals)
+                            phases=absolute_intervals(old['actions'],old['observation_step'],EventConfig(**cfg['m3_events']))
+                            active=[dict(start_step=p['start_step'],stop_step=p['stop_step'])
+                                for p in phases if p['start_step']<=at<p['stop_step']]
+                            event=t['reason']=='action_event'
+                            gate=dict(step=at,event_deadline=event,active_intervals=active,critical=event or bool(active))
+                            check('critical_high_gate_from_unexecuted_chunk',f.get('critical_high_gate')==gate
+                                and f.get('policy')=='critical_high_v1',pid)
+                            if gate['critical']:expected=candidates[1]
+                            policy='critical_high_v1'
                         if cfg.get('m3_full_energy'):
                             from perceptbudget.full_energy import audit_record,POLICY
                             policy=POLICY;energy=f.get('energy',{})
