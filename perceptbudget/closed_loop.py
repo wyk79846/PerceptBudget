@@ -10,7 +10,7 @@ from dataclasses import asdict
 from statistics import median
 
 from perceptbudget.action_events import EventConfig, analyze_episode, detect_events, merge_nearby_slowdowns
-from perceptbudget.deadline_controller import FullServiceTimes, SafetyMargin, timing_plan
+from perceptbudget.deadline_controller import FullServiceTimes, SafetyMargin, timing_plan, percentile
 from perceptbudget.experiment import _write_json_atomically
 
 
@@ -292,6 +292,13 @@ class DeadlineRuntime:
             raise ValueError('Unknown ordinary turn policy')
         if self.ordinary_turn_policy and self.event_identity!='turn_direction_v1':
             raise ValueError('Ordinary turns require directional event identity')
+        self.feedback_policy=config.get('m3_feedback_policy')
+        self.feedback_minimum=config.get('m3_feedback_minimum_steps',20)
+        if self.feedback_policy not in (None,'overlap_pacing_v1'):
+            raise ValueError('Unknown feedback refresh policy')
+        if self.feedback_policy and (self.ordinary_turn_policy!='context_v1'
+                or type(self.feedback_minimum) is not int or not 1<=self.feedback_minimum<self.horizon):
+            raise ValueError('Feedback refresh requires simplified Full and a valid minimum interval')
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -327,7 +334,9 @@ class DeadlineRuntime:
         if self.fast_selection:
             self.fast_last_mode=request['m3_fast_choice']['mode']
             self.fast_quiet_since=request.get('ready_monotonic',commit['commit_monotonic'])
+        previous=max(self.chunks,default=None)
         self.chunks[pid] = dict(origin=origin, observation=request['observation_monotonic'],
+            previous_prediction_id=previous,
             context_mode=request.get('m3_fast_choice',{}).get('mode','Full'))
         if self.phase_refresh:
             from perceptbudget.key_phases import absolute_intervals
@@ -477,6 +486,27 @@ class DeadlineRuntime:
             ordinary_suppressed=[dict(e) for e in candidates if e['kind']=='turn'
                 and e['target_step'] in ordinary and (e['prediction_id'],e['target_step']) not in restored]
             candidates=[e for e in candidates if e not in ordinary_suppressed]
+        feedback_suppressed=[]
+        if self.feedback_policy and current is not None:
+            if 'feedback_review' not in current:
+                from perceptbudget.feedback_refresh import review_cues
+                reference_id=current['previous_prediction_id']
+                reference=self.chunks.get(reference_id)
+                proof=reference.get('critical_forecast') if reference else None
+                reference=(dict(prediction_id=reference_id,origin=reference['origin'],
+                    actions=reference['phase_actions'],events=proof['result']['events']) if proof else None)
+                response=self.times.estimate('recovery')
+                if hasattr(self,'low_histories'):
+                    medium=max(percentile(v,self.settings['service_quantile']) for v in self.low_histories.values())
+                    response=max(response,medium+period+getattr(self,'transitions',{}).get('medium_seconds',0.))
+                current['feedback_review']=review_cues(forecast_proof['result']['events'],
+                    prediction_id=item[1],origin=current['origin'],source_step=forecast_proof['source_step'],
+                    period=forecast_proof['source_period_seconds'],response_seconds=response,
+                    margin_seconds=self.margin.seconds,minimum_steps=self.feedback_minimum,
+                    actions=current['phase_actions'],reference=reference,config=self.events_config)
+            ignored={(e['kind'],e['target_step']) for e in current['feedback_review']['events'] if e['suppress']}
+            feedback_suppressed=[dict(e) for e in candidates if (e['kind'],e['target_step']) in ignored]
+            candidates=[e for e in candidates if e not in feedback_suppressed]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -550,6 +580,8 @@ class DeadlineRuntime:
             self.plan.update(ordinary_turn_policy=self.ordinary_turn_policy,
                 ordinary_turn_review=current['ordinary_turn_review'],
                 ordinary_turn_suppressed=ordinary_suppressed)
+        if self.feedback_policy and current is not None:
+            self.plan.update(feedback_review=current['feedback_review'],feedback_suppressed=feedback_suppressed)
         if self.phase_refresh:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None

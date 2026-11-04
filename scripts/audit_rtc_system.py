@@ -654,6 +654,31 @@ def audit(run):
                             control_period=proof['source_period_seconds'],config=ec)
                         check('remaining_forecast_replay',proof.get('result')==replay
                             and source_decisions[0]['estimated_control_period_seconds']==proof['source_period_seconds'],pid)
+                        if cfg.get('m3_feedback_policy'):
+                            from perceptbudget.feedback_refresh import review_cues
+                            report=d.get('feedback_review',{})
+                            previous_ids=[i for i in by_id if i<old['prediction_id']]
+                            reference_id=max(previous_ids,default=None)
+                            reference_request=by_id.get(reference_id)
+                            reference_proofs=[e['critical_forecast'] for e in events if e['event']=='m3_decision'
+                                and e.get('critical_forecast',{}).get('prediction_id')==reference_id]
+                            reference=(dict(prediction_id=reference_id,origin=reference_request['observation_step'],
+                                actions=reference_request['actions'],events=reference_proofs[0]['result']['events'])
+                                if reference_request and reference_proofs else None)
+                            expected=review_cues(replay['events'],prediction_id=old['prediction_id'],
+                                origin=old['observation_step'],source_step=at,period=proof['source_period_seconds'],
+                                response_seconds=report['response_seconds'],margin_seconds=t['margin_seconds'],
+                                minimum_steps=cfg['m3_feedback_minimum_steps'],actions=old['actions'],
+                                reference=reference,config=ec)
+                            suppressed=d.get('feedback_suppressed',[])
+                            allowed={(e['kind'],e['target_step']) for e in expected['events'] if e['suppress']}
+                            check('feedback_window_fixed_and_replayed',
+                                cfg['m3_feedback_policy']==report.get('policy')=='overlap_pacing_v1'
+                                and report==expected and report==source_decisions[0].get('feedback_review'),pid)
+                            check('feedback_suppression_scope',all((e['kind'],e['target_step']) in allowed
+                                for e in suppressed) and not any(e['target_step']==d.get('critical_step')
+                                and e['kind'] in d.get('candidate_event_kinds',[])
+                                for e in suppressed),pid)
                         critical=d.get('critical_step')
                         originals=[e for e in events if e['event']=='m3_decision'
                             and e.get('decision_monotonic')==d['decision_monotonic']]
