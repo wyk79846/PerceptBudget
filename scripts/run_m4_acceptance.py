@@ -44,10 +44,24 @@ def validate_baseline(source,fixed,*,request_only_images=None):
     return source
 
 
+def ram_resume_progress(source, previous_count):
+    """Retry only explicit RAM protection after completed-case progress."""
+    source=Path(source)
+    result=json.loads((source/'summary.json').read_text())
+    path=source/'recording.json'
+    record=json.loads(path.read_text()) if path.exists() else {}
+    error=str(result.get('error',''))+' '+str(record.get('error',''))
+    if 'RAM protection stopped worker' not in error and 'RAM headroom below900MiB' not in error:
+        return False,len(record.get('episodes',[]))
+    count=len(record.get('episodes',[]))
+    return count>previous_count,count
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
     parser.add_argument('--resume-session',type=Path,help='Continue the saved groups of an interrupted all-task Full-only session; completed outcomes are audited and retained')
+    parser.add_argument('--resume-on-ram',action='store_true',help='All-task Full cohorts only: after RAM protection with completed-case progress, audit and resume missing tasks, at most8 times per group')
     parser.add_argument('--candidate',choices=('joint','m3','m3_fast'),default='m3',help='Default: frozen M3; Fast and joint scheduling require explicit selection')
     parser.add_argument('--all-tasks',action='store_true',help='All10 tasks in each of the four suites; two40-episode groups when no saved baseline is reused')
     parser.add_argument('--request-only-images',action='store_true',help='Enable request-only dual-camera acquisition in both q30 and M3')
@@ -75,6 +89,8 @@ def main():
     args=parser.parse_args()
     if args.resume_session and (not args.all_tasks or args.candidate!='m3' or args.baseline_run or args.resume_joint):
         parser.error('--resume-session requires an all-task M3 session without a separate baseline or joint resume')
+    if args.resume_on_ram and (not args.all_tasks or args.candidate!='m3'):
+        parser.error('--resume-on-ram requires --all-tasks --candidate m3')
     if (args.all_tasks or args.request_only_images or args.reuse_prefix_graphs) and args.candidate!='m3':
         parser.error('All-task and request-image/Full-graph options require --candidate m3')
     if args.idle_min_ms is not None and not args.three_frequency:parser.error('--idle-min-ms requires --three-frequency')
@@ -128,7 +144,7 @@ def main():
             reused_saved_episodes=reused_saved_episodes,
             candidate_clock_arguments=candidate_clock_arguments(args),lean_capture=args.candidate=='m3',
             all_tasks=args.all_tasks,request_only_images=args.request_only_images,reuse_prefix_graphs=args.reuse_prefix_graphs,
-            resume_sources=saved_sources,
+            resume_sources=saved_sources,resume_on_ram=args.resume_on_ram,
             common_low_tail_seconds=3. if args.candidate=='m3' else None,
             low_full=args.low_full,phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; PACE-inspired key-phase guard and one Full response' if args.fast_key_phases else 'events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
@@ -141,6 +157,7 @@ def main():
     cache_source=args.environment_cache_from or saved_cache
     status=dict(status='running',sources=sources,groups_to_run=groups,environment_cache_source=str(cache_source) if cache_source else None)
     _write_json_atomically(session/'summary.json',status)
+    ram_restarts=[]
     try:
         for group in groups:
             previous_source=saved_sources.get(group)
@@ -176,16 +193,34 @@ def main():
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             if previous_source:command.extend(['--resume-from',str(previous_source)])
-            with log.open('w') as stream:
-                code=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT).returncode
-            if index.exists():sources[group]=json.loads(index.read_text())['run']
-            _write_json_atomically(session/'summary.json',dict(status='running',sources=sources,groups_to_run=groups,
-                environment_cache_source=str(cache_source) if cache_source else None))
-            if code:raise RuntimeError(group+' failed; inspect '+str(log)+'; completed episodes remain saved')
+            previous_count=(len(json.loads((Path(previous_source)/'recording.json').read_text()).get('episodes',[]))
+                            if previous_source else 0)
+            for attempt in range(9):
+                attempt_log=log if not attempt else session/(group+f'_ram_resume{attempt}.log')
+                with attempt_log.open('w') as stream:
+                    code=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT).returncode
+                if index.exists():sources[group]=json.loads(index.read_text())['run']
+                _write_json_atomically(session/'summary.json',dict(status='running',sources=sources,groups_to_run=groups,
+                    environment_cache_source=str(cache_source) if cache_source else None,ram_restarts=ram_restarts))
+                if not code or not args.resume_on_ram or attempt==8:break
+                can_resume,count=ram_resume_progress(sources[group],previous_count)
+                if not can_resume:break
+                row=dict(group=group,source=sources[group],completed=count,attempt=attempt+1)
+                ram_restarts.append(row)
+                _write_json_atomically(session/'ram_restarts.json',ram_restarts)
+                print('RAM_RESUME='+json.dumps(row),flush=True)
+                if '--resume-from' in command:
+                    position=command.index('--resume-from');del command[position:position+2]
+                command.extend(['--resume-from',sources[group]])
+                if '--environment-cache-from' not in command:
+                    command.extend(['--environment-cache-from',str(group_cache or sources[group])])
+                previous_count=count
+            if code:raise RuntimeError(group+' failed; inspect '+str(attempt_log)+'; completed episodes remain saved')
             if group=='q30':validate_baseline(sources[group],fixed,request_only_images=True if args.request_only_images else None)
             print('DONE '+group+' run='+sources[group],flush=True)
         result=summarize(session,sources,task_plan=task_plan)
         result['environment_cache_source']=str(cache_source) if cache_source else None
+        result['ram_restarts']=ram_restarts
         if args.m3_reference:
             from perceptbudget.m4_acceptance import summarize_m3_increment
             summarize_m3_increment(session,args.m3_reference,result)
@@ -193,7 +228,7 @@ def main():
         print('M4_ACCEPTANCE_STATUS=completed',flush=True)
     except BaseException as exc:
         _write_json_atomically(session/'summary.json',dict(status='invalid',sources=sources,error=f'{type(exc).__name__}: {exc}',
-            environment_cache_source=str(cache_source) if cache_source else None))
+            environment_cache_source=str(cache_source) if cache_source else None,ram_restarts=ram_restarts))
         print('M4_ACCEPTANCE_STATUS=invalid',flush=True)
         raise
     return 0

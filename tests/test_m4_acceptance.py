@@ -241,6 +241,47 @@ def test_all_task_cache_subset_reuses_models_without_recompiling_or_changing_sou
     assert json.loads((source/'environment_cache.json').read_text())==cache
 
 
+def test_ram_resume_requires_memory_protection_and_new_completed_outcomes(tmp_path):
+    from scripts.run_m4_acceptance import ram_resume_progress
+    (tmp_path/'summary.json').write_text(json.dumps({'status':'invalid','error':'RAM protection stopped worker'}))
+    (tmp_path/'recording.json').write_text(json.dumps({'episodes':[{'outcome':'success'},{'outcome':'timeout'}]}))
+    assert ram_resume_progress(tmp_path,1)==(True,2)
+    assert ram_resume_progress(tmp_path,2)==(False,2)
+    (tmp_path/'summary.json').write_text(json.dumps({'status':'invalid','error':'algorithm mismatch'}))
+    assert ram_resume_progress(tmp_path,1)==(False,2)
+
+
+def test_session_automatically_resumes_only_missing_tasks_after_ram_progress(monkeypatch,tmp_path):
+    from pathlib import Path
+    from scripts import run_m4_acceptance as entry
+    cfg=entry.load_config();cfg['output_root']=str(tmp_path/'results')
+    original=entry.subprocess.run;commands=[];counts={}
+    def fake_run(command,*args,**kwargs):
+        if '--acceptance-group' not in command:return original(command,*args,**kwargs)
+        commands.append(list(command));group=command[command.index('--acceptance-group')+1]
+        attempt=counts.get(group,0);counts[group]=attempt+1
+        index=Path(command[command.index('--result-index')+1]);source=index.parent/(group+str(attempt));source.mkdir()
+        index.write_text(json.dumps({'run':str(source)}))
+        failed=group=='q30' and attempt==0
+        (source/'summary.json').write_text(json.dumps({'status':'invalid' if failed else 'completed','error':'RAM protection stopped worker' if failed else None}))
+        (source/'recording.json').write_text(json.dumps({'episodes':[{'outcome':'success'},{'outcome':'timeout'}]}))
+        return SimpleNamespace(returncode=int(failed))
+    monkeypatch.setattr(entry,'load_config',lambda **kw:cfg)
+    monkeypatch.setattr(entry,'validate_baseline',lambda *a,**kw:None)
+    monkeypatch.setattr(entry,'summarize',lambda *a,**kw:{'status':'completed'})
+    monkeypatch.setattr('perceptbudget.clock_access.authorize',lambda:None)
+    monkeypatch.setattr(entry.subprocess,'run',fake_run)
+    monkeypatch.setattr(sys,'argv',['entry','--all-tasks','--resume-on-ram'])
+    assert entry.main()==0 and len(commands)==3
+    first,second,candidate=commands
+    assert '--resume-from' not in first
+    assert second[second.index('--resume-from')+1].endswith('q300')
+    assert '--resume-from' not in candidate
+    session=next((tmp_path/'results'/'M4').iterdir())
+    records=json.loads((session/'ram_restarts.json').read_text())
+    assert len(records)==1 and records[0]['completed']==2
+
+
 def test_q30_has_no_joint_scheduler_or_fast():
     cfg=dict(m4_enabled=True,m3_scheduler_mode='deadline_dvfs',m3_action_events_enabled=True,
              m3_dvac_enabled=True,m2_visual_fast_enabled=True,m2_split_delay=True)
