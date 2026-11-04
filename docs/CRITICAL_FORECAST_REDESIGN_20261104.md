@@ -85,3 +85,25 @@
 - [40项汇总与检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/summary.json>)、[逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/results.csv>)、[实时进度最终记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/progress.md>)
 - [固定计划/核心源码哈希](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/plan.json>)、[初态核对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/task_initialization.json>)、[启动等待修正](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/clock_ready_fix.json>)
 - [完成批次及前30项保留来源](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T072948.508597Z-acceptance-m3-50e62d73/summary.json>)、[运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/candidate.py>)、[汇总脚本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/review.py>)
+
+## 阶段去重优化：共享事件来源，并只覆盖同类事件
+
+检查发现机制一已经使用remaining_v1，但阶段边界仍用旧detect_events重新寻找事件锚点。40任务保存记录中的414个请求离线核对，17次新增阶段覆盖、1次失去覆盖。候选先只统一事件来源，阈值和运动阶段边界保持原状。
+
+仅统一来源的V1不采用：同模型task7旧规则300步成功、V1为520步超时；task6两组均224步成功。V1把第38步转向响应当作38–60步整段已处理，省掉了针对47步减速的35步刷新；两组首次动作差45步、场景差46步。2071bdf源码保存在archive/shared-phase-source-v1-20261104。
+
+修正版V2让阶段与实际等待共用机制一的事件，同时只去重已经响应过的同类信号：转向不覆盖新的减速/夹爪变化，夹爪开合方向相反仍单独处理。没有改阈值、训练模型、改RTC或改FlashRT。新增选项m3_phase_event_source=remaining_v2，需要remaining_v1及phase_refresh；默认保持原规则，旧35/40基线保存在baseline/remaining-v1-seed17-init1-20261104。
+
+修正版另一批同模型4回合，seed17/init1，两任务顺序交叉，初始物理、图像、state、噪声和首动作逐值一致：
+
+|任务|本批旧规则|本批V2|旧/V2任务时间s|旧/V2任务＋在途推理J|
+|---|---|---|---:|---:|
+|LIBERO-10 task7|520步timeout|272步success|31.183/19.383|547.609/395.399|
+|LIBERO-10 task6|520步timeout|236步success|29.190/13.821|484.629/246.746|
+
+V2分别保留了task7第66步转向刷新、task6第44步转向刷新；旧阶段覆盖分别把这些不同于已响应类型的新提示过滤掉。首次动作差在80/54步，首次场景差81/55步，均晚于对应刷新。154项CPU检查、11735项独立系统记录检查、两组初始输入配对及全部频率恢复通过；0缓冲耗尽，本批1次模型加载。V1四条历史记录在新审查器下仍通过。
+
+V1、V2的旧规则跨批结果有波动，分别报告，不跨批挑选基线。这里是两项已知任务的开发小测；V2保留为显式候选，未替换原40任务基线，不把2/2外推成37/40或总体成功率。表中能量随任务提前成功而变化，不等同固定工作量的省电率。完整模型、频率、RTC、源代码及输入证据保留在各实验目录。
+
+- [V1与离线检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T074819.883850Z-phase-source-check-26c3e8e0/summary.json>)、[V1首次差异](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T074819.883850Z-phase-source-check-26c3e8e0/first_difference.json>)
+- [V2汇总、配对与干预位置](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/summary.json>)、[四回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/results.csv>)、[固定计划与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/plan.json>)、[运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/pair.py>)
