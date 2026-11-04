@@ -70,32 +70,6 @@ def test_recovery_path_must_have_its_own_idle_time():
     assert p['path']=='hot_continue'
 
 
-def test_moved_anchor_reopens_actual_deadline_without_changing_service_budget():
-    from perceptbudget.closed_loop import DeadlineRuntime
-    cfg=dict(H=50,m3_phase_refresh=True,m3_scheduler_mode='deadline_high',
-        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
-            maximum_action_offset=50,maximum_observation_age_seconds=None,margin_updates=False),
-        m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
-        rtc_initial_control_period_seconds=.05)
-    actions=[[1.,0.,0.,0.,0.,0.,-1.]]*8+[[1.,0.,0.,0.,0.,0.,1.]]*42
-    plans=[]
-    for policy in ('phase_once_v1','event_shift_v1'):
-        runtime=DeadlineRuntime(dict(cfg,m3_phase_refresh_policy=policy))
-        runtime.committed(dict(prediction_id=2,observation_step=50,
-            observation_monotonic=9.,actions=actions),dict(commit_step=50,commit_monotonic=10.))
-        runtime.refresh_phase=dict(start_step=49,stop_step=68,target_step=52,
-            kinds=['gripper_close'],completed_prediction_id=2,completed_step=50)
-        queue={50+i:(a,2,50,i) for i,a in enumerate(actions)}
-        plans.append(runtime.decide(now=10.,step=50,queue=queue,rows=[],inflight=False,rtc_delay_steps=10))
-    old,new=plans
-    assert old['reason']=='buffer' and not old['start_now']
-    assert new['reason']=='action_event' and new['critical_step']==58 and new['start_now']
-    assert new['service_seconds']==old['service_seconds']
-    assert new['margin_seconds']==old['margin_seconds']
-    assert new['refresh_phase_suppressed']==[]
-    assert [e['target_step'] for e in new['refresh_phase_reopened']]==[58]
-
-
 def test_unreachable_deadline_is_explicit_and_negative_wait_is_not_used():
     p=timing_plan(now=10.,step=5,buffer_end_step=7,period=.05,service_seconds=.5)
     assert p.deadline_already_unreachable and p.start_now and p.wait_seconds==0

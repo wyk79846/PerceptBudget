@@ -59,18 +59,6 @@ def test_known_wait_limits_old_actions_to_those_that_will_actually_execute():
     assert rtc_prefix_plan(request,38,10,dict(wait=True))['selected_delay_steps']==0
 
 
-def test_phase_reopens_moved_anchor_but_keeps_nearby_and_other_phase_events():
-    from perceptbudget.critical_wait import covered_by_phase
-    phase=dict(start_step=49,stop_step=68,target_step=52,kinds=['gripper_close'])
-    close=lambda target:dict(kind='gripper_close',target_step=target)
-    assert covered_by_phase(close(58),phase)  # Frozen legacy behavior.
-    assert covered_by_phase(close(57),phase,match_steps=5)
-    assert not covered_by_phase(close(58),phase,match_steps=5)
-    assert covered_by_phase(dict(kind='slowdown',target_step=60),phase,match_steps=5)
-    assert not covered_by_phase(dict(kind='gripper_open',target_step=60),phase,match_steps=5)
-    assert not covered_by_phase(close(68),phase,match_steps=5)
-
-
 def test_phase_dedup_that_allows_control_to_continue_must_not_cap_rtc():
     from perceptbudget.critical_wait import PhaseWait,rtc_prefix_plan
     from perceptbudget.action_events import EventConfig

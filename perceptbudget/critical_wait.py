@@ -57,13 +57,9 @@ class PhaseWait:
                                kinds=review['kinds']) if phase else None)
 
 
-def covered_by_phase(event, phase, *, match_steps=None):
-    """Optionally reopen a phase's anchor event when its forecast has moved."""
+def covered_by_phase(event, phase):
     if not phase or not phase['start_step'] <= event['target_step'] < phase['stop_step']:
         return False
     kinds = phase['kinds']
-    if (match_steps is not None and event['kind'] in kinds
-            and abs(event['target_step']-phase['target_step'])>match_steps):
-        return False
     return not (('gripper_open' == event['kind'] and 'gripper_close' in kinds) or
                 ('gripper_close' == event['kind'] and 'gripper_open' in kinds))

@@ -209,11 +209,6 @@ class DeadlineRuntime:
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
         self.phase_refresh=bool(config.get('m3_phase_refresh'))
-        self.phase_refresh_policy=config.get('m3_phase_refresh_policy','phase_once_v1')
-        if self.phase_refresh_policy not in ('phase_once_v1','event_shift_v1'):
-            raise ValueError('Unknown phase-refresh policy')
-        if self.phase_refresh_policy=='event_shift_v1' and not self.phase_refresh:
-            raise ValueError('Event-shift reopening requires phase refresh')
         self.refresh_phase=None
         if self.phase_refresh and self.fast_selection:raise ValueError('Phase refresh experiment requires M3 without Fast')
         self.first_refresh_step=config.get('m3_first_refresh_step')
@@ -389,17 +384,11 @@ class DeadlineRuntime:
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
         phase_suppressed=[]
-        phase_reopened=[]
         if self.phase_refresh:
             from perceptbudget.critical_wait import covered_by_phase
             if self.refresh_phase and step>=self.refresh_phase['stop_step']:self.refresh_phase=None
-            match=tolerance if self.phase_refresh_policy=='event_shift_v1' else None
-            phase_reopened=[dict(e) for e in candidates if covered_by_phase(e,self.refresh_phase)
-                and not covered_by_phase(e,self.refresh_phase,match_steps=match)]
-            phase_suppressed=[dict(e) for e in candidates
-                if covered_by_phase(e,self.refresh_phase,match_steps=match)]
-            candidates=[e for e in candidates
-                if not covered_by_phase(e,self.refresh_phase,match_steps=match)]
+            phase_suppressed=[dict(e) for e in candidates if covered_by_phase(e,self.refresh_phase)]
+            candidates=[e for e in candidates if not covered_by_phase(e,self.refresh_phase)]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -468,8 +457,6 @@ class DeadlineRuntime:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
             self.plan.update(refresh_phase_covered=self.refresh_phase,
-                refresh_phase_policy=self.phase_refresh_policy,
-                refresh_phase_reopened=phase_reopened,
                 refresh_phase_suppressed=phase_suppressed,
                 refresh_phase_response=dict(start_step=response['start_step'],stop_step=response['stop_step'],
                     source_prediction_id=item[1],target_step=critical,kinds=critical_kinds) if response and self.plan['reason']=='action_event' else None)

@@ -57,6 +57,8 @@ Spatial9还发现去重范围偏宽：旧闭爪预测52步，新预测变为58�
 
 先分别验证两个剩余问题，不叠加Fast：检查同阶段事件明显位移时是否应重新开放刷新；补充推盘、放置等没有夹爪突变的关键区间判断。频率选择除到达时限外，需要评估取图过早和更长RTC旧动作约束的质量影响。保持q30原结果，先用固定小任务成对验证有效后再扩测。
 
+后续[四任务配对](PHASE_EVENT_SHIFT_20261104.md)已完成：时间漂移重刷候选未提高成功数，Spatial9抓取进展退步，未采用。原阶段去重保留，这个可疑点不能直接当作已证实的退步原因。
+
 ## 证据
 
 - [原四对轨迹审核](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T025448.303649Z-critical-refresh-review-a55f76ec/paired_trace_review.json>)、[复核脚本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T025448.303649Z-critical-refresh-review-a55f76ec/review.py>)
