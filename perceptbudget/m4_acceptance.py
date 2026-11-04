@@ -71,10 +71,10 @@ def precompiled_environments(directory, tasks, config):
             _write_json_atomically(directory/'environment_cache.json',report)
 
 
-def manifest(config):
+def manifest(config, *, all_tasks=False):
     from perceptbudget.baseline import FROZEN
     fixed = {k: config[k] for k in FROZEN}
-    fixed.update(seed=7, init=0, tasks=[[s, t] for s in SUITES for t in TASK_IDS],
+    fixed.update(seed=7, init=0, tasks=[[s, t] for s in SUITES for t in (range(10) if all_tasks else TASK_IDS)],
                  control_hz=20, task_limits='existing suite-specific limits',
                  checkpoint_path=config['checkpoint_path'], norm_stats_path=config['norm_stats_path'])
     fixed['fingerprint'] = hashlib.sha256(json.dumps(fixed, sort_keys=True).encode()).hexdigest()
@@ -91,7 +91,11 @@ def copy_precompiled_environment_cache(source, destination, tasks, config):
         raise ValueError('Environment cache source and destination must differ')
     metadata=json.loads((source/'run.json').read_text())
     saved=metadata.get('config_snapshot',{})
-    for key in ('m4_acceptance_group','m4_acceptance_manifest'):
+    shared_policies=(config.get('m4_all_tasks') and saved.get('m4_all_tasks')
+        and config.get('m4_acceptance_group') in ('q30','m3')
+        and saved.get('m4_acceptance_group') in ('q30','m3'))
+    for key in (('m4_acceptance_manifest',) if shared_policies else
+                ('m4_acceptance_group','m4_acceptance_manifest')):
         if saved.get(key)!=config.get(key):
             raise ValueError('Environment cache configuration mismatch: '+key)
     report=json.loads((source/'environment_cache.json').read_text())

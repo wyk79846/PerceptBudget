@@ -63,6 +63,114 @@ def test_manifest_fixes_twelve_cases_and_detects_model_changes():
     assert manifest(cfg)['fingerprint']!=fixed['fingerprint']
 
 
+def test_all_task_manifest_adds_forty_cases_without_replacing_the_twelve_case_baseline():
+    cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats')
+    legacy=manifest(cfg)
+    full=manifest(cfg,all_tasks=True)
+    assert len(full['tasks'])==len({tuple(t) for t in full['tasks']})==40
+    for suite in ('libero_spatial','libero_object','libero_goal','libero_10'):
+        assert [t for s,t in full['tasks'] if s==suite]==list(range(10))
+    assert full['seed']==legacy['seed']==7 and full['init']==legacy['init']==0
+    assert full['fingerprint']!=legacy['fingerprint']
+    assert manifest(cfg)==legacy and len(legacy['tasks'])==12
+
+
+def test_all_task_entry_has_eighty_episodes_and_matched_request_images(monkeypatch,capsys):
+    from scripts import run_m4_acceptance,run_m4
+    args=['run_m4_acceptance.py','--candidate','m3','--all-tasks',
+        '--request-only-images','--reuse-prefix-graphs','--low-full','--three-frequency',
+        '--idle-min-ms','50','--start-floor-ms','25','--dry-run']
+    monkeypatch.setattr(sys,'argv',args)
+    assert run_m4_acceptance.main()==0
+    parent=json.loads(capsys.readouterr().out)
+    assert parent['episodes']==80 and parent['model_loads']==2
+    assert len(parent['tasks_to_run'])==40
+    assert parent['request_only_images'] and parent['reuse_prefix_graphs']
+    assert parent['candidate_clock_arguments'][-2:]==['--idle-min-ms','50']
+    for group in ('q30','m3'):
+        flags=parent['candidate_clock_arguments'] if group=='m3' else []
+        monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group',group,
+            '--all-tasks','--request-only-images','--reuse-prefix-graphs','--dry-run',*flags])
+        assert run_m4.main()==0
+        child=json.loads(capsys.readouterr().out)
+        assert child['episodes']==40 and child['tasks']==parent['tasks_to_run']
+        assert child['request_only_images'] and child['reuse_prefix_graphs']
+        assert child['three_frequency']==(group=='m3')
+
+
+def test_all_task_flags_reach_environment_preparation_and_model_worker(tmp_path):
+    from unittest.mock import patch
+    from scripts import run_m4
+    cfg=run_m4.load_config()
+    cfg['output_root']=str(tmp_path/'results')
+    commands=[]
+    def stop_before_model(command,*unused,**kwargs):
+        commands.append(command)
+        if '--prepare-environments' in command:return 0
+        raise RuntimeError('stop before model')
+    args=['run_m4.py','--acceptance-group','q30','--all-tasks',
+          '--request-only-images','--reuse-prefix-graphs']
+    with patch.object(sys,'argv',args),patch.object(run_m4,'load_config',return_value=cfg), \
+         patch.object(run_m4,'validate'),patch.object(run_m4,'clock_preflight'), \
+         patch('perceptbudget.clock_access.authorize'), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=stop_before_model):
+        with pytest.raises(RuntimeError,match='stop before model'):run_m4.main()
+    assert len(commands)==2 and all('--all-tasks' in c for c in commands)
+    worker=next(c for c in commands if '--worker' in c)
+    assert '--request-only-images' in worker and '--reuse-prefix-graphs' in worker
+    run=next((tmp_path/'results'/'M4').iterdir())
+    cfg=json.loads((run/'run.json').read_text())['config_snapshot']
+    assert len(cfg['m4_tasks'])==40 and cfg['m4_resident_prefix_graphs']
+
+
+def test_full_session_forwards_both_camera_policies_and_reuses_the_q30_environment_cache(monkeypatch,tmp_path):
+    from scripts import run_m4_acceptance as entry
+    cfg=entry.load_config();cfg['output_root']=str(tmp_path/'results')
+    commands=[]
+    original_run=entry.subprocess.run
+    def fake_run(command,*args,**kwargs):
+        if '--acceptance-group' not in command:return original_run(command,*args,**kwargs)
+        commands.append(command)
+        group=command[command.index('--acceptance-group')+1]
+        index=Path(command[command.index('--result-index')+1])
+        index.write_text(json.dumps({'run':str(index.parent/(group+'-source'))}))
+        return SimpleNamespace(returncode=0)
+    from pathlib import Path
+    monkeypatch.setattr(entry,'load_config',lambda **kw:cfg)
+    monkeypatch.setattr(entry,'validate_baseline',lambda *a,**kw:None)
+    monkeypatch.setattr(entry,'summarize',lambda *a,**kw:{'status':'completed'})
+    monkeypatch.setattr('perceptbudget.clock_access.authorize',lambda:None)
+    monkeypatch.setattr(entry.subprocess,'run',fake_run)
+    monkeypatch.setattr(sys,'argv',['entry','--all-tasks','--request-only-images',
+        '--reuse-prefix-graphs','--low-full','--three-frequency','--idle-min-ms','50'])
+    assert entry.main()==0
+    q30,m3=commands
+    for command in commands:
+        assert '--all-tasks' in command and '--request-only-images' in command and '--reuse-prefix-graphs' in command
+    assert '--idle-min-ms' not in q30 and '--three-frequency' not in q30
+    assert m3[m3.index('--idle-min-ms')+1]=='50'
+    assert m3[m3.index('--environment-cache-from')+1].endswith('q30-source')
+
+
+def test_all_task_environment_cache_can_cross_full_only_policies_with_identical_manifest(tmp_path):
+    from perceptbudget.m4_acceptance import copy_precompiled_environment_cache
+    source=tmp_path/'source';source.mkdir()
+    fixed={'fingerprint':'same40'}
+    saved=dict(m4_acceptance_group='q30',m4_acceptance_manifest=fixed,m4_all_tasks=True)
+    (source/'run.json').write_text(json.dumps({'config_snapshot':saved}))
+    (source/'environment_cache.json').write_text(json.dumps(dict(status='passed',frozen=True,
+        cases=[dict(suite='libero_spatial',task_id=0,passed=True)])))
+    (source/'environment_models').mkdir();(source/'environment_models/a.mjb').write_bytes(b'cached-model')
+    cfg=dict(saved,m4_acceptance_group='m3')
+    dest=tmp_path/'destination';dest.mkdir()
+    result=copy_precompiled_environment_cache(source,dest,[('libero_spatial',0)],cfg)
+    assert result['models']==1 and (dest/'environment_models/a.mjb').read_bytes()==b'cached-model'
+    with pytest.raises(ValueError,match='group'):
+        copy_precompiled_environment_cache(source,tmp_path/'wrong-policy',[('libero_spatial',0)],dict(cfg,m4_acceptance_group='joint'))
+    with pytest.raises(ValueError,match='manifest'):
+        copy_precompiled_environment_cache(source,tmp_path/'wrong-manifest',[('libero_spatial',0)],dict(cfg,m4_acceptance_manifest={'fingerprint':'other'}))
+
+
 def test_q30_has_no_joint_scheduler_or_fast():
     cfg=dict(m4_enabled=True,m3_scheduler_mode='deadline_dvfs',m3_action_events_enabled=True,
              m3_dvac_enabled=True,m2_visual_fast_enabled=True,m2_split_delay=True)

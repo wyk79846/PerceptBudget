@@ -17,10 +17,11 @@ def candidate_clock_arguments(args):
     flags=['--low-full'] if args.low_full else []
     if args.three_frequency:flags.append('--three-frequency')
     if args.start_floor_ms:flags.extend(['--start-floor-ms',str(args.start_floor_ms)])
+    if getattr(args,'idle_min_ms',None) is not None:flags.extend(['--idle-min-ms',str(args.idle_min_ms)])
     return flags
 
 
-def validate_baseline(source,fixed):
+def validate_baseline(source,fixed,*,request_only_images=None):
     source=Path(source)
     meta=json.loads((source/'run.json').read_text())['config_snapshot']
     result=json.loads((source/'summary.json').read_text())
@@ -38,6 +39,8 @@ def validate_baseline(source,fixed):
                 cfg.get('m3_scheduler_mode')!='record_only' or not cfg.get('m3_hold_high_clocks') or
                 not audit['passed'] or not clock_audit(run)['passed']):
             raise ValueError('Baseline configuration/audit mismatch: '+str(run))
+        if request_only_images is not None and bool(cfg.get('m4_request_only_images'))!=request_only_images:
+            raise ValueError('Baseline image acquisition policy differs: '+str(run))
     return source
 
 
@@ -45,8 +48,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-run',type=Path,help='Reuse the completed q30 group path from an earlier session')
     parser.add_argument('--candidate',choices=('joint','m3','m3_fast'),default='m3',help='Default: frozen M3; Fast and joint scheduling require explicit selection')
+    parser.add_argument('--all-tasks',action='store_true',help='All10 tasks in each of the four suites; two40-episode groups when no saved baseline is reused')
+    parser.add_argument('--request-only-images',action='store_true',help='Enable request-only dual-camera acquisition in both q30 and M3')
+    parser.add_argument('--reuse-prefix-graphs',action='store_true',help='Reuse bounded exact-length Full CUDA graphs across tasks in both groups')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='M3 screen on the first3 fixed tasks; reuse full q30 record')
-    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
+    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(40),help='Explicit task indices; above11 requires --all-tasks')
     parser.add_argument('--m3-reference',type=Path,help='Existing combined M3 result JSON for an additional per-task comparison')
     parser.add_argument('--resume-joint',type=Path,help='Keep completed joint outcomes and run only missing tasks')
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
@@ -58,6 +64,7 @@ def main():
     parser.add_argument('--low-full',action='store_true',help='M3 only: deadline-first Full frequency selection; energy recorded only; no Fast')
     parser.add_argument('--three-frequency',action='store_true',help='M3 medium-first Full with306MHz Continue; requires --low-full')
     parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,help='With three frequencies: allow same-tick startup within25ms')
+    parser.add_argument('--idle-min-ms',type=int,choices=(40,50,100,150,200),help='M3 three-frequency Continue threshold; forwarded only to the candidate')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
@@ -65,6 +72,10 @@ def main():
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
     args=parser.parse_args()
+    if (args.all_tasks or args.request_only_images or args.reuse_prefix_graphs) and args.candidate!='m3':
+        parser.error('All-task and request-image/Full-graph options require --candidate m3')
+    if args.idle_min_ms is not None and not args.three_frequency:parser.error('--idle-min-ms requires --three-frequency')
+    if args.task_indices and not args.all_tasks and max(args.task_indices)>=12:parser.error('Task indices above11 require --all-tasks')
     if args.three_frequency and (args.candidate!='m3' or not args.low_full):parser.error('--three-frequency requires --candidate m3 --low-full')
     if args.start_floor_ms and not args.three_frequency:parser.error('--start-floor-ms requires --three-frequency')
     if args.low_full and args.candidate!='m3':parser.error('--low-full requires M3 without Fast')
@@ -84,20 +95,23 @@ def main():
     if args.m3_reference and args.candidate!='m3_fast':parser.error('M3 reference is for m3_fast')
     if args.m3_reference and not args.m3_reference.is_file():parser.error('M3 reference file missing')
     if args.environment_cache_from and not args.environment_cache_from.is_dir():parser.error('Environment cache source must be a completed M4 run directory')
-    cfg=load_config(repo_root=ROOT);fixed=manifest(cfg)
-    task_plan=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
+    cfg=load_config(repo_root=ROOT);fixed=manifest(cfg,all_tasks=args.all_tasks)
+    cfg.update(m4_all_tasks=args.all_tasks,m4_request_only_images=args.request_only_images,
+               m4_resident_prefix_graphs=args.reuse_prefix_graphs)
+    task_plan=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'] if args.first_tasks==12 else fixed['tasks'][:args.first_tasks]
     continuation=None
     if args.resume_joint:
         if args.candidate!='joint':parser.error('--resume-joint is only for the joint candidate')
         if not args.baseline_run:parser.error('Joint continuation requires --baseline-run')
         from perceptbudget.m4_acceptance import resume_joint
         continuation=resume_joint(args.resume_joint,dict(cfg,m4_settings=json.loads((ROOT/'m4.json').read_text())))
-    if args.baseline_run:validate_baseline(args.baseline_run,fixed)
+    if args.baseline_run:validate_baseline(args.baseline_run,fixed,request_only_images=True if args.request_only_images else None)
     groups=[args.candidate] if args.baseline_run else ['q30',args.candidate]
     if args.dry_run:
         print(json.dumps(dict(manifest=fixed,tasks_to_run=task_plan,groups_to_run=groups,episodes=(len(continuation['remaining_tasks']) if continuation else len(task_plan)*len(groups)),
             reused_joint_episodes=len(continuation['episodes']) if continuation else 0,
             candidate_clock_arguments=candidate_clock_arguments(args),lean_capture=args.candidate=='m3',
+            all_tasks=args.all_tasks,request_only_images=args.request_only_images,reuse_prefix_graphs=args.reuse_prefix_graphs,
             common_low_tail_seconds=3. if args.candidate=='m3' else None,
             low_full=args.low_full,phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,model_loads=len(groups),candidate=args.candidate,joint_version=POLICY_REVISION if args.candidate=='joint' else f'{args.candidate}_D_joint_eta{args.m3_eta_ms}',signal='events_only; PACE-inspired key-phase guard and one Full response' if args.fast_key_phases else 'events_only; no PACE rule; close-slowdown coverage off'),ensure_ascii=False))
         return 0
@@ -126,9 +140,13 @@ def main():
             if group=='m3':command.extend(candidate_clock_arguments(args))
             if args.candidate=='m3' and group in ('q30','m3'):
                 command.extend(['--lean-continue','--common-low-tail'])
+                if args.request_only_images:command.append('--request-only-images')
+                if args.reuse_prefix_graphs:command.append('--reuse-prefix-graphs')
+            if args.all_tasks:command.append('--all-tasks')
             if args.full_only:command.append('--full-only')
             if args.reuse_preparation:command.append('--reuse-preparation')
-            if args.environment_cache_from:command.extend(['--environment-cache-from',str(args.environment_cache_from)])
+            cache_source=args.environment_cache_from or (sources.get('q30') if args.all_tasks and group=='m3' else None)
+            if cache_source:command.extend(['--environment-cache-from',str(cache_source)])
             if args.task_indices:command.extend(['--task-indices',*map(str,args.task_indices)])
             if group=='joint' and args.resume_joint:command.extend(['--resume-from',str(args.resume_joint)])
             with log.open('w') as stream:
@@ -136,7 +154,7 @@ def main():
             if index.exists():sources[group]=json.loads(index.read_text())['run']
             _write_json_atomically(session/'summary.json',dict(status='running',sources=sources,groups_to_run=groups))
             if code:raise RuntimeError(group+' failed; inspect '+str(log)+'; completed episodes remain saved')
-            if group=='q30':validate_baseline(sources[group],fixed)
+            if group=='q30':validate_baseline(sources[group],fixed,request_only_images=True if args.request_only_images else None)
             print('DONE '+group+' run='+sources[group],flush=True)
         result=summarize(session,sources,task_plan=task_plan)
         if args.m3_reference:

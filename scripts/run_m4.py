@@ -13,8 +13,10 @@ def main():
     parser.add_argument('--suites',nargs='+',choices=('libero_spatial','libero_object','libero_goal','libero_10'),default=['libero_spatial'])
     parser.add_argument('--task-id',type=int,choices=range(10),default=0)
     parser.add_argument('--acceptance-group',choices=('q30','joint','m3','m3_fast'),help='Fixed four-suite/three-task acceptance group')
+    parser.add_argument('--all-tasks',action='store_true',help='With M3 or q30: all10 tasks in each of the four LIBERO suites; preserve the default12-task manifest')
+    parser.add_argument('--reuse-prefix-graphs',action='store_true',help='Reuse the bounded exact-length Full CUDA graph bank across tasks, without skipping resets or calibration')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='Use the first3 fixed tasks for an M3 screen')
-    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(12),help='Explicit canonical task indices for an M3 paired screen')
+    parser.add_argument('--task-indices',type=int,nargs='+',choices=range(40),help='Explicit canonical task indices;0..11 by default,0..39 with --all-tasks')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
@@ -58,6 +60,12 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.all_tasks and args.acceptance_group not in ('m3','q30'):
+        parser.error('--all-tasks requires --acceptance-group m3 or q30')
+    if args.reuse_prefix_graphs and args.acceptance_group not in ('m3','q30'):
+        parser.error('--reuse-prefix-graphs requires Full-only M3 or q30')
+    if args.task_indices and not args.all_tasks and max(args.task_indices)>=12:
+        parser.error('Task indices above11 require --all-tasks')
     if args.idle_reference_ms!=200 and (args.idle_min_ms is None or not args.full_frequency_pair):
         parser.error('--idle-reference-ms requires --idle-min-ms and --full-frequency-pair')
     if args.idle_min_ms is not None and (not args.three_frequency or args.acceptance_group!='m3' or args.full_energy or args.ordinary_fast or args.continue_overhead_pair):
@@ -117,6 +125,8 @@ def main():
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
     cfg['m4_request_only_images']=args.request_only_images
     cfg['m4_request_capture_pair']=args.request_capture_pair
+    cfg['m4_all_tasks']=args.all_tasks
+    cfg['m4_resident_prefix_graphs']=args.reuse_prefix_graphs
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
         enable_profiles()
@@ -139,7 +149,7 @@ def main():
         m3_event_coverage_mode='event_only',m3_signal_policy='earliest',m3_merge_slowdown_steps=None)
     if args.acceptance_group:
         from perceptbudget.m4_acceptance import manifest
-        fixed=manifest(cfg)
+        fixed=manifest(cfg,all_tasks=args.all_tasks)
         cfg.update(m4_acceptance_group=args.acceptance_group,m4_acceptance_manifest=fixed)
         if args.acceptance_group=='joint':
             cfg.update(m4_fast_prompt_capacity=20,
@@ -150,7 +160,7 @@ def main():
         if args.acceptance_group=='q30':
             settings['mode']='record_only'
             cfg.update(m4_enabled=False,m3_hold_high_clocks=True)
-            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
+            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'] if args.first_tasks==12 else fixed['tasks'][:args.first_tasks]
         if args.acceptance_group in ('m3','m3_fast'):
             from perceptbudget.m4_acceptance import configure_m3,configure_m3_fast
             (configure_m3_fast if args.acceptance_group=='m3_fast' else configure_m3)(cfg,settings)
@@ -166,7 +176,7 @@ def main():
             cfg['m3_fast_full_only']=args.full_only
             settings['timing']['safety_margin_seconds']=args.m3_eta_ms/1000
             cfg['m3_replay_eta_ms']=args.m3_eta_ms
-            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'][:args.first_tasks]
+            settings['calibration_tasks']=[fixed['tasks'][i] for i in args.task_indices] if args.task_indices else fixed['tasks'] if args.first_tasks==12 else fixed['tasks'][:args.first_tasks]
             cfg['m3_comparison_tasks']=settings['calibration_tasks']
     if args.low_full:
         from perceptbudget.m3_low_full import load_costs
@@ -206,6 +216,7 @@ def main():
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='selective320_no_state' if args.ordinary_fast else ('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
+            all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
             three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
@@ -307,6 +318,8 @@ def main():
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')
             if args.request_only_images:command.append('--request-only-images')
             if args.request_capture_pair:command.append('--request-capture-pair')
+            if args.all_tasks:command.append('--all-tasks')
+            if args.reuse_prefix_graphs:command.append('--reuse-prefix-graphs')
             if args.common_low_tail:command.append('--common-low-tail')
             if args.start_floor_ms:command.extend(['--start-floor-ms',str(args.start_floor_ms)])
             if args.full_frequency_pair:command.append('--full-frequency-pair')
@@ -326,6 +339,7 @@ def main():
                     '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
                 if args.acceptance_group in ('m3','m3_fast'):preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
                 if args.reuse_preparation:preparation.append('--reuse-preparation')
+                if args.all_tasks:preparation.append('--all-tasks')
                 if args.environment_cache_from:preparation.extend(['--environment-cache-from',str(args.environment_cache_from)])
                 preparation.extend(['--first-tasks',str(args.first_tasks)])
                 if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
