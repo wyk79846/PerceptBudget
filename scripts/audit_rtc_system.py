@@ -669,11 +669,12 @@ def audit(run):
                                 origin=old['observation_step'],source_step=at,period=proof['source_period_seconds'],
                                 response_seconds=report['response_seconds'],margin_seconds=t['margin_seconds'],
                                 minimum_steps=cfg['m3_feedback_minimum_steps'],actions=old['actions'],
-                                reference=reference,config=ec)
+                                reference=reference,config=ec,policy=cfg['m3_feedback_policy'])
                             suppressed=d.get('feedback_suppressed',[])
                             allowed={(e['kind'],e['target_step']) for e in expected['events'] if e['suppress']}
                             check('feedback_window_fixed_and_replayed',
-                                cfg['m3_feedback_policy']==report.get('policy')=='overlap_pacing_v1'
+                                cfg['m3_feedback_policy']==report.get('policy')
+                                and report['policy'] in ('overlap_pacing_v1','overlap_pacing_v2')
                                 and report==expected and report==source_decisions[0].get('feedback_review'),pid)
                             check('feedback_suppression_scope',all((e['kind'],e['target_step']) in allowed
                                 for e in suppressed) and not any(e['target_step']==d.get('critical_step')

@@ -294,7 +294,7 @@ class DeadlineRuntime:
             raise ValueError('Ordinary turns require directional event identity')
         self.feedback_policy=config.get('m3_feedback_policy')
         self.feedback_minimum=config.get('m3_feedback_minimum_steps',20)
-        if self.feedback_policy not in (None,'overlap_pacing_v1'):
+        if self.feedback_policy not in (None,'overlap_pacing_v1','overlap_pacing_v2'):
             raise ValueError('Unknown feedback refresh policy')
         if self.feedback_policy and (self.ordinary_turn_policy!='context_v1'
                 or type(self.feedback_minimum) is not int or not 1<=self.feedback_minimum<self.horizon):
@@ -383,7 +383,8 @@ class DeadlineRuntime:
             critical=timing.get('critical_step')
             if self.event_coverage_mode=='event_only':
                 # Frozen pre-optimization policy, retained only for paired tests.
-                if (timing['reason']=='action_event' and not timing['arrival_lateness_seconds']
+                if (timing['reason']=='action_event' and (not timing['arrival_lateness_seconds']
+                        or self.feedback_policy=='overlap_pacing_v2')
                         and commit['commit_step'] <= timing['critical_step']):
                     self.covered_events.extend(dict(kind=kind,target_step=timing['critical_step'])
                         for kind in timing['candidate_event_kinds'])
@@ -503,7 +504,7 @@ class DeadlineRuntime:
                     prediction_id=item[1],origin=current['origin'],source_step=forecast_proof['source_step'],
                     period=forecast_proof['source_period_seconds'],response_seconds=response,
                     margin_seconds=self.margin.seconds,minimum_steps=self.feedback_minimum,
-                    actions=current['phase_actions'],reference=reference,config=self.events_config)
+                    actions=current['phase_actions'],reference=reference,config=self.events_config,policy=self.feedback_policy)
             ignored={(e['kind'],e['target_step']) for e in current['feedback_review']['events'] if e['suppress']}
             feedback_suppressed=[dict(e) for e in candidates if (e['kind'],e['target_step']) in ignored]
             candidates=[e for e in candidates if e not in feedback_suppressed]

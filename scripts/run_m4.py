@@ -147,7 +147,7 @@ def main():
             m3_phase_coverage_memory='all_active_v1',m3_event_identity='turn_direction_v1',
             m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=50)
     if args.energy_refresh:
-        cfg.update(m3_feedback_policy='overlap_pacing_v1',m3_feedback_minimum_steps=20)
+        cfg.update(m3_feedback_policy='overlap_pacing_v2',m3_feedback_minimum_steps=20)
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
     if args.critical_wait:
