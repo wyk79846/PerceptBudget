@@ -34,3 +34,18 @@
 - [第一批原始配对检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T045317.294800Z-acceptance-m3-a38e9898/paired_bootstrap_audit.json>)、[补跑原始汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T045923.828714Z-acceptance-m3-7e0e2ad0/summary.json>)
 - [实验入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T045217.739775Z-gripper-q30-probe-f2f095a5/pair.py>)、[复核入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T045217.739775Z-gripper-q30-probe-f2f095a5/review.py>)：需候选归档分支；主线已撤回该规则。
 - [结束频率读数](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T045217.739775Z-gripper-q30-probe-f2f095a5/clock_after.json>)：GPU1173MHz/EMC3199MHz/CPU1497.6MHz。
+
+## 保留全部信号，只加30步上限：单任务后续
+
+用户要求缩小到一个任务，因此仅测Spatial2原组/候选各一次、一份常驻模型。候选保留夹爪、减速、转向、中频优先、关键等待和原RTC，只设置`m3_max_refresh_interval=30`；默认值为空，原规则继续保留。
+
+|同一任务|结果|任务时间|任务＋在途推理能量|Full次数|
+|---|---|---:|---:|---:|
+|本轮原动态|220步超时|14.74s|160.38J|8|
+|完整信号＋30步上限|90步成功|6.33s|73.13J|4|
+
+初始物理/双图/state/噪声/首动作逐值相同。两组首次不同观测在54步：原组0/25/60/95…，候选0/25/54/83；54步前动作和物理逐值相同，65步首次执行动作不同。候选4次Full中3次中频，实际后续观测间隔29步；全部事件信号仍启用。两回合均无缓冲耗尽，1721项独立系统检查、配对与时钟恢复通过，126项相关代码测试通过。
+
+此项保留为候选，代码`1addf24`，分支`experiment/all-events-interval30-20261104`；没有替换默认策略，也没有在本轮重跑固定q30。此前本任务原动态曾成功，本次结果仅为一次配对小测。
+
+- [单任务汇总与独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052913.709529Z-interval30-single-6566b45b/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052913.709529Z-interval30-single-6566b45b/results.csv>)、[原始运行](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052958.132268Z-acceptance-m3-2d037750/summary.json>)
