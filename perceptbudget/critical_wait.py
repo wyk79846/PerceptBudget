@@ -36,7 +36,7 @@ class PhaseWait:
         self.completed = None
 
     def review(self, request, actions, origin, config):
-        from perceptbudget.key_phases import absolute_intervals
+        from perceptbudget.key_phases import intervals_for_timing
         target = wait_target(request)
         kinds = request.get('m3_timing', {}).get('candidate_event_kinds', [])
         old = self.completed
@@ -45,7 +45,7 @@ class PhaseWait:
             ('gripper_close' in kinds and 'gripper_open' in old['kinds'])))
         if old and target is not None and old['start_step'] <= target < old['stop_step'] and not opposite:
             return dict(wait=False, reason='phase_already_waited', covered_phase=dict(old))
-        phases = absolute_intervals(actions, origin, config)
+        phases = intervals_for_timing(actions, origin, config, request.get('m3_timing', {}))
         phase = next((p for p in phases if p['end_observed'] and target is not None
                       and p['start_step'] <= target < p['stop_step']), None)
         return dict(wait=True, reason='new_phase' if phase else 'point_event', phase=phase,

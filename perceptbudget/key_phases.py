@@ -8,7 +8,7 @@ from statistics import median
 from perceptbudget.action_events import EventConfig,detect_events,_actions
 
 
-def intervals(actions,config=None):
+def intervals(actions,config=None,*,events=None):
     config=config or EventConfig()
     actions=_actions(actions)
     if len(actions)<3:return []
@@ -24,7 +24,8 @@ def intervals(actions,config=None):
         right=runs[i+1][2] if i+1<len(runs) else None
         if (left is None or value>left) and (right is None or value>right):peaks.append((start+stop)//2)
         if left is not None and value<left and (right is None or value<right):valleys.append((start+stop)//2)
-    events=[e for e in detect_events(actions,config) if e['kind'] in ('gripper_close','gripper_open','turn')]
+    events=[e for e in (detect_events(actions,config) if events is None else events)
+            if e['kind'] in ('gripper_close','gripper_open','turn')]
     phases=[]
     for valley in valleys:
         left=next((p for p in reversed(peaks) if p<valley),None)
@@ -48,8 +49,34 @@ def intervals(actions,config=None):
     return phases
 
 
-def absolute_intervals(actions,origin,config=None):
-    return [dict(p,start_step=origin+p['start_offset'],stop_step=origin+p['stop_offset']) for p in intervals(actions,config)]
+def absolute_intervals(actions,origin,config=None,*,events=None):
+    return [dict(p,start_step=origin+p['start_offset'],stop_step=origin+p['stop_offset'])
+            for p in intervals(actions,config,events=events)]
+
+
+def intervals_for_timing(actions,origin,config,timing):
+    """Use the same event evidence as the selected refresh decision.
+
+    The motion shoulders/boundaries and thresholds stay unchanged. A new
+    forecast only replaces the legacy gripper/turn anchors. In particular an
+    empty new forecast must not silently fall back to expired-prefix events.
+    """
+    source=timing.get('phase_event_source')
+    if source is None:
+        return absolute_intervals(actions,origin,config)
+    if source!='remaining_v1':
+        raise ValueError('Unknown phase event source')
+    proof=timing['critical_forecast'];result=proof['result'];at=proof['source_step']
+    if (proof.get('version')!='remaining_v1' or result['current_step']!=at
+            or not origin<=at<=origin+len(actions)):
+        raise ValueError('Phase anchors require the active remaining-action forecast')
+    anchors=[]
+    for event in result['events']:
+        target=event['target_step']
+        if target!=at+event['offset'] or not at<=target<origin+len(actions):
+            raise ValueError('Phase anchor outside its remaining-action source')
+        anchors.append(dict(kind=event['kind'],offset=target-origin))
+    return absolute_intervals(actions,origin,config,events=anchors)
 
 
 def coverage(phases,*,step,now,latest_start,period,horizon,prediction_id):

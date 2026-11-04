@@ -595,8 +595,21 @@ def audit(run):
                         expected_time=d['decision_monotonic']+(critical-decision_step)*d['estimated_control_period_seconds'] if critical is not None else None
                         check('remaining_forecast_current_arrival',d.get('critical_time_monotonic')==expected_time
                             and (critical is None or any(e['target_step']==critical for e in replay['events'])),pid)
+                        if cfg.get('m3_phase_event_source'):
+                            from perceptbudget.key_phases import intervals_for_timing
+                            check('remaining_phase_event_source',
+                                cfg['m3_phase_event_source']==d.get('phase_event_source')=='remaining_v1',pid)
+                            shared=intervals_for_timing(old['actions'],old['observation_step'],ec,d)
+                            phase=next((p for p in shared if p['end_observed'] and critical is not None
+                                and p['start_step']<=critical<p['stop_step']),None)
+                            expected_response=(dict(start_step=phase['start_step'],stop_step=phase['stop_step'],
+                                source_prediction_id=old['prediction_id'],target_step=critical,
+                                kinds=d['candidate_event_kinds']) if phase and d['reason']=='action_event' else None)
+                            check('remaining_phase_response_replay',
+                                d.get('refresh_phase_response')==expected_response
+                                and t.get('refresh_phase_response')==expected_response,pid)
                 if cfg.get('m3_phase_refresh'):
-                    from perceptbudget.key_phases import absolute_intervals
+                    from perceptbudget.key_phases import intervals_for_timing
                     from perceptbudget.action_events import EventConfig
                     from perceptbudget.critical_wait import covered_by_phase
                     phase=d.get('refresh_phase_covered')
@@ -605,7 +618,8 @@ def audit(run):
                         response=completed.get('m3_timing',{}).get('refresh_phase_response')
                         matched=[c for c in commits if c['prediction_id']==phase['completed_prediction_id']]
                         source=by_id.get(phase['source_prediction_id'],{})
-                        phases=absolute_intervals(source.get('actions',[]),source.get('observation_step',0),EventConfig(**cfg.get('m3_events',{})))
+                        phases=intervals_for_timing(source.get('actions',[]),source.get('observation_step',0),
+                            EventConfig(**cfg.get('m3_events',{})),completed.get('m3_timing',{}))
                         check('m3_refresh_phase_provenance',bool(response) and bool(matched)
                             and all(phase.get(k)==response.get(k) for k in response)
                             and phase['completed_step']==matched[0]['commit_step']

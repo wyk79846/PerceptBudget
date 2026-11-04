@@ -270,6 +270,11 @@ class DeadlineRuntime:
             raise ValueError('Unknown critical forecast version')
         if self.critical_forecast_version and (self.fast_selection or self.dvac_enabled or not self.action_events_enabled):
             raise ValueError('Remaining-action forecast requires Full and action cues only')
+        self.phase_event_source=config.get('m3_phase_event_source')
+        if self.phase_event_source not in (None,'remaining_v1'):
+            raise ValueError('Unknown phase event source')
+        if self.phase_event_source and (self.critical_forecast_version!='remaining_v1' or not self.phase_refresh):
+            raise ValueError('Shared phase events require remaining_v1 and phase refresh')
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -309,7 +314,11 @@ class DeadlineRuntime:
             context_mode=request.get('m3_fast_choice',{}).get('mode','Full'))
         if self.phase_refresh:
             from perceptbudget.key_phases import absolute_intervals
-            self.chunks[pid]['refresh_phases']=absolute_intervals(request['actions'],origin,self.events_config)
+            if getattr(self,'phase_event_source',None):
+                self.chunks[pid]['phase_actions']=request['actions']
+                self.chunks[pid]['refresh_phases']=[]
+            else:
+                self.chunks[pid]['refresh_phases']=absolute_intervals(request['actions'],origin,self.events_config)
             response=request.get('m3_timing',{}).get('refresh_phase_response')
             if response and commit['commit_step']<response['stop_step']:
                 self.refresh_phase=dict(response,completed_prediction_id=pid,
@@ -399,6 +408,11 @@ class DeadlineRuntime:
                     source_step=step,source_monotonic=now,source_period_seconds=period,
                     history_steps=[r['step'] for r in past],result=result)
                 current['critical_forecast']=forecast_proof
+                if getattr(self,'phase_event_source',None):
+                    from perceptbudget.key_phases import intervals_for_timing
+                    current['refresh_phases']=intervals_for_timing(current['phase_actions'],
+                        current['origin'],self.events_config,dict(
+                            phase_event_source=self.phase_event_source,critical_forecast=forecast_proof))
             # Targets stay fixed while this predicted chunk is active. Moving
             # the history window each tick would slide gradual-motion targets.
             self.events=[dict(e,prediction_id=item[1]) for e in forecast_proof['result']['events']
@@ -481,6 +495,8 @@ class DeadlineRuntime:
         if forecast_proof is not None:
             self.plan.update(critical_forecast=forecast_proof,
                 critical_time_monotonic=now+(critical-step)*period if critical is not None else None)
+            if getattr(self,'phase_event_source',None):
+                self.plan['phase_event_source']=self.phase_event_source
         if self.phase_refresh:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
