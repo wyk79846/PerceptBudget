@@ -281,6 +281,11 @@ class DeadlineRuntime:
         if self.phase_coverage_memory and self.phase_event_source!='remaining_v2':
             raise ValueError('Active phase memory requires typed remaining_v2 coverage')
         self.refresh_phase_history=[]
+        self.event_identity=config.get('m3_event_identity')
+        if self.event_identity not in (None,'turn_direction_v1'):
+            raise ValueError('Unknown event identity version')
+        if self.event_identity and self.phase_coverage_memory!='all_active_v1':
+            raise ValueError('Turn identity requires active typed phase history')
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -430,7 +435,7 @@ class DeadlineRuntime:
         visible = [e for e in self.events if step <= e['target_step'] < end]
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
-        phase_suppressed=[]
+        phase_suppressed=[];identity_reviews=[]
         if self.phase_refresh:
             from perceptbudget.critical_wait import covered_by_phase
             if self.refresh_phase and step>=self.refresh_phase['stop_step']:self.refresh_phase=None
@@ -441,7 +446,17 @@ class DeadlineRuntime:
                 self.refresh_phase_history=[p for p in self.refresh_phase_history if step<p['stop_step']]
                 coverages=self.refresh_phase_history
             phase_suppressed=[dict(e) for e in candidates if any(covered_by_phase(e,p) for p in coverages)]
-            candidates=[e for e in candidates if not any(covered_by_phase(e,p) for p in coverages)]
+            if self.event_identity:
+                from perceptbudget.event_identity import review_turn
+                retained=[]
+                for event in phase_suppressed:
+                    if event['kind']=='turn':
+                        review=review_turn(event,coverages,self.chunks,self.events_config)
+                        identity_reviews.append(review)
+                        if not review['same_event']:continue
+                    retained.append(event)
+                phase_suppressed=retained
+            candidates=[e for e in candidates if e not in phase_suppressed]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -520,6 +535,8 @@ class DeadlineRuntime:
                     source_prediction_id=item[1],target_step=critical,kinds=critical_kinds) if response and self.plan['reason']=='action_event' else None)
             if self.phase_coverage_memory:
                 self.plan['refresh_phase_history']=list(self.refresh_phase_history)
+            if self.event_identity:
+                self.plan['refresh_phase_identity_review']=identity_reviews
             if getattr(self,'phase_event_source',None)=='remaining_v2' and self.plan['refresh_phase_response']:
                 self.plan['refresh_phase_response']['event_source']='remaining_v2'
         if getattr(self,'key_phase_response_enabled',False):

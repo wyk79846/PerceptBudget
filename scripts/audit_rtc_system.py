@@ -36,6 +36,30 @@ def phase_history_at_decision(commits,by_id,step,now):
     return result
 
 
+def turn_identity_from_record(event,phases,by_id,config):
+    """Independent reconstruction from saved Full outputs, not runtime chunks."""
+    valid=[p for p in phases if p['start_step']<=event['target_step']<p['stop_step']
+        and event['kind'] in p['kinds']]
+    phase=max(valid,key=lambda p:p['completed_prediction_id'])
+    reference=phase['completed_prediction_id'];anchor=max(phase['target_step'],phase['completed_step'])
+    def vector(pid,step):
+        r=by_id[pid];i=step-r['observation_step'];n=config.get('confirm_steps',2)
+        values=r['actions'][i:i+n] if i>=0 else []
+        if len(values)!=n:return None
+        result=[sum(a[k] for a in values)/n for k in range(3)]
+        return result if sum(v*v for v in result)>=config.get('minimum_motion',.1)**2 else None
+    a=vector(reference,anchor);b=vector(event['prediction_id'],event['target_step']);angle=None
+    if a is not None and b is not None:
+        dot=sum(x*y for x,y in zip(a,b));length=math.sqrt(sum(x*x for x in a)*sum(y*y for y in b))
+        angle=math.degrees(math.acos(max(-1.,min(1.,dot/length))))
+    limit=config.get('turn_degrees',60.)
+    same=angle is not None and angle+1e-9<limit
+    return dict(kind=event['kind'],prediction_id=event['prediction_id'],target_step=event['target_step'],
+        reference_prediction_id=reference,reference_action_step=anchor,
+        reference_direction=a,new_direction=b,angle_degrees=angle,threshold_degrees=limit,
+        same_event=same,reason='direction_unavailable' if angle is None else 'same_turn_direction' if same else 'new_turn_direction')
+
+
 def decode_raw(raw,stats,profile=None):
     import numpy as np
     if profile=='lerobot_h50_quantiles_v044':
@@ -652,7 +676,26 @@ def audit(run):
                             and phase_active_at_decision(phase,d,events)
                             and any(p['end_observed'] and p['start_step']==phase['start_step']
                                 and p['stop_step']==phase['stop_step'] for p in phases),pid)
+                    reviews={}
+                    if cfg.get('m3_event_identity'):
+                        saved=d.get('refresh_phase_identity_review',[])
+                        check('m3_turn_identity_version',cfg['m3_event_identity']=='turn_direction_v1'
+                            and cfg.get('m3_phase_coverage_memory')=='all_active_v1',pid)
+                        for review in saved:
+                            key=(review['prediction_id'],review['target_step'])
+                            cue=next((e for e in d['critical_forecast']['result']['events']
+                                if e['kind']=='turn' and e['target_step']==review['target_step']),None)
+                            valid=(cue is not None and review['kind']=='turn'
+                                and review['prediction_id']==d['critical_forecast']['prediction_id']
+                                and any(covered_by_phase(review,p) for p in coverages))
+                            check('m3_turn_identity_source',valid and key not in reviews,pid)
+                            if valid:
+                                expected=turn_identity_from_record(review,coverages,by_id,cfg['m3_events'])
+                                check('m3_turn_identity_replay',review==expected,pid)
+                            reviews[key]=review
                     check('m3_refresh_phase_suppression',all(any(covered_by_phase(e,p) for p in coverages)
+                        and (not cfg.get('m3_event_identity') or e['kind']!='turn'
+                            or reviews.get((e['prediction_id'],e['target_step']),{}).get('same_event') is True)
                         for e in d.get('refresh_phase_suppressed',[])),pid)
                 check('m3_signal_policy_matches_config',policy in ('earliest','latest')
                       and d.get('signal_policy','earliest')==policy,pid)
