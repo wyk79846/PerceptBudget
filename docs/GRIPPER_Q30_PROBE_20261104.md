@@ -49,3 +49,15 @@
 此项保留为候选，代码`1addf24`，分支`experiment/all-events-interval30-20261104`；没有替换默认策略，也没有在本轮重跑固定q30。此前本任务原动态曾成功，本次结果仅为一次配对小测。
 
 - [单任务汇总与独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052913.709529Z-interval30-single-6566b45b/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052913.709529Z-interval30-single-6566b45b/results.csv>)、[原始运行](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T052958.132268Z-acceptance-m3-2d037750/summary.json>)
+
+## 原11个失败任务复测
+
+用户随后授权复测上一轮40任务中动态方案失败的11项。沿用刚才Spatial2成功记录，只新跑其余10项，各一次、共用一份常驻模型；运行已全部完成，没有内存重启或中断。完整信号、中频优先、30步上限、RTC及其余参数保持不变。
+
+恢复成功的3项：Spatial2（90步，复用）、Goal5（206步）、LIBERO-10 task9（245步）。仍超时8项：Spatial9、Object4/5、Goal0/6、LIBERO-10 task1/2/8。
+
+11份记录的21248项独立系统检查、30步上限、全部事件启用及频率/恢复核对通过，均无缓冲耗尽。本批新增10回合只加载一次模型；计入复用的Spatial2来源共两批。此次为旧失败子集复测，旧29项成功未复测，不计算新的40任务成功率；与旧40扫描之间还存在已修复RTC前缀及跨进程首动作差异，不能把3项恢复全部归因于30步上限。
+
+结论：30步上限有局部帮助，单独添加它还不足以解决多数失败；保留候选，不自动替换默认。下一候选尚未实施，不启动新GPU实验。
+
+- [11项结果及独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T053957.240539Z-interval30-failed-retest-4a0b7201/summary.json>)、[逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T053957.240539Z-interval30-failed-retest-4a0b7201/results.csv>)、[固定名单与复用来源](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T053957.240539Z-interval30-failed-retest-4a0b7201/plan.json>)
