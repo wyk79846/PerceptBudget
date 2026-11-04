@@ -50,6 +50,7 @@ def main():
     parser.add_argument('--frequency-reference-run',type=Path,help='Merge completed Full frequency pairs from an earlier batch; do not rerun them')
     parser.add_argument('--full-frequency-pair',action='store_true',help='Resident Full high/low pair; with --three-frequency compare original two-state and new three-state policies')
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
+    parser.add_argument('--simplified-refresh',action='store_true',help='Combine active phase memory, turn-direction identity and smooth-bend filtering; allow the H50 window instead of a20/30-step cap')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
     parser.add_argument('--fast-key-phases',action='store_true',help='Experimental320 key-phase protection and one Full response')
@@ -103,6 +104,8 @@ def main():
             parser.error('Reference must contain completed Full frequency pairs')
     if args.low_full and args.acceptance_group!='m3':parser.error('--low-full requires M3 without Fast')
     if args.phase_refresh and args.acceptance_group!='m3':parser.error('--phase-refresh requires M3')
+    if args.simplified_refresh and (args.acceptance_group!='m3' or args.ordinary_fast or args.first_refresh_step is not None):
+        parser.error('--simplified-refresh requires Full-only M3 without --first-refresh-step')
     if args.first_refresh_step is not None and args.acceptance_group!='m3':parser.error('--first-refresh-step requires M3')
     if args.critical_wait_phases and not args.critical_wait:parser.error('--critical-wait-phases requires --critical-wait')
     if args.critical_wait and args.acceptance_group!='m3':parser.error('--critical-wait requires M3 without Fast')
@@ -135,8 +138,12 @@ def main():
     if args.rtc_delay_reference_run:cfg['rtc_initial_delay_reference_run']=str(args.rtc_delay_reference_run.resolve())
     cfg['m4_full_frequency_pair']=args.full_frequency_pair
     if args.common_low_tail or args.full_frequency_pair or args.continue_overhead_pair or args.request_capture_pair:cfg['m4_common_low_tail_seconds']=3.
-    cfg['m3_phase_refresh']=args.phase_refresh
+    cfg['m3_phase_refresh']=args.phase_refresh or args.simplified_refresh
     cfg['m3_first_refresh_step']=args.first_refresh_step
+    if args.simplified_refresh:
+        cfg.update(m3_critical_forecast='remaining_v1',m3_phase_event_source='remaining_v2',
+            m3_phase_coverage_memory='all_active_v1',m3_event_identity='turn_direction_v1',
+            m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=50)
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
     if args.critical_wait:
@@ -220,9 +227,12 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
             all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
+            simplified_refresh=args.simplified_refresh,phase_coverage_memory=cfg.get('m3_phase_coverage_memory'),
+            event_identity=cfg.get('m3_event_identity'),ordinary_turn_policy=cfg.get('m3_ordinary_turn_policy'),
+            max_refresh_interval=cfg.get('m3_max_refresh_interval'),
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
-            three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else variant_count if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
+            three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else variant_count if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=cfg['m3_phase_refresh'],first_refresh_step=cfg['m3_first_refresh_step'],critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
     if args.prepare_environments:
         if not args.acceptance_group or args.run_dir is None or args.run_dir.resolve().parent!=(Path(cfg['output_root'])/'M4').resolve():
             parser.error('Environment preparation requires acceptance group and M4 directory')
@@ -309,6 +319,7 @@ def main():
             if args.critical_wait_phases:command.append('--critical-wait-phases')
             if args.first_refresh_step is not None:command.extend(['--first-refresh-step',str(args.first_refresh_step)])
             if args.phase_refresh:command.append('--phase-refresh')
+            if args.simplified_refresh:command.append('--simplified-refresh')
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
             if args.full_energy:command.append('--full-energy')

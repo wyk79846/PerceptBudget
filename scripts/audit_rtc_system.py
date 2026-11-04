@@ -817,7 +817,7 @@ def audit(run):
                     recovery_ticks=int(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else (1 if d['path']=='low_continue_recovery' else 0)
                     periodic=cfg.get('m3_max_refresh_interval')
                     request_step=old['observation_step']+periodic if periodic is not None else 30
-                    allowed=(20,30) if cfg.get('m3_ordinary_turn_policy')=='context_v1' else (30,)
+                    allowed=(20,30,50) if cfg.get('m3_ordinary_turn_policy')=='context_v1' else (30,)
                     valid_cap=(periodic in allowed and cap.get('scope')=='every_observation'
                         and cap.get('source_prediction_id')==old['prediction_id']
                         and cap.get('observation_step')==old['observation_step']

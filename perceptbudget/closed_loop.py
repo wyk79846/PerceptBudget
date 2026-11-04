@@ -209,7 +209,7 @@ class DeadlineRuntime:
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
         self.refresh_interval=config.get('m3_max_refresh_interval')
-        allowed_intervals=(20,30) if config.get('m3_ordinary_turn_policy')=='context_v1' else (30,)
+        allowed_intervals=(20,30,50) if config.get('m3_ordinary_turn_policy')=='context_v1' else (30,)
         if self.refresh_interval is not None and (type(self.refresh_interval) is not int or self.refresh_interval not in allowed_intervals or self.fast_selection):
             raise ValueError('Refresh interval experiment requires Full-only and a supported interval')
         self.phase_refresh=bool(config.get('m3_phase_refresh'))

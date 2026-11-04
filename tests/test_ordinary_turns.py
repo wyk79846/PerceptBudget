@@ -65,7 +65,7 @@ def runtime(interval=30):
         m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05))
 
 
-@pytest.mark.parametrize('interval',[20,30])
+@pytest.mark.parametrize('interval',[20,30,50])
 def test_ordinary_motion_targets_cap_without_a_hard20_step_minimum(interval):
     r=runtime(interval);actions=[action(a) for a in (0,15,30,45,60,75)]+[action(90.)]*44
     r.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions),
@@ -75,6 +75,10 @@ def test_ordinary_motion_targets_cap_without_a_hard20_step_minimum(interval):
     assert d['critical_step'] is None and not d['start_now']
     assert d['first_refresh_cap']['request_step']==interval
     assert d['ordinary_turn_suppressed'][0]['target_step']==4
+    if interval==50:
+        # H50 still needs the next result before the old actions run out.
+        assert d['start_constraint']=='service_deadline' and d['reason']=='buffer'
+        assert d['latest_start']==pytest.approx(1.975)
     assert r.decide(now=interval*.05,step=interval,queue=q,rows=[],inflight=False,rtc_delay_steps=5)['start_now']
     r=runtime(interval);actions=[list(a) for a in actions]
     for a in actions[10:]:a[6]=1.
@@ -100,3 +104,19 @@ def test_context_filter_does_not_erase_a_new_direction_restored_by_identity():
     assert d['critical_step']==20 and not d['ordinary_turn_suppressed']
     assert d['ordinary_turn_review'][0]['ordinary']
     assert not d['refresh_phase_identity_review'][0]['same_event']
+
+
+def test_combined_entry_enables_all_three_simplifications_with_h50(monkeypatch,capsys):
+    import json
+    import sys
+    from scripts import run_m4
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3',
+        '--task-indices','0','--simplified-refresh','--dry-run'])
+    assert run_m4.main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['phase_refresh'] and plan['simplified_refresh']
+    assert plan['phase_coverage_memory']=='all_active_v1'
+    assert plan['event_identity']=='turn_direction_v1'
+    assert plan['ordinary_turn_policy']=='context_v1'
+    assert plan['max_refresh_interval']==plan['H']==50
+    assert plan['first_refresh_step'] is None and plan['Fast']=='disabled'
