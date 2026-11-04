@@ -197,6 +197,8 @@ def test_full_resume_retains_timeouts_and_checks_capture_and_task_identity(tmp_p
         acceptance.resume_full(source,dict(cfg,m4_request_only_images=False))
     with pytest.raises(ValueError,match='identical'):
         acceptance.resume_full(source,dict(cfg,rtc_critical_wait_prefix_policy='committed_stop_v1'))
+    with pytest.raises(ValueError,match='identical'):
+        acceptance.resume_full(source,dict(cfg,m3_phase_refresh_policy='event_shift_v1'))
 
 
 def test_resume_preparation_receives_the_same_capture_policy_as_the_worker(tmp_path):

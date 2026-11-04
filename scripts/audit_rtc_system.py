@@ -568,9 +568,13 @@ def audit(run):
                 policy=cfg.get('m3_signal_policy','earliest')
                 if cfg.get('m3_phase_refresh'):
                     from perceptbudget.key_phases import absolute_intervals
-                    from perceptbudget.action_events import EventConfig
+                    from perceptbudget.action_events import EventConfig,detect_events
                     from perceptbudget.critical_wait import covered_by_phase
                     phase=d.get('refresh_phase_covered')
+                    refresh_policy=cfg.get('m3_phase_refresh_policy','phase_once_v1')
+                    check('m3_refresh_phase_policy',refresh_policy in ('phase_once_v1','event_shift_v1')
+                          and d.get('refresh_phase_policy','phase_once_v1')==refresh_policy,pid)
+                    match=EventConfig(**cfg.get('m3_events',{})).match_steps if refresh_policy=='event_shift_v1' else None
                     if phase:
                         completed=by_id.get(phase['completed_prediction_id'],{})
                         response=completed.get('m3_timing',{}).get('refresh_phase_response')
@@ -583,8 +587,20 @@ def audit(run):
                             and phase_active_at_decision(phase,d,events)
                             and any(p['end_observed'] and p['start_step']==phase['start_step']
                                 and p['stop_step']==phase['stop_step'] for p in phases),pid)
-                    check('m3_refresh_phase_suppression',all(covered_by_phase(e,phase)
+                    check('m3_refresh_phase_suppression',all(covered_by_phase(e,phase,match_steps=match)
                         for e in d.get('refresh_phase_suppressed',[])),pid)
+                    reopen=d.get('refresh_phase_reopened',[])
+                    current_events={(e['kind'],old['observation_step']+e['offset'])
+                        for e in detect_events(old['actions'],EventConfig(**cfg.get('m3_events',{})))}
+                    originals=[e for e in events if e['event']=='m3_decision'
+                        and e.get('decision_monotonic')==d.get('decision_monotonic')]
+                    decision_step=min(e['step'] for e in originals)
+                    check('m3_refresh_phase_reopening',all(refresh_policy=='event_shift_v1'
+                        and covered_by_phase(e,phase)
+                        and not covered_by_phase(e,phase,match_steps=match)
+                        and (e['kind'],e['target_step']) in current_events
+                        and decision_step<=e['target_step']<decision_step+d['admitted_remaining_actions']
+                        for e in reopen),pid)
                 check('m3_signal_policy_matches_config',policy in ('earliest','latest')
                       and d.get('signal_policy','earliest')==policy,pid)
                 if group is not None:
