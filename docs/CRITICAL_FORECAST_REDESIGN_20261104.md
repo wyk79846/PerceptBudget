@@ -201,3 +201,23 @@ q30超时：Spatial1/2/8、Goal3/9、Long0/1。两组各有成功与失败，V2�
 
 - [冻结开发计划与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/plan.json>)、[八回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/results.csv>)
 - [独立审查与能量重算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/postrun_review.json>)、[旧响应实际生效位置](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/intervention_review.json>)、[轨迹及观测步数差异](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/pair_trajectory_review.json>)
+
+## 扩样：原始历史记忆候选没有通过
+
+用户同意继续后，固定源码补测旧seed7/init0四套task3、6，共16新回合、1次模型加载；之前四套task0的8回合保留，不重复执行。合计12任务24回合、两批均在各自同一模型内配对。新增原版7/8成功、候选6/8成功；唯一新增退化是Spatial3（原86步成功，候选220步超时），Goal6两组均300步超时。
+
+|合并12任务，失败均计入|原V2|保留历史候选|
+|---|---:|---:|
+|成功|11/12|10/12|
+|总能量|2381.83J|2434.97J|
+|每成功任务能量|216.53J|243.50J|
+|总任务时间|133.96s|141.87s|
+|Full次数|168|169|
+|欠载|0|0|
+
+每成功任务能量增加12.45%，故不采用该候选。共同成功10项能量虽下降5.34%，不足以支持整体改进；此前四项9.22%的下降未在扩样后保持。两批共32521项系统检查、频率/恢复与原始功率重积分通过，最近seed17/init1没有参与开发。
+
+Spatial3的记录给出一个具体匹配问题：42步转向的响应主要向下，53/54步新的转向已主要向上，与原响应方向相差约145°/134°，却被“同为turn、仍在原区间”压掉；后续89步相似情形约161°。这支持先尝试转向方向校验，不支持直接放宽所有事件阈值。下一候选仍保留原区间截止，只有新旧响应方向相符才当作同一转向；显著差异沿用既有60°标准，不按任务逐项调参。该线索尚不是唯一失败原因的证明。
+
+- [新增16回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/summary.json>)、[完整12任务24回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/combined_development.json>)、[完整逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/combined_development.csv>)
+- [新增运行独立审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/postrun_review.json>)、[Spatial3方向核对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/spatial3_motion_identity_review.json>)
