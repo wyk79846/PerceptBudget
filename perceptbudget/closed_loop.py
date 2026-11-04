@@ -222,6 +222,13 @@ class DeadlineRuntime:
         self.key_phase_response_enabled=self.key_phase_guard and self.key_phase_response_policy=='full_once_v1'
         if self.key_phase_guard and not self.fast_advance:raise ValueError('Key phases require V4 Fast policy')
         self.events_config = EventConfig(**config['m3_events'])
+        self.progress_mode=config.get('m3_motion_progress')
+        if self.progress_mode not in (None,'record','refresh'):
+            raise ValueError('Unknown motion-progress mode')
+        self.progress=None
+        if self.progress_mode:
+            from perceptbudget.motion_progress import DownwardProgress
+            self.progress=DownwardProgress(self.events_config.minimum_motion)
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
         for seconds in config.get('m3_recovery_samples',[]):
@@ -309,6 +316,12 @@ class DeadlineRuntime:
         if getattr(self,'key_phase_guard',False):
             from perceptbudget.key_phases import absolute_intervals
             self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
+        if self.progress is not None:
+            if 'refresh_phases' not in self.chunks[pid]:
+                from perceptbudget.key_phases import absolute_intervals
+                self.chunks[pid]['refresh_phases']=absolute_intervals(request['actions'],origin,self.events_config)
+            coverage=self.progress.committed(request,commit)
+            if coverage:request['motion_progress_coverage']=coverage
         signal=request.get('dvac',{})
         prefix=signal.get('prefix_actions') if self.dvac_enabled else None
         self.chunks[pid]['dvac_step']=origin+prefix if prefix is not None else None
@@ -368,8 +381,15 @@ class DeadlineRuntime:
         return (step < chunk['origin']+self.settings['maximum_action_offset'] and
                 (age_limit is None or now < chunk['observation']+age_limit))
 
+    def _progress_grasp_protected(self, row):
+        source=(row.get('source') or {}).get('prediction_id')
+        phases=self.chunks.get(source,{}).get('refresh_phases',[])
+        return any(p['start_step']<=row['step']<p['stop_step']
+            and any(a['kind']=='gripper_close' for a in p['anchors']) for p in phases)
+
     def decide(self, *, now, step, queue, rows, inflight, rtc_delay_steps=None):
         item = queue.get(step)
+        progress=self.progress.update(rows,protected=self._progress_grasp_protected) if self.progress else None
         intervals = [b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.)
                      for a,b in zip(rows[-17:], rows[-16:])] if len(rows)>=17 else [
                          b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.) for a,b in zip(rows,rows[1:])]
@@ -404,6 +424,13 @@ class DeadlineRuntime:
                 current['fast_execution_window']=fast_window
             ignored_events=[dict(e) for e in candidates if e['target_step']<=fast_window['end_step']]
             candidates=[e for e in candidates if e['target_step']>fast_window['end_step']]
+        progress_alert=None
+        if self.progress_mode=='refresh' and self.progress.pending is not None:
+            progress_alert=dict(self.progress.pending)
+            # New state evidence is separate from forecast-event coverage. The
+            # observer already suppresses onsets inside gripper-close phases.
+            candidates.append(dict(kind='motion_blocked',target_step=step,
+                observed_step=progress_alert['observed_step'],source='executed_state_progress'))
         critical = min((e['target_step'] for e in candidates), default=None)
         critical_kinds=sorted({e['kind'] for e in candidates if e['target_step']==critical})
         if self.signal_policy=='latest':
@@ -453,6 +480,9 @@ class DeadlineRuntime:
                          diagnostic_open_probe=self.open_probe_applied,
                          suppressed_event_count=len(visible)-len(candidates),
                          candidate_event_kinds=critical_kinds)
+        if progress is not None:
+            self.plan.update(motion_progress_mode=self.progress_mode,motion_progress=progress,
+                progress_alert=progress_alert)
         if self.phase_refresh:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
