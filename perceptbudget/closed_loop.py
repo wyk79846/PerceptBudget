@@ -208,6 +208,9 @@ class DeadlineRuntime:
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
+        self.refresh_interval=config.get('m3_max_refresh_interval')
+        if self.refresh_interval is not None and (type(self.refresh_interval) is not int or self.refresh_interval!=30 or self.fast_selection):
+            raise ValueError('Refresh interval experiment requires Full-only and30 steps')
         self.phase_refresh=bool(config.get('m3_phase_refresh'))
         self.refresh_phase=None
         if self.phase_refresh and self.fast_selection:raise ValueError('Phase refresh experiment requires M3 without Fast')
@@ -477,14 +480,20 @@ class DeadlineRuntime:
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
             self.plan.update(latest_start=rtc_latest_start,wait_seconds=max(0.,rtc_latest_start-now),
                              start_now=rtc_latest_start<=now,start_constraint='rtc_prefix')
-        if (self.first_refresh_step is not None and current is not None and item[1]==0
-                and critical is None and not inflight):
+        periodic=getattr(self,'refresh_interval',None)
+        if (current is not None and not inflight and (periodic is not None or
+                self.first_refresh_step is not None and item[1]==0 and critical is None)):
             # This caps request submission, not result arrival. Start recovery
             # one control tick earlier; do not subtract Full inference again.
             recovery_ticks=1 if recovery else 0
-            cap=now+(self.first_refresh_step-step-recovery_ticks)*period
-            self.plan['first_refresh_cap']=dict(request_step=self.first_refresh_step,
+            request_step=current['origin']+periodic if periodic is not None else self.first_refresh_step
+            cap=now+(request_step-step-recovery_ticks)*period
+            self.plan['first_refresh_cap']=dict(request_step=request_step,
                 recovery_ticks=recovery_ticks,latest_start=cap)
+            if periodic is not None:
+                # Keep the legacy cap field consumed by frequency selection.
+                self.plan['first_refresh_cap'].update(scope='every_observation',
+                    source_prediction_id=item[1],observation_step=current['origin'],interval_steps=periodic)
             if cap<self.plan['latest_start']:
                 self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
                     start_now=cap<=now,start_constraint='first_refresh')

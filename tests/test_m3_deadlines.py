@@ -42,6 +42,29 @@ def test_first_event_free_refresh_cap_only_applies_to_bootstrap_chunk():
     assert 'first_refresh_cap' not in later and not later['start_now']
 
 
+def test_every_observation_interval_keeps_all_events_and_counts_inflight_steps():
+    from perceptbudget.closed_loop import DeadlineRuntime
+    cfg=dict(H=50,m3_max_refresh_interval=30,m3_scheduler_mode='deadline_high',
+        m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
+            maximum_action_offset=50,maximum_observation_age_seconds=None),
+        m3_events={},m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},
+        rtc_initial_control_period_seconds=.05)
+    r=DeadlineRuntime(cfg)
+    actions=[[1.,0.,0.,0.,0.,0.,-1.] for _ in range(50)]
+    r.committed(dict(prediction_id=1,observation_step=30,observation_monotonic=10.,actions=actions),
+        dict(commit_step=42,commit_monotonic=10.6))
+    q={30+i:(a,1,30,i) for i,a in enumerate(actions)}
+    d=r.decide(now=11.5,step=60,queue=q,rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['start_now'] and d['first_refresh_cap']['request_step']==60
+    assert d['first_refresh_cap']['scope']=='every_observation'
+    assert d['latest_start']==pytest.approx(11.5)
+    for kind in ('slowdown','turn','gripper_close','gripper_open'):
+        r.events=[dict(kind=kind,target_step=50,prediction_id=1)]
+        d=r.decide(now=10.6,step=42,queue=q,rows=[],inflight=False,rtc_delay_steps=10)
+        assert d['critical_step']==50 and d['candidate_event_kinds']==[kind]
+        assert d['latest_start']<d['first_refresh_cap']['latest_start']
+
+
 def test_completed_phase_removes_repeat_refresh_but_retains_release_event():
     from perceptbudget.closed_loop import DeadlineRuntime
     cfg=dict(H=50,m3_phase_refresh=True,m3_scheduler_mode='deadline_high',

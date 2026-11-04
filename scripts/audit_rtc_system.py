@@ -656,10 +656,16 @@ def audit(run):
                                and e.get('decision_monotonic')==d.get('decision_monotonic')]
                     decision_step=min(e['step'] for e in originals)
                     recovery_ticks=int(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else (1 if d['path']=='low_continue_recovery' else 0)
-                    first_start=d['decision_monotonic']+(30-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
-                    check('m3_first_refresh_cap_inputs',cfg.get('m3_first_refresh_step')==30
-                          and old['prediction_id']==0 and d.get('critical_step') is None
-                          and cap['request_step']==30 and cap['recovery_ticks']==recovery_ticks
+                    periodic=cfg.get('m3_max_refresh_interval')
+                    request_step=old['observation_step']+30 if periodic is not None else 30
+                    valid_cap=(periodic==30 and cap.get('scope')=='every_observation'
+                        and cap.get('source_prediction_id')==old['prediction_id']
+                        and cap.get('observation_step')==old['observation_step']
+                        and cap.get('interval_steps')==30 and origin<=request_step) if periodic is not None else (
+                        cfg.get('m3_first_refresh_step')==30 and old['prediction_id']==0 and d.get('critical_step') is None)
+                    first_start=d['decision_monotonic']+(request_step-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
+                    check('m3_first_refresh_cap_inputs',valid_cap
+                          and cap['request_step']==request_step and cap['recovery_ticks']==recovery_ticks
                           and abs(cap['latest_start']-first_start)<1e-8,pid)
                     if first_start<expected_start:expected_constraint='first_refresh'
                     expected_start=min(expected_start,first_start)
