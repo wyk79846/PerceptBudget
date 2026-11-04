@@ -61,3 +61,27 @@
 
 - [11项结果与独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/summary.json>)、[逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/results.csv>)、[固定名单及复用来源](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/plan.json>)
 - [本批原始10回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T063010.708240Z-acceptance-m3-a4448304/summary.json>)、[结束频率读数](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/clock_after.json>)
+
+## 新初态40任务复测：seed17/init1
+
+沿用remaining_v1、无首次/周期30步上限，原RTC、中频优先Full、低频Continue、H50/N5/BF16/state及请求时双图均保留。预先固定seed17/init1，40项各一次，全任务阈值相同，未根据本轮结果改规则。
+
+|集合|成功/任务数|成功率|
+|---|---:|---:|
+|Spatial|9/10|90%|
+|Object|8/10|80%|
+|Goal|10/10|100%|
+|LIBERO-10|8/10|80%|
+|合计|35/40|87.5%|
+
+超时5项：Spatial task4（220步）、Object task1/2（各280步）、LIBERO-10 task0/7（各520步）。全部40项初始物理状态及双图哈希均与原seed7/init0不同，原始init1向量也逐项核对与init0不同。48201项独立系统记录检查及各回合频率/恢复检查通过，无缓冲耗尽；仍有实际关键等待。
+
+第一份常驻模型完成前30项后触发RAM保护；第一次续测在调频助手READY等待超时、没有新增完整回合。普通用户侧任务开始前的READY等待由10秒延至60秒并记录启动耗时后，最后10项完成。共3次模型加载，已完成回合不重跑；机制一、RTC及控制阶段时间规则未改。54项相关CPU检查及空载READY/STOP恢复通过，最终恢复1173/3199/1497.6，FlashRT未改。
+
+准备阶段另有一次像素回放拒收（物理/state精确，18像素差1，超过13像素门槛），0模型/0正式回合，记录保留。后续直接复用已验证、按实际XML哈希匹配的静态环境二进制，初态重新读取，未放宽像素门槛或复用历史结果。
+
+本轮是已参与开发的40任务在新初态下的评测，35/40尚未达到90%以上；未测同seed17/init1的q30，不计算相对成功率或节能优势。
+
+- [40项汇总与检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/summary.json>)、[逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/results.csv>)、[实时进度最终记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/progress.md>)
+- [固定计划/核心源码哈希](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/plan.json>)、[初态核对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/task_initialization.json>)、[启动等待修正](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/clock_ready_fix.json>)
+- [完成批次及前30项保留来源](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T072948.508597Z-acceptance-m3-50e62d73/summary.json>)、[运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/candidate.py>)、[汇总脚本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T065926.074258Z-remaining-seed17-init1-40-06d173c6/review.py>)

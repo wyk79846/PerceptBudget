@@ -35,6 +35,7 @@ class Lease:
                 'lease', '--profile', self.profile, '--seconds', str(self.duration), '--trace']
 
     def __enter__(self):
+        launch_monotonic = time.monotonic()
         self.proc = subprocess.Popen(self.command(), stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1)
@@ -54,10 +55,15 @@ class Lease:
         self.thread.start()
         try:
             while True:
-                event = self.lines.get(timeout=10)
+                # Starting the helper can take longer under Jetson memory
+                # pressure. This wait is before episode timing/control; the
+                # finite clock lease still starts at the helper's READY.
+                event = self.lines.get(timeout=60)
                 if event.get('status') == 'READY':
                     self.ready = event
                     self.deadline = event['monotonic']+self.duration
+                    self.startup_seconds = time.monotonic()-launch_monotonic
+                    print('CLOCK_HELPER_READY_SECONDS='+str(self.startup_seconds),flush=True)
                     return self
                 if event.get('status') == 'EOF':
                     raise RuntimeError('No clock READY; inspect '+str(self.path))
