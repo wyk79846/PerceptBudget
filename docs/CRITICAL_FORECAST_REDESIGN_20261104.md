@@ -162,3 +162,19 @@ q30超时：Spatial1/2/8、Goal3/9、Long0/1。两组各有成功与失败，V2�
 另外检查了旧组原V2的等待后事件记录，17次墙钟迟到但控制停在事件边界的请求中，没有发现紧接下一次请求重复响应同类、5步范围内事件，暂不修改该逻辑。
 
 - [旧组开发计划与样例范围](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/plan.json>)、[八回合结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/results.csv>)、[独立审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/postrun_audit.json>)
+
+第二项候选不增加代码，只将原转向阈值60°调整为90°。夹爪、减速、阶段覆盖、RTC、频率、缓冲边界和采图方式不变。仍为旧seed7/init0四套各task0，两个条件各一次、1次模型加载。每项候选都与本批原规则比较，不用上一批更低或更高的能量作分母。
+
+|旧组task0|原60°→90°步数，均成功|Full次数|整任务能量，含在途推理|能量变化|
+|---|---:|---:|---:|---:|
+|Spatial|78→77|10→9|140.10→124.10J|−11.42%|
+|Object|141→143|11→10|158.24→141.52J|−10.57%|
+|Goal|121→199|7→11|102.65→165.68J|+61.40%|
+|LIBERO-10|252→288|26→25|368.38→355.33J|−3.54%|
+|合计|两组均4/4|54→55|769.37→786.63J|+2.24%|
+
+总任务时间41.46→46.40秒，增加11.92%；均零欠载。四对初始物理、双图、state、噪声、首动作精确一致；10286项系统检查、频率恢复通过，原始功率重积分误差0J。Goal完成时间明显拉长，抵消了其他任务的节能，故不采用统一90°参数；局部省电不作为全局收益。两轮共16回合、2次模型加载，最近seed17/init1的样例未参与新参数开发。当前源码、配置及测试与910c84b一致，冻结V2保留，FlashRT未修改，无后台GPU任务。
+
+本轮结论：简单增加确认时长或统一增大转向角度，均未得到更优的整体结果。后续若继续，应区分普通移动和关键操作的运动变化，再用同一开发组验证；不将本轮失败候选加入默认路径。
+
+- [转向参数开发计划](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/plan.json>)、[八回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/results.csv>)、[独立审查与功率重积分](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/postrun_review.json>)
