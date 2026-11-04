@@ -142,3 +142,23 @@ q30超时：Spatial1/2/8、Goal3/9、Long0/1。两组各有成功与失败，V2�
 - [冻结V2完整40汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/summary.json>)、[固定配置与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/plan.json>)、[V2逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/results.csv>)
 - [q30完整40汇总与审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/summary.json>)、[q30运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/candidate.py>)、[q30固定计划](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/plan.json>)
 - [逐任务成对表格](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/comparison.md>)、[80回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/comparison.csv>)、[分口径汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/metrics.json>)
+
+## 开发样例与测试样例分开
+
+用户澄清：本次仅排除seed17/init1的40个测试样例；任务本身可以复用，开发使用已测过的seed7/init0，不扩到LIBERO-90。下面的修改只看旧组，不使用本轮测试样例调参。此前已完成的开发和测试记录保持原样，不把已看过的结果称为从未接触过的数据。
+
+第一项候选只将减速/转向在未来动作中的持续确认从2步增至4步，夹爪维持2步；事件起点不延后，尾部不足4步时仍保留原2步确认。四套各task0、两种规则各一次，共8回合、1次模型加载，交叉执行顺序，初始物理/双图/state/噪声/首动作四对精确一致。
+
+|旧组开发小测|原V2|持续确认4步|
+|---|---:|---:|
+|成功|4/4|4/4|
+|Full次数|54|56|
+|任务＋在途推理能量|754.67J|774.13J|
+|任务时间合计|42.01s|41.54s|
+|缓冲欠载|0|0|
+
+能量增加2.58%，没有达到减少刷新与能耗的目的，不采用该候选。144项CPU检查和9982项运行记录检查通过；频率已恢复1173/3199/1497.6MHz。候选代码a98c1a6保存在archive/motion-confirmation-candidate-seed7-20261104，三个源码/测试文件恢复910c84b，不在主线叠加无效选项。
+
+另外检查了旧组原V2的等待后事件记录，17次墙钟迟到但控制停在事件边界的请求中，没有发现紧接下一次请求重复响应同类、5步范围内事件，暂不修改该逻辑。
+
+- [旧组开发计划与样例范围](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/plan.json>)、[八回合结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/results.csv>)、[独立审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T123319.362707Z-motion-support-seed7-9e5a8086/postrun_audit.json>)

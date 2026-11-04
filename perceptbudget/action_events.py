@@ -20,7 +20,6 @@ class EventConfig:
     slowdown_detector: str = 'drop'
     valley_radius_steps: int = 5
     valley_spacing_steps: int = 5
-    motion_confirm_steps: int | None = None
 
     def __post_init__(self):
         if not (0 < self.gripper_threshold <= 1 and self.minimum_motion > 0
@@ -33,9 +32,6 @@ class EventConfig:
         if self.slowdown_confirm_steps is not None and (
                 type(self.slowdown_confirm_steps) is not int or self.slowdown_confirm_steps<1):
             raise ValueError('slowdown_confirm_steps must be a positive integer or None')
-        if self.motion_confirm_steps is not None and (
-                type(self.motion_confirm_steps) is not int or self.motion_confirm_steps<self.confirm_steps):
-            raise ValueError('motion_confirm_steps must be at least confirm_steps or None')
         if self.slowdown_detector not in ('drop','valley'):
             raise ValueError('Unknown slowdown detector')
         if any(type(x) is not int or x<1 for x in (self.valley_radius_steps,self.valley_spacing_steps)):

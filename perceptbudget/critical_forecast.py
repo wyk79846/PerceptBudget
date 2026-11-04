@@ -30,22 +30,18 @@ def forecast(remaining_actions, *, previous_actions=(), current_step, now,
     Gripper changes use the last executed command as their starting state.
     Slowdown compares sustained low commands with the preceding motion peak.
     Turns accumulate heading change, so gradual turns can also produce a cue.
-    Motion cues can require longer support in the already predicted future.
-    This confirms the same onset, rather than waiting for more controls to run.
-    Near the end, retain the original confirmation when future support is unknown.
+    All three cues use the existing thresholds and confirmation length.
     """
     if type(current_step) is not int or current_step<0:
         raise ValueError('current_step must be a nonnegative integer')
     if not math.isfinite(now) or not math.isfinite(control_period) or control_period<=0:
         raise ValueError('Use finite current time and positive measured control period')
     cfg=config or EventConfig();n=cfg.confirm_steps
-    motion_n=cfg.motion_confirm_steps or n
     future=_actions(remaining_actions);history=_actions(previous_actions)[-n:]
     events=[]
 
-    def emit(kind,i,*,confirmation_steps=None,**evidence):
-        count=n if confirmation_steps is None else confirmation_steps
-        events.append(dict(kind=kind,offset=i,confirmed_offset=i+count-1,
+    def emit(kind,i,**evidence):
+        events.append(dict(kind=kind,offset=i,confirmed_offset=i+n-1,
             target_step=current_step+i,t_critical=now+i*control_period,**evidence))
 
     def grip(a):
@@ -65,10 +61,8 @@ def forecast(remaining_actions, *, previous_actions=(), current_step, now,
     moving=peak>=cfg.minimum_motion
     for i,value in enumerate(amplitude):
         if moving:
-            window=amplitude[i:i+motion_n]
-            if len(window)>=n and max(window)<=peak*cfg.slowdown_ratio:
-                emit('slowdown',i,confirmation_steps=len(window),
-                     reference_command_norm=peak,next_command_norm=value)
+            if i+n<=len(amplitude) and max(amplitude[i:i+n])<=peak*cfg.slowdown_ratio:
+                emit('slowdown',i,reference_command_norm=peak,next_command_norm=value)
                 moving=False
             else:peak=max(peak,value)
         elif value>=cfg.minimum_motion and value>peak*cfg.slowdown_ratio:
@@ -78,12 +72,12 @@ def forecast(remaining_actions, *, previous_actions=(), current_step, now,
     if direction is None or _norm(direction)<cfg.minimum_motion:
         direction=next((a[:3] for a in future if _norm(a[:3])>=cfg.minimum_motion),None)
     for i in range(len(future)-n+1):
-        window=future[i:i+motion_n]
+        window=future[i:i+n]
         if direction is None or not all(_norm(a[:3])>=cfg.minimum_motion for a in window):
             continue
         angles=[_angle(direction,a[:3]) for a in window]
         if all(angle+1e-9>=cfg.turn_degrees for angle in angles):
-            emit('turn',i,confirmation_steps=len(window),angle_degrees=angles[0])
+            emit('turn',i,angle_degrees=angles[0])
             updated=_mean_direction(window)
             if _norm(updated)>=cfg.minimum_motion:direction=updated
 
