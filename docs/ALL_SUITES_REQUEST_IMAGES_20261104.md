@@ -26,3 +26,13 @@ cd /home/wyk/workspace/PerceptBudget
 ## 已启动
 
 代码`83002b2`，后台服务`perceptbudget-all40-request-images-20261104.service`。会话目录`M4/20261104T010944.227352Z-paired-acceptance-3b809feb`，先准备40个环境并执行q30，再复用环境缓存执行动态组。主日志`/tmp/perceptbudget-all40-request-images-20261104.log`。当前处于运行阶段；正式结果以会话结束后的`comparison.json`、`comparison.csv`和逐回合原始记录为准。
+
+## 中断与续跑
+
+原q30批次`aa732653`已完成Spatial/Object/Goal共30回合，27成功、3超时（Object4、Object5、Goal0）。切换到LIBERO-10 task0后触发外层768MiB内存保护；当时尚未生成该回合记录，不能计为任务失败。末几个回合Torch allocated稳定约6929–6930MiB，RSS约1801MiB，环境关闭后可用约1718MiB；保护发生在创建新长任务环境之后，未据此认定模型显存持续泄漏。结束频率读回1173/3199/1497.6MHz正常。
+
+新增Full组断点续跑：逐条重审已完成回合、保留成功及超时，只运行缺失任务；40环境缓存可只取剩余任务的验证记录并硬链接原二进制，不重新编译。父入口`--resume-session`保存原缓存来源。原invalid数据不修改。
+
+首个续跑`cc2bd258`在模型加载前因环境准备子进程漏传采集开关而被配置一致性检查拒绝，模型加载0次。`6bc592f`改为准备进程继承完整worker参数，并补充实际转发检查。76项相关检查通过，随后针对准备参数修改的23项检查通过；原30回合独立系统/频率检查通过。
+
+修正后的续跑会话`M4/20261104T014304.762470Z-paired-acceptance-7788984c`；q30续跑`M4/20261104T014309.222299Z-acceptance-q30-99372b53`，只补LIBERO-10十任务，再运行动态四组40任务。10任务环境缓存子集已通过，准备5.72秒；任务服务`perceptbudget-all40-request-images-r2-20261104.service`，主日志`/tmp/perceptbudget-all40-request-images-r2-20261104.log`。本节为进度记录，最终结果待续跑完成。
