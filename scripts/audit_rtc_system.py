@@ -566,10 +566,6 @@ def audit(run):
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
                 policy=cfg.get('m3_signal_policy','earliest')
-                if cfg.get('m3_gripper_q30'):
-                    check('m3_gripper_q30_signals',d.get('action_events_enabled') is True
-                        and not d.get('dvac_enabled')
-                        and set(d.get('candidate_event_kinds',[]))<= {'gripper_open','gripper_close'},pid)
                 if cfg.get('m3_phase_refresh'):
                     from perceptbudget.key_phases import absolute_intervals
                     from perceptbudget.action_events import EventConfig
@@ -667,24 +663,7 @@ def audit(run):
                           and abs(cap['latest_start']-first_start)<1e-8,pid)
                     if first_start<expected_start:expected_constraint='first_refresh'
                     expected_start=min(expected_start,first_start)
-                if cfg.get('m3_gripper_q30'):
-                    cap=d.get('refresh_request_cap',{})
-                    originals=[e for e in events if e['event']=='m3_decision'
-                               and e.get('decision_monotonic')==d.get('decision_monotonic')]
-                    decision_step=min(e['step'] for e in originals)
-                    recovery_ticks=int(d.get('current_profile')!=request.get('m4_compute_profile')) if cfg.get('m3_three_frequency') else int(d['path']=='low_continue_recovery')
-                    request_step=old['observation_step']+30
-                    cap_start=d['decision_monotonic']+(request_step-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
-                    check('m3_gripper_q30_cap_inputs',cap.get('policy')=='gripper_q30_v1'
-                        and cap.get('source_prediction_id')==old['prediction_id']
-                        and cap.get('observation_step')==old['observation_step']
-                        and cap.get('request_step')==request_step
-                        and cap.get('recovery_ticks')==recovery_ticks
-                        and abs(cap.get('latest_start',math.inf)-cap_start)<1e-8,pid)
-                    check('m3_gripper_q30_request_interval',origin<=request_step,pid)
-                    if cap_start<expected_start:expected_constraint='refresh_interval'
-                    expected_start=min(expected_start,cap_start)
-                if d.get('rtc_latest_submit_step') is not None or d.get('first_refresh_cap') or d.get('refresh_request_cap'):
+                if d.get('rtc_latest_submit_step') is not None or d.get('first_refresh_cap'):
                     anchor=d.get('energy_prepare_anchor')
                     if cfg.get('m3_full_energy') and anchor and anchor['latest_start']<expected_start-1e-9:
                         expected_start=anchor['latest_start'];expected_constraint='full_energy_fixed_prepare'

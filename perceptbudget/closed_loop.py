@@ -208,9 +208,6 @@ class DeadlineRuntime:
     def __init__(self, config):
         self.settings = config['m3_timing']
         self.fast_selection=bool(config.get('m3_fast_enabled'))
-        self.gripper_q30=bool(config.get('m3_gripper_q30'))
-        if self.gripper_q30 and (self.fast_selection or config.get('m3_ordinary_fast') or config.get('m3_dvac_enabled')):
-            raise ValueError('Gripper/q30 experiment requires Full and action events only')
         self.phase_refresh=bool(config.get('m3_phase_refresh'))
         self.refresh_phase=None
         if self.phase_refresh and self.fast_selection:raise ValueError('Phase refresh experiment requires M3 without Fast')
@@ -384,9 +381,7 @@ class DeadlineRuntime:
         tolerance = self.events_config.match_steps
         self.covered_events = [e for e in self.covered_events if e['target_step']+tolerance>=step]
         visible = [e for e in self.events if step <= e['target_step'] < end]
-        eligible = [e for e in visible if not getattr(self,'gripper_q30',False)
-                    or e['kind'] in ('gripper_close','gripper_open')]
-        candidates = [e for e in eligible if not any(c['kind']==e['kind'] and
+        candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
         phase_suppressed=[]
         if self.phase_refresh:
@@ -482,7 +477,7 @@ class DeadlineRuntime:
         if rtc_latest_start is not None and rtc_latest_start<self.plan['latest_start']:
             self.plan.update(latest_start=rtc_latest_start,wait_seconds=max(0.,rtc_latest_start-now),
                              start_now=rtc_latest_start<=now,start_constraint='rtc_prefix')
-        if (not getattr(self,'gripper_q30',False) and self.first_refresh_step is not None and current is not None and item[1]==0
+        if (self.first_refresh_step is not None and current is not None and item[1]==0
                 and critical is None and not inflight):
             # This caps request submission, not result arrival. Start recovery
             # one control tick earlier; do not subtract Full inference again.
@@ -493,18 +488,6 @@ class DeadlineRuntime:
             if cap<self.plan['latest_start']:
                 self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
                     start_now=cap<=now,start_constraint='first_refresh')
-        if getattr(self,'gripper_q30',False) and current is not None and not inflight:
-            # Thirty steps from the observation, including actions consumed
-            # during inference. This caps every submission, not result arrival.
-            recovery_ticks=int(recovery)
-            request_step=current['origin']+30
-            cap=now+(request_step-step-recovery_ticks)*period
-            self.plan['refresh_request_cap']=dict(policy='gripper_q30_v1',
-                source_prediction_id=item[1],observation_step=current['origin'],
-                request_step=request_step,recovery_ticks=recovery_ticks,latest_start=cap)
-            if cap<self.plan['latest_start']:
-                self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
-                    start_now=cap<=now,start_constraint='refresh_interval')
         if self.fast_selection and not inflight and current is not None:
             from perceptbudget.m3_fast_choice import choose_mode
             quiet_since=self.fast_quiet_since

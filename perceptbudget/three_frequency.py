@@ -40,7 +40,7 @@ def select_full(decision, *, medium_seconds, medium_cap, current_profile, transi
     now=decision['decision_monotonic']
     end=decision['deadline']-decision['margin_seconds']
     ack=decision['estimated_control_period_seconds']
-    first=decision.get('refresh_request_cap') or decision.get('first_refresh_cap')
+    first=decision.get('first_refresh_cap')
     rows=[]
     # Compute budgets already include one normal commit/control tick. Reserve
     # one additional tick only when waiting for a clock acknowledgement.
@@ -161,17 +161,15 @@ class ThreeFullRuntime(LowFullRuntime):
             # existing window. Only submit this tick after a timely real ack.
             # At an already-ready frequency, bound the early submission itself.
             if self.clocks.profile==chosen['profile']:due=startup['floor_allowed']
-        cap_key='refresh_request_cap' if d.get('refresh_request_cap') else 'first_refresh_cap'
-        cap_constraint='refresh_interval' if cap_key=='refresh_request_cap' else 'first_refresh'
-        if d.get(cap_key):
-            d[cap_key]=dict(d[cap_key],latest_start=chosen['first_cap'],
+        if d.get('first_refresh_cap'):
+            d['first_refresh_cap']=dict(d['first_refresh_cap'],latest_start=chosen['first_cap'],
                 recovery_ticks=int(self.clocks.profile!=chosen['profile']))
         expected_start=d['deadline']-chosen['service_seconds']-self.margin.seconds
         constraint='service_deadline'
         chosen_cap=cap if medium_chosen else now+(d['rtc_latest_submit_step']-step-d['rtc_submit_guard_steps'])*period if d.get('rtc_latest_submit_step') is not None else float('inf')
         if chosen_cap<expected_start:expected_start=chosen_cap;constraint='rtc_prefix'
-        first=d.get(cap_key,{}).get('latest_start',float('inf'))
-        if first<expected_start:constraint=cap_constraint
+        first=d.get('first_refresh_cap',{}).get('latest_start',float('inf'))
+        if first<expected_start:constraint='first_refresh'
         d.update(three_frequency_formula=formula,start_constraint=constraint,
             low_full_formula=dict(selected=dict(chosen,history=history),policy='medium_first_v1'),
             compute_profile=chosen['profile'],service_budget_history='low' if medium_chosen else d['service_budget_history'],
@@ -204,13 +202,13 @@ class ThreeFullRuntime(LowFullRuntime):
                 latest_start=latest,start_now=True,wait_seconds=0.,
                 rtc_delay_steps=delay,rtc_latest_submit_step=new_submit,rtc_submit_guard_steps=new_guard,
                 deadline_already_unreachable=now+new['service_seconds']+self.margin.seconds>d['deadline'])
-            if d.get(cap_key):
-                d[cap_key]=dict(d[cap_key],latest_start=new['first_cap'],
+            if d.get('first_refresh_cap'):
+                d['first_refresh_cap']=dict(d['first_refresh_cap'],latest_start=new['first_cap'],
                     recovery_ticks=int(self.clocks.profile!=new['profile']))
             own=d['deadline']-new['service_seconds']-self.margin.seconds
             prefix_cap=now+(new_submit-step-new_guard)*period
             constraint='rtc_prefix' if prefix_cap<own else 'service_deadline'
-            if d.get(cap_key,{}).get('latest_start',math.inf)<min(own,prefix_cap):constraint=cap_constraint
+            if d.get('first_refresh_cap',{}).get('latest_start',math.inf)<min(own,prefix_cap):constraint='first_refresh'
             d['start_constraint']='full_energy_fixed_prepare' if anchor['latest_start']<new['latest_start']-1e-9 else constraint
             if startup is not None:d['start_point_rounding']=start_point(step,now,latest,period,self.start_floor_seconds)
         if self.ordinary_fast:
