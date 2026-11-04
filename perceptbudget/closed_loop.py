@@ -275,6 +275,12 @@ class DeadlineRuntime:
             raise ValueError('Unknown phase event source')
         if self.phase_event_source and (self.critical_forecast_version!='remaining_v1' or not self.phase_refresh):
             raise ValueError('Shared phase events require remaining_v1 and phase refresh')
+        self.phase_coverage_memory=config.get('m3_phase_coverage_memory')
+        if self.phase_coverage_memory not in (None,'all_active_v1'):
+            raise ValueError('Unknown phase coverage memory')
+        if self.phase_coverage_memory and self.phase_event_source!='remaining_v2':
+            raise ValueError('Active phase memory requires typed remaining_v2 coverage')
+        self.refresh_phase_history=[]
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -323,6 +329,8 @@ class DeadlineRuntime:
             if response and commit['commit_step']<response['stop_step']:
                 self.refresh_phase=dict(response,completed_prediction_id=pid,
                     completed_step=commit['commit_step'])
+                if self.phase_coverage_memory:
+                    self.refresh_phase_history.append(self.refresh_phase)
         if getattr(self,'key_phase_guard',False):
             from perceptbudget.key_phases import absolute_intervals
             self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
@@ -426,8 +434,14 @@ class DeadlineRuntime:
         if self.phase_refresh:
             from perceptbudget.critical_wait import covered_by_phase
             if self.refresh_phase and step>=self.refresh_phase['stop_step']:self.refresh_phase=None
-            phase_suppressed=[dict(e) for e in candidates if covered_by_phase(e,self.refresh_phase)]
-            candidates=[e for e in candidates if not covered_by_phase(e,self.refresh_phase)]
+            coverages=[self.refresh_phase] if self.refresh_phase else []
+            if self.phase_coverage_memory:
+                # Keep each completed response until its original end. A later
+                # response of another kind must not erase it or extend it.
+                self.refresh_phase_history=[p for p in self.refresh_phase_history if step<p['stop_step']]
+                coverages=self.refresh_phase_history
+            phase_suppressed=[dict(e) for e in candidates if any(covered_by_phase(e,p) for p in coverages)]
+            candidates=[e for e in candidates if not any(covered_by_phase(e,p) for p in coverages)]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -504,6 +518,8 @@ class DeadlineRuntime:
                 refresh_phase_suppressed=phase_suppressed,
                 refresh_phase_response=dict(start_step=response['start_step'],stop_step=response['stop_step'],
                     source_prediction_id=item[1],target_step=critical,kinds=critical_kinds) if response and self.plan['reason']=='action_event' else None)
+            if self.phase_coverage_memory:
+                self.plan['refresh_phase_history']=list(self.refresh_phase_history)
             if getattr(self,'phase_event_source',None)=='remaining_v2' and self.plan['refresh_phase_response']:
                 self.plan['refresh_phase_response']['event_source']='remaining_v2'
         if getattr(self,'key_phase_response_enabled',False):

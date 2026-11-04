@@ -23,6 +23,19 @@ def phase_active_at_decision(phase,timing,events):
     return bool(steps) and phase['completed_step']<=min(steps)<phase['stop_step']
 
 
+def phase_history_at_decision(commits,by_id,step,now):
+    """Rebuild every still-active typed response, without the runtime helper."""
+    result=[]
+    for commit in commits:
+        if commit['commit_monotonic']>now or commit['commit_step']>step:continue
+        request=by_id[commit['prediction_id']]
+        response=request.get('m3_timing',{}).get('refresh_phase_response')
+        if response and commit['commit_step']<response['stop_step'] and step<response['stop_step']:
+            result.append(dict(response,completed_prediction_id=commit['prediction_id'],
+                completed_step=commit['commit_step']))
+    return result
+
+
 def decode_raw(raw,stats,profile=None):
     import numpy as np
     if profile=='lerobot_h50_quantiles_v044':
@@ -616,7 +629,17 @@ def audit(run):
                     from perceptbudget.action_events import EventConfig
                     from perceptbudget.critical_wait import covered_by_phase
                     phase=d.get('refresh_phase_covered')
-                    if phase:
+                    coverages=[phase] if phase else []
+                    if cfg.get('m3_phase_coverage_memory'):
+                        origins=[e['step'] for e in events if e['event']=='m3_decision'
+                            and e.get('decision_monotonic')==d['decision_monotonic']]
+                        expected_history=phase_history_at_decision(commits,by_id,min(origins),d['decision_monotonic'])
+                        coverages=d.get('refresh_phase_history',[])
+                        check('m3_refresh_phase_history_complete',
+                            cfg['m3_phase_coverage_memory']=='all_active_v1'
+                            and cfg.get('m3_phase_event_source')=='remaining_v2'
+                            and coverages==expected_history,pid)
+                    for phase in coverages:
                         completed=by_id.get(phase['completed_prediction_id'],{})
                         response=completed.get('m3_timing',{}).get('refresh_phase_response')
                         matched=[c for c in commits if c['prediction_id']==phase['completed_prediction_id']]
@@ -629,7 +652,7 @@ def audit(run):
                             and phase_active_at_decision(phase,d,events)
                             and any(p['end_observed'] and p['start_step']==phase['start_step']
                                 and p['stop_step']==phase['stop_step'] for p in phases),pid)
-                    check('m3_refresh_phase_suppression',all(covered_by_phase(e,phase)
+                    check('m3_refresh_phase_suppression',all(any(covered_by_phase(e,p) for p in coverages)
                         for e in d.get('refresh_phase_suppressed',[])),pid)
                 check('m3_signal_policy_matches_config',policy in ('earliest','latest')
                       and d.get('signal_policy','earliest')==policy,pid)
