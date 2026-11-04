@@ -107,3 +107,38 @@ V1、V2的旧规则跨批结果有波动，分别报告，不跨批挑选基线�
 
 - [V1与离线检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T074819.883850Z-phase-source-check-26c3e8e0/summary.json>)、[V1首次差异](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T074819.883850Z-phase-source-check-26c3e8e0/first_difference.json>)
 - [V2汇总、配对与干预位置](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/summary.json>)、[四回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/results.csv>)、[固定计划与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/plan.json>)、[运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T080311.648034Z-phase-kind-pair-63081837/pair.py>)
+
+## 冻结V2小规模基线与q30：同40任务、seed17/init1
+
+未进一步微调阈值，V2完整40任务为36/40（90%），四套各9/10。超时为Spatial4、Object1、Goal3、LIBERO-10 task8。与前一版本35/40的历史结果相比，Object2、Long0/7恢复，Goal3、Long8退步，净增加1项。全部阈值、模型、N、精度、state、RTC及采集规则冻结。V2前31项后RAM保护，只续测缺少9项，共2次模型加载；原有效结果未重跑。
+
+用户随后指定将V2冻结为小规模对照基线，再测q30。q30为高频Full、每30控制步启动预测、RTC真实异步；同样H50/N5/BF16/state、seed17/init1、请求时双图及图缓存，不带事件判断/DVFS/Fast。用户通过离线tmux执行，40任务常驻1次模型正常完成。
+
+|集合|q30|V2|
+|---|---:|---:|
+|Spatial|7/10|9/10|
+|Object|10/10|9/10|
+|Goal|8/10|9/10|
+|LIBERO-10|8/10|9/10|
+|合计|33/40（82.5%）|36/40（90%）|
+
+q30超时：Spatial1/2/8、Goal3/9、Long0/1。两组各有成功与失败，V2净多3项、成功率高7.5个百分点；不把它说成覆盖q30全部成功任务。
+
+|同口径累计指标|q30|V2|V2变化|
+|---|---:|---:|---:|
+|全部40次尝试能量J（含超时）|5806.30|7731.48|+33.16%|
+|全部40次任务时间s|399.58|442.66|+10.78%|
+|全部40次推理请求数|257|541|—|
+|同输入、共同成功29项能量J|3347.23|4992.17|+49.14%|
+|同输入、共同成功29项任务时间s|231.52|282.62|+22.07%|
+|上述29项推理请求数|151|353|—|
+
+本轮V2成功率更高，但没有形成节能收益，不能宣称任务书节能目标已达成。可见的主要代价是刷新次数增加；共同成功子集也出现更高能耗、更长时间，因此不能仅用成功率改善评价系统效率。
+
+能量均为VDD_IN模块输入的正式任务＋在途推理收尾，不含模型加载、环境准备、恢复及统一3秒终态尾段。两组无缓冲耗尽，实际关键等待照常计入任务时间。51942项V2、34005项q30独立系统检查及频率恢复通过；q30逐请求核对确为0/30/60…间隔。
+
+同种子初态仍核对实际输入：40对物理状态/raw state/噪声相同，39对图像哈希相同；Goal2图像不同但两组都成功，从共同成功30项中剔除，得到29项匹配子集。首次raw动作仅9/40逐值相同，最大绝对差0.0139506；属于分进程对照，不能把所有轨迹差异唯一归因调度机制。主统计保留全部80有效回合，无逐任务调参或挑选复测。
+
+- [冻结V2完整40汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/summary.json>)、[固定配置与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/plan.json>)、[V2逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T090527.343866Z-phase-v2-all40-406cb8fa/results.csv>)
+- [q30完整40汇总与审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/summary.json>)、[q30运行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/candidate.py>)、[q30固定计划](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/plan.json>)
+- [逐任务成对表格](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/comparison.md>)、[80回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/comparison.csv>)、[分口径汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T093629.172429Z-q30-v2-reference-all40-ca14601f/comparison_with_v2/metrics.json>)
