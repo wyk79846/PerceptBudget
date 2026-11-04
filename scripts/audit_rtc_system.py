@@ -566,6 +566,35 @@ def audit(run):
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
                 policy=cfg.get('m3_signal_policy','earliest')
+                if cfg.get('m3_critical_forecast'):
+                    from perceptbudget.critical_forecast import forecast
+                    from perceptbudget.action_events import EventConfig
+                    proof=d.get('critical_forecast',{});at=proof.get('source_step',-1)
+                    ec=EventConfig(**cfg['m3_events'])
+                    past_steps=list(range(max(0,at-ec.confirm_steps),at))
+                    source_decisions=[e for e in events if e['event']=='m3_decision'
+                        and e['step']==at and e.get('decision_monotonic')==proof.get('source_monotonic')]
+                    valid=(proof.get('version')==cfg['m3_critical_forecast']=='remaining_v1'
+                        and proof.get('prediction_id')==old['prediction_id']
+                        and previous['commit_step']<=at<=origin and bool(source_decisions)
+                        and proof.get('history_steps')==past_steps
+                        and all(i in by_step for i in past_steps))
+                    check('remaining_forecast_source',valid,pid)
+                    if valid:
+                        offset=at-old['observation_step']
+                        replay=forecast(old['actions'][offset:cfg['m3_timing']['maximum_action_offset']],
+                            previous_actions=[by_step[i]['action'] for i in past_steps],
+                            current_step=at,now=proof['source_monotonic'],
+                            control_period=proof['source_period_seconds'],config=ec)
+                        check('remaining_forecast_replay',proof.get('result')==replay
+                            and source_decisions[0]['estimated_control_period_seconds']==proof['source_period_seconds'],pid)
+                        critical=d.get('critical_step')
+                        originals=[e for e in events if e['event']=='m3_decision'
+                            and e.get('decision_monotonic')==d['decision_monotonic']]
+                        decision_step=min(e['step'] for e in originals)
+                        expected_time=d['decision_monotonic']+(critical-decision_step)*d['estimated_control_period_seconds'] if critical is not None else None
+                        check('remaining_forecast_current_arrival',d.get('critical_time_monotonic')==expected_time
+                            and (critical is None or any(e['target_step']==critical for e in replay['events'])),pid)
                 if cfg.get('m3_phase_refresh'):
                     from perceptbudget.key_phases import absolute_intervals
                     from perceptbudget.action_events import EventConfig

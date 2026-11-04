@@ -2,7 +2,8 @@
 
 History must contain executed controls, never the new prediction's expired
 prefix. XYZ-command amplitude is a motion proxy, not measured physical speed.
-This module does not select frequencies or change the production scheduler.
+The scheduler can select this module through its optional version interface;
+frequency selection remains outside this module.
 """
 import math
 
@@ -26,11 +27,11 @@ def forecast(remaining_actions, *, previous_actions=(), current_step, now,
              control_period, config=None):
     """Earliest supported command change and its predicted monotonic arrival.
 
-Gripper changes use the last executed command as their starting state.
-Slowdown compares sustained low commands with the preceding motion peak.
-Turns accumulate heading change, so gradual turns can also produce a cue.
-All three cues use the existing thresholds and confirmation length.
-"""
+    Gripper changes use the last executed command as their starting state.
+    Slowdown compares sustained low commands with the preceding motion peak.
+    Turns accumulate heading change, so gradual turns can also produce a cue.
+    All three cues use the existing thresholds and confirmation length.
+    """
     if type(current_step) is not int or current_step<0:
         raise ValueError('current_step must be a nonnegative integer')
     if not math.isfinite(now) or not math.isfinite(control_period) or control_period<=0:
