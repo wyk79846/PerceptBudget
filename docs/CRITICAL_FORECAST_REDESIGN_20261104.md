@@ -178,3 +178,26 @@ q30超时：Spatial1/2/8、Goal3/9、Long0/1。两组各有成功与失败，V2�
 本轮结论：简单增加确认时长或统一增大转向角度，均未得到更优的整体结果。后续若继续，应区分普通移动和关键操作的运动变化，再用同一开发组验证；不将本轮失败候选加入默认路径。
 
 - [转向参数开发计划](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/plan.json>)、[八回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/results.csv>)、[独立审查与功率重积分](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T124343.123498Z-turn90-seed7-f927c62e/postrun_review.json>)
+
+## 后续候选：保留尚未到期的各类响应记录
+
+继续检查旧seed7/init0记录，发现V2只保存最近一次阶段响应。一个有限区间内先响应转向、再响应减速后，前一份转向覆盖会被覆盖；再次出现该区间的转向时，原规则可能重新刷新。旧四项54次请求中5次符合此情形，这是离线机会数，不等于闭环必能省掉5次计算。
+
+候选只补齐记录：每份已完成响应保留自己的类型、原始开始/结束步与来源，原区间结束就删除。不同信号仍分别判断，不将转向覆盖扩大成减速/夹爪覆盖，不合并重叠区间来延长旧记录。新选项`m3_phase_coverage_memory=all_active_v1`只支持已存在的V2同类覆盖；默认空值仍复现原V2。关键提取器、阈值、PhaseWait、缓冲与RTC、频率规则均未调整。独立审查从原始提交记录重建全部有效覆盖，缺记录、改边界或超期使用均会失败；续跑也检查版本一致。源代码`4fa47f4`，178项CPU检查通过。
+
+固定旧seed7/init0、四套各task0，原/新各一次，共8回合、1次模型加载，交叉执行顺序：
+
+|任务，均成功|原→新步数|原→新Full次数|原→新任务能量，含在途推理|原→新任务时间|
+|---|---:|---:|---:|---:|
+|Spatial0|81→80|10→10|137.92→134.00J|6.78→6.63s|
+|Object0|142→141|11→11|156.78→157.34J|8.83→8.85s|
+|Goal0|121→121|7→7|104.30→103.88J|7.03→7.03s|
+|LIBERO-10 task0|272→262|24→19|344.02→279.32J|18.83→16.64s|
+|合计|两组均4/4|52→47|743.01→674.54J|41.47→39.16s|
+
+本批总能量下降9.22%、总时间下降5.57%，主要来自长任务（能量下降18.81%），均无缓冲欠载。四对初始物理、双图、state、噪声与首动作精确一致；9665项系统检查、频率/恢复及原始功率重积分通过，能量误差0J。模型保持常驻，设备最终恢复1173/3199/1497.6MHz，FlashRT未改。
+
+候选确实使用了早于最近一份响应的记录：Object0自123步起1条提示、长任务自115步起8条提示；Spatial/Goal没有此类额外覆盖。不过真实异步两条轨迹的首次动作差异分别在Spatial37、Object69、长任务72步，早于新增覆盖起效；Goal动作整段相同。因此这是同批真实部署结果，不能将全部节能严格归因于这一处修改，更不能由四个开发样例推成40任务结论。保留为显式候选，原V2基线保留，最近seed17/init1未参与调参；后续扩大验证仍使用旧开发组。
+
+- [冻结开发计划与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/plan.json>)、[八回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/results.csv>)
+- [独立审查与能量重算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/postrun_review.json>)、[旧响应实际生效位置](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/intervention_review.json>)、[轨迹及观测步数差异](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T130110.702277Z-phase-history-seed7-b9127b84/pair_trajectory_review.json>)
