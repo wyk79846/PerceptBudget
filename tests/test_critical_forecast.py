@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from perceptbudget.action_events import detect_events
+from perceptbudget.action_events import EventConfig, detect_events
 from perceptbudget.critical_forecast import forecast
 
 
@@ -96,3 +96,43 @@ def test_new_runtime_can_run_without_the_fixed30_step_cap():
 @pytest.mark.parametrize('period',[0.,-1.,math.nan,math.inf])
 def test_invalid_period_is_rejected(period):
     with pytest.raises(ValueError):estimate([action()]*3,period=period)
+
+
+def supported(future,history=()):
+    return forecast(future,previous_actions=history,current_step=125,now=10.,
+        control_period=.05,config=EventConfig(motion_confirm_steps=4))
+
+
+def test_short_motion_excursions_are_filtered_without_filtering_gripper():
+    future=[action(angle=a,grip=1.) for a in (90.,90.,0.,0.,0.,0.)]
+    old=estimate(future,[action()]*2)
+    new=supported(future,[action()]*2)
+    assert {'turn','gripper_close'}=={e['kind'] for e in old['events']}
+    assert [e for e in old['events'] if e['kind']=='gripper_close']==new['events']
+
+
+def test_brief_slowdown_is_filtered_but_sustained_onset_keeps_its_time():
+    history=[action()]*2
+    brief=[action(v) for v in (.4,.4,1.,1.,1.,1.)]
+    assert estimate(brief,history)['event_kinds']==['slowdown']
+    assert supported(brief,history)['events']==[]
+    sustained=[action(v) for v in (1.,.8,.4,.4,.4,.4,1.,1.)]
+    old=estimate(sustained,history);new=supported(sustained,history)
+    assert old['critical_step']==new['critical_step']==127
+    assert old['t_critical']==new['t_critical']==10.1
+    assert new['events'][0]['confirmed_offset']==5
+
+
+def test_sustained_turn_keeps_its_onset_and_unknown_tail_is_not_discarded():
+    history=[action()]*2
+    future=[action(angle=a) for a in (0.,15.,60.,75.,90.,90.,90.,90.)]
+    old=estimate(future,history);new=supported(future,history)
+    assert old['critical_step']==new['critical_step']==127
+    assert new['events'][0]['confirmed_offset']==5
+    tail=[action(angle=0.)]*2+[action(angle=90.)]*2
+    assert supported(tail,history)['events']==estimate(tail,history)['events']
+
+
+@pytest.mark.parametrize('count',[True,1,2.5,0,-1])
+def test_motion_support_cannot_be_shorter_than_original_confirmation(count):
+    with pytest.raises(ValueError):EventConfig(motion_confirm_steps=count)
