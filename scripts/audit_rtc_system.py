@@ -60,6 +60,35 @@ def turn_identity_from_record(event,phases,by_id,config):
         same_event=same,reason='direction_unavailable' if angle is None else 'same_turn_direction' if same else 'new_turn_direction')
 
 
+def ordinary_turn_from_record(event,source,proof,controls,config,phases):
+    """Reconstruct local command evidence independently from saved records."""
+    at=event['target_step'];n=config.get('confirm_steps',2);begin=proof['source_step']
+    def vector(first):
+        values=[]
+        for step in range(first,first+n):
+            index=step-source['observation_step']
+            a=(source['actions'][index] if step>=begin and 0<=index<len(source['actions'])
+                else controls.get(step,{}).get('action'))
+            if a is None:return None
+            values.append(a)
+        v=[sum(a[k] for a in values)/n for k in range(3)]
+        return v if math.sqrt(sum(x*x for x in v))>=config.get('minimum_motion',.1) else None
+    a=vector(at-n);b=vector(at);angle=None
+    if a is not None and b is not None:
+        angle=math.degrees(math.acos(max(-1.,min(1.,sum(x*y for x,y in zip(a,b))/
+            math.sqrt(sum(x*x for x in a)*sum(y*y for y in b))))))
+    intervals=[[p['start_step'],p['stop_step']] for p in phases if p['start_step']<=at<p['stop_step']]
+    cues=proof['result']['events'];gap=config.get('match_steps',5)
+    grip=min((abs(e['target_step']-at) for e in cues if e['kind'].startswith('gripper_')),default=None)
+    slow=min((abs(e['target_step']-at) for e in cues if e['kind']=='slowdown'),default=None)
+    reason=('protected_motion_phase' if intervals else 'near_gripper' if grip is not None and grip<=gap else
+        'near_slowdown' if slow is not None and slow<=gap else 'direction_unavailable' if angle is None else
+        'abrupt_turn' if angle+1e-9>=config.get('turn_degrees',60.) else 'ordinary_bend')
+    return dict(kind='turn',prediction_id=event['prediction_id'],target_step=at,source_step=begin,
+        before_direction=a,after_direction=b,local_angle_degrees=angle,protected_intervals=intervals,
+        nearest_gripper_steps=grip,nearest_slowdown_steps=slow,ordinary=reason=='ordinary_bend',reason=reason)
+
+
 def decode_raw(raw,stats,profile=None):
     import numpy as np
     if profile=='lerobot_h50_quantiles_v044':
@@ -648,6 +677,24 @@ def audit(run):
                             check('remaining_phase_response_replay',
                                 d.get('refresh_phase_response')==expected_response
                                 and t.get('refresh_phase_response')==expected_response,pid)
+                            if cfg.get('m3_ordinary_turn_policy'):
+                                expected_reviews=[ordinary_turn_from_record(dict(e,prediction_id=old['prediction_id']),
+                                    old,proof,by_step,cfg['m3_events'],shared)
+                                    for e in replay['events'] if e['kind']=='turn']
+                                check('ordinary_turn_evidence_replay',
+                                    cfg['m3_ordinary_turn_policy']==d.get('ordinary_turn_policy')=='context_v1'
+                                    and cfg.get('m3_event_identity')=='turn_direction_v1'
+                                    and d.get('ordinary_turn_review')==expected_reviews,pid)
+                                restored={(r['prediction_id'],r['target_step'])
+                                    for r in d.get('refresh_phase_identity_review',[]) if not r['same_event']}
+                                suppressed=d.get('ordinary_turn_suppressed',[])
+                                check('ordinary_turn_suppression',all(e['kind']=='turn'
+                                    and any(r['ordinary'] and r['target_step']==e['target_step']
+                                        and r['prediction_id']==e['prediction_id'] for r in expected_reviews)
+                                    and (e['prediction_id'],e['target_step']) not in restored
+                                    for e in suppressed),pid)
+                                check('ordinary_turn_retains_critical_signal',not any(
+                                    e['target_step']==d.get('critical_step') for e in suppressed),pid)
                 if cfg.get('m3_phase_refresh'):
                     from perceptbudget.key_phases import intervals_for_timing
                     from perceptbudget.action_events import EventConfig

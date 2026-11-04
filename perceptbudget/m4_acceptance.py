@@ -208,6 +208,7 @@ def resume_full(source, config):
           'm3_phase_refresh','m3_first_refresh_step','m3_replay_eta_ms','m3_full_energy',
           'm3_critical_forecast','m3_phase_event_source','m3_phase_coverage_memory',
           'm3_event_identity',
+          'm3_ordinary_turn_policy',
           'm4_common_low_tail_seconds','m4_policy_revision','rtc_critical_wait_prefix_policy')
     if (group not in ('q30','m3') or original.get('m4_acceptance_manifest')!=fixed
             or any(original.get(k)!=config.get(k) for k in keys)):

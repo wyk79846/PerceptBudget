@@ -286,6 +286,11 @@ class DeadlineRuntime:
             raise ValueError('Unknown event identity version')
         if self.event_identity and self.phase_coverage_memory!='all_active_v1':
             raise ValueError('Turn identity requires active typed phase history')
+        self.ordinary_turn_policy=config.get('m3_ordinary_turn_policy')
+        if self.ordinary_turn_policy not in (None,'context_v1'):
+            raise ValueError('Unknown ordinary turn policy')
+        if self.ordinary_turn_policy and self.event_identity!='turn_direction_v1':
+            raise ValueError('Ordinary turns require directional event identity')
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -426,6 +431,13 @@ class DeadlineRuntime:
                     current['refresh_phases']=intervals_for_timing(current['phase_actions'],
                         current['origin'],self.events_config,dict(
                             phase_event_source=self.phase_event_source,critical_forecast=forecast_proof))
+                if getattr(self,'ordinary_turn_policy',None):
+                    from perceptbudget.event_identity import review_ordinary_turn
+                    current['ordinary_turn_review']=[review_ordinary_turn(dict(e,prediction_id=item[1]),
+                        actions=current['phase_actions'],origin=current['origin'],source_step=step,
+                        history={r['step']:r['action'] for r in past},phases=current['refresh_phases'],
+                        events=result['events'],config=self.events_config)
+                        for e in result['events'] if e['kind']=='turn']
             # Targets stay fixed while this predicted chunk is active. Moving
             # the history window each tick would slide gradual-motion targets.
             self.events=[dict(e,prediction_id=item[1]) for e in forecast_proof['result']['events']
@@ -457,6 +469,13 @@ class DeadlineRuntime:
                     retained.append(event)
                 phase_suppressed=retained
             candidates=[e for e in candidates if e not in phase_suppressed]
+        ordinary_suppressed=[]
+        if getattr(self,'ordinary_turn_policy',None) and current is not None:
+            restored={(r['prediction_id'],r['target_step']) for r in identity_reviews if not r['same_event']}
+            ordinary={r['target_step'] for r in current['ordinary_turn_review'] if r['ordinary']}
+            ordinary_suppressed=[dict(e) for e in candidates if e['kind']=='turn'
+                and e['target_step'] in ordinary and (e['prediction_id'],e['target_step']) not in restored]
+            candidates=[e for e in candidates if e not in ordinary_suppressed]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -526,6 +545,10 @@ class DeadlineRuntime:
                 critical_time_monotonic=now+(critical-step)*period if critical is not None else None)
             if getattr(self,'phase_event_source',None):
                 self.plan['phase_event_source']=self.phase_event_source
+        if getattr(self,'ordinary_turn_policy',None) and current is not None:
+            self.plan.update(ordinary_turn_policy=self.ordinary_turn_policy,
+                ordinary_turn_review=current['ordinary_turn_review'],
+                ordinary_turn_suppressed=ordinary_suppressed)
         if self.phase_refresh:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
