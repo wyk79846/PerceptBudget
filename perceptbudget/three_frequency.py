@@ -117,9 +117,6 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_previous='Full'
         self.fast_delays={}
         self.full_energy=bool(config.get('m3_full_energy'))
-        self.critical_high=bool(config.get('m3_critical_high_full'))
-        if self.critical_high and (self.full_energy or self.ordinary_fast):
-            raise ValueError('Critical HIGH experiment requires Full without energy selection')
         self.energy_costs=config.get('m3_full_energy_costs')
         self.last_ready=None
         if self.full_energy and self.ordinary_fast:raise ValueError('Compare Full energy without Fast')
@@ -150,15 +147,6 @@ class ThreeFullRuntime(LowFullRuntime):
         medium=max(percentile(list(v),self.settings['service_quantile']) for v in self.low_histories.values())
         formula=select_full(d,medium_seconds=medium,medium_cap=cap,
                             current_profile=self.clocks.profile,transitions=self.transitions)
-        if self.critical_high:
-            active=[dict(start_step=p['start_step'],stop_step=p['stop_step'])
-                    for p in self.ordinary_phases if p['start_step']<=step<p['stop_step']]
-            event=d['reason']=='action_event'
-            gate=dict(step=step,event_deadline=event,active_intervals=active,critical=event or bool(active))
-            formula=dict(formula,policy='critical_high_v1',critical_high_gate=gate)
-            if gate['critical']:
-                formula.update(selected=formula['candidates'][1],reason='critical_stage_high',
-                    selection_order=['baseline','gpu_emc'])
         chosen=formula['selected']
         # Preserve LowFullRuntime's separate medium measurement history and RTC
         # queue; it uses the old low_full_formula selected.history field.
@@ -183,7 +171,7 @@ class ThreeFullRuntime(LowFullRuntime):
         first=d.get('first_refresh_cap',{}).get('latest_start',float('inf'))
         if first<expected_start:constraint='first_refresh'
         d.update(three_frequency_formula=formula,start_constraint=constraint,
-            low_full_formula=dict(selected=dict(chosen,history=history),policy=formula['policy']),
+            low_full_formula=dict(selected=dict(chosen,history=history),policy='medium_first_v1'),
             compute_profile=chosen['profile'],service_budget_history='low' if medium_chosen else d['service_budget_history'],
             service_seconds=chosen['service_seconds'],
             latest_start=chosen['latest_start'],wait_seconds=0. if due else max(0.,chosen['latest_start']-now),
@@ -312,7 +300,7 @@ class ThreeFullRuntime(LowFullRuntime):
         self.active_profile=self.clocks.profile
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile
-        request['m3_three_frequency_policy']='full_energy_fixed_prepare_v1' if self.full_energy else 'critical_high_v1' if self.critical_high else 'medium_first_v1'
+        request['m3_three_frequency_policy']='full_energy_fixed_prepare_v1' if self.full_energy else 'medium_first_v1'
         if self.start_floor_seconds:request['m3_start_floor_ms']=self.start_floor_seconds*1000
         if request['observation_step'] and self.active_profile=='gpu_emc':
             request['m3_timing']['low_full_measurement_history']=self.plan['low_full_formula']['selected']['history']
