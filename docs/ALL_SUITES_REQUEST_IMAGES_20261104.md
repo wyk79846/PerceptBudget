@@ -38,3 +38,9 @@ cd /home/wyk/workspace/PerceptBudget
 修正后的续跑会话`M4/20261104T014304.762470Z-paired-acceptance-7788984c`；q30续跑`M4/20261104T014309.222299Z-acceptance-q30-99372b53`，只补LIBERO-10十任务，再运行动态四组40任务。10任务环境缓存子集已通过，准备5.72秒；任务服务`perceptbudget-all40-request-images-r2-20261104.service`，主日志`/tmp/perceptbudget-all40-request-images-r2-20261104.log`。本节为进度记录，最终结果待续跑完成。
 
 r2已越过原内存中断位置，LIBERO-10 task0完成520步超时，计为有效失败；当前累计31/40、27成功，task1已开始。图和模型准备完成后可继续后续任务，原30回合未重复，动态组仍待q30结束。
+
+r2随后完成Long task1–3，均成功，累计34/40、30成功、4超时；切换task4时再次触发内存保护，未执行该任务。此时Torch allocated约6930MiB稳定，关闭上一环境后可用约1479MiB，不能把中止直接归因于模型显存泄漏。
+
+`401374c`新增显式`--resume-on-ram`：只在明确内存保护且有新增完成回合时，重审记录后自动启动缺失部分；每组最多8次续跑，无进展或其他错误仍停止并记录。超时结果全部保留，原保护阈值、推理和动作规则不变。23项相关检查通过。
+
+当前自动续测会话`M4/20261104T020210.741552Z-paired-acceptance-8e2e41f2`，q30续`M4/20261104T020216.656538Z-acceptance-q30-f073d190`，从Long task4开始，只补6项，再执行动态40项。6项缓存子集准备6.93秒；unit为`perceptbudget-all40-request-images-auto-20261104.service`，主日志`/tmp/perceptbudget-all40-request-images-auto-20261104.log`。
