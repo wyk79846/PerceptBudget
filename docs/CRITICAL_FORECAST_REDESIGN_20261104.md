@@ -268,3 +268,29 @@ Spatial3为96/92/88步，三组均成功。此前历史版220步失败在本批�
 
 - [完整审计汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/summary.json>)、[旧40逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/historical40_requests.csv>)、[近期12逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/recent_v2_12_requests.csv>)、[新方向版逐请求CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/direction_2_requests.csv>)
 - [逐条转向候选及依据](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/turn_context_review.json>)、[只读审计源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/audit.py>)、[候选排序源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T144131.794910Z-old40-forced-refresh-audit-0bc7cd6a/rank_turns.py>)
+
+## 减少普通转向刷新：20步候选有收益，整体尚未达到20–30步
+
+用户希望普通运动尽量20–30步刷新一次。新增显式候选`m3_ordinary_turn_policy=context_v1`：累计转向提示出现后，再检查附近实际运动；局部方向平缓、没有关键运动区间、附近没有夹爪或减速提示时，不将它单独当作提前刷新的截止点。沿用既有60°、5步和两步方向窗口，不针对任务另设阈值。不同方向响应仍保留；夹爪、减速、关键区间、动作供给和RTC约束仍可提前触发，不强制至少执行20步。
+
+先试普通刷新上限30，再试20。两轮均只用旧seed7/init0的Spatial3与LIBERO-10 task0，每轮原方向方案/候选各两回合、同一常驻模型、交叉组序。每轮都有自己的新鲜对照，不能跨轮拼接成功或节能率。
+
+|同批比较，超时计入|30步上限一轮：原→候选|20步上限一轮：原→候选|
+|---|---:|---:|
+|成功|2/2→1/2|2/2→2/2|
+|Full次数|46→50|37→31|
+|任务＋在途推理能量|646.76→763.66J，+18.07%|527.44→454.70J，−13.79%|
+|实际平均刷新间隔|9.11→12.19步|10.20→12.86步|
+|Continue时间占比|16.50%→34.51%|20.62%→28.24%|
+
+30步候选中Spatial3成功、刷新11→6次，但长任务520步超时，不采用。20步候选中Spatial3为93→85步成功、12→8次Full、170.18→115.82J；长任务271→298步成功、25→23次Full、357.26→338.88J。长任务执行步数增加，不能称两项轨迹都改善；本批总任务时间26.89→25.89秒，减少3.72%。
+
+实际间隔按相邻两次请求的观测步差统计，不含启动预测和末尾未完成的间隔。20步候选七个普通上限间隔均为19步，受提前备频与启动取整影响；其余夹爪、减速和转向截止仍更早。**整体平均12.86步，尚未实现20–30步目标。** Continue占比来自任务＋在途推理窗口，Full恢复/计算只计一次，另列的终态3秒保持不计入。
+
+20步候选分别过滤9/13条独立预测转向提示；提示可能本来不会触发请求，也可能被后续提示替代，不等于省掉22次Full。四对照回合初始物理、双图、state、噪声与首动作精确，6513项系统检查、实际频率/恢复及原始功率重积分通过；运行期间源码哈希无变化，设备恢复1173/3199/1497.6MHz。30步轮次另有9038项检查通过，失败原样保留。源`ea02c83`/`cb95fef`，194项CPU检查及33项定向复查通过，FlashRT未修改。
+
+只保留20步显式候选，默认与原V2基线不切换；两个开发任务不足以证明总体成功率或40任务收益。最近seed17/init1未用于调参。后续重点仍是减少剩余关键区间中的重复响应，不能靠硬设最小20步来跳过真正的夹爪或动作供给截止。
+
+- [30步冻结计划](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T151327.142691Z-ordinary30-seed7-6cabe7d8/plan.json>)、[四回合结果，含超时](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T151327.142691Z-ordinary30-seed7-6cabe7d8/summary.json>)、[独立审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T151327.142691Z-ordinary30-seed7-6cabe7d8/postrun_review.json>)
+- [20步冻结计划与源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/plan.json>)、[四回合结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/summary.json>)、[逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/results.csv>)
+- [20步系统/频率/功率审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/postrun_review.json>)、[真实刷新间隔与Continue占比](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/timing_review.json>)、[过滤提示与冻结源码核对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T152442.191832Z-ordinary20-seed7-3c1fd88e/intervention_review.json>)
