@@ -166,50 +166,6 @@ def audit_fast_formula(formula, decision, costs, previous_mode):
     return failures
 
 
-def audit_motion_progress(cfg, events, check):
-    """Reconstruct monitor state from known control rows and commit order."""
-    from perceptbudget.motion_progress import DownwardProgress,downward_plan
-    from perceptbudget.key_phases import absolute_intervals
-    from perceptbudget.action_events import EventConfig
-    ec=EventConfig(**cfg.get('m3_events',{}))
-    policy=cfg.get('m3_motion_progress_policy','state_only_v1')
-    watch=DownwardProgress(ec.minimum_motion,
-        continuation_steps=cfg['m3_timing'].get('minimum_request_steps',5) if policy=='continuation_v2' else 0)
-    mode=cfg['m3_motion_progress'];rows=[];phases={};snapshots={};actions={};origins={};active=None;step=0
-    check('progress_mode_valid',mode in ('record','refresh'))
-    check('progress_policy_valid',policy in ('state_only_v1','continuation_v2'))
-    def protected(row):
-        pid=(row.get('source') or {}).get('prediction_id')
-        return any(p['start_step']<=row['step']<p['stop_step']
-            and any(a['kind']=='gripper_close' for a in p['anchors']) for p in phases.get(pid,[]))
-    def continuation():
-        return downward_plan(actions.get(active,[]),origins.get(active,step),step,
-            watch.continuation_steps,ec.minimum_motion,active)
-    for event in events:
-        if event['event']=='prediction_committed':
-            request=event['request'];pid=request['prediction_id']
-            actions[pid]=request['actions'];origins[pid]=request['observation_step'];active=pid
-            phases[pid]=absolute_intervals(request['actions'],request['observation_step'],ec)
-            coverage=watch.committed(request,event)
-            check('progress_snapshot_covers_observed_onset',request.get('motion_progress_coverage')==coverage,pid)
-        elif event['event']=='control_step':rows.append(event)
-        elif event['event']=='m3_decision':
-            step=event['step'];status=watch.update(rows,protected=protected,continuation=continuation)
-            # Clock acknowledgement may publish the preceding tick's frozen
-            # plan again. Validate that plan against its original observation.
-            stamp=event['decision_monotonic']
-            if stamp not in snapshots:snapshots[stamp]=(status,event['step'])
-            expected,at=snapshots[stamp]
-            check('progress_known_state_replay',event.get('motion_progress')==expected,event['step'])
-            check('progress_recorded_mode',event.get('motion_progress_mode')==mode,event['step'])
-            alert=expected['pending'] if mode=='refresh' else None
-            check('progress_alert_provenance',event.get('progress_alert')==alert,event['step'])
-            if alert:
-                check('progress_immediate_deadline',event['critical_step']==at
-                    and 'motion_blocked' in event['candidate_event_kinds']
-                    and not alert['grasp_protected'],event['step'])
-
-
 def audit(run):
     import numpy as np
     cfg=json.loads((run/'run.json').read_text())['config_snapshot']
@@ -863,8 +819,6 @@ def audit(run):
             check('initial_sim_state_sha256',episode['initial_sim_state_sha256']==digest)
     controlled=cfg.get('controlled_delay_steps')
     check('no_controlled_wait_in_actual',controlled is not None or all('controlled_wait_seconds' not in r for r in requests))
-    if cfg.get('m3_motion_progress'):
-        audit_motion_progress(cfg,events,check)
     return dict(run=str(run),passed=not failures,checks=count,failures=failures,
         controls=len(controls),requests=len(requests),commits=len(commits),
         estimate_minus_actual=slacks,

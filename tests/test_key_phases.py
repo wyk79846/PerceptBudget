@@ -55,7 +55,7 @@ def test_replacement_chunk_does_not_inherit_old_phase():
     from perceptbudget.action_events import EventConfig
     r=object.__new__(DeadlineRuntime)
     r.chunks={};r.key_phase_guard=True;r.fast_selection=False;r.dvac_enabled=False
-    r.phase_refresh=False;r.progress=None
+    r.phase_refresh=False
     r.action_events_enabled=False;r.merge_gap=None;r.open_probe=None;r.event_coverage_mode='event_only'
     r.events_config=EventConfig()
     r.committed(dict(prediction_id=0,observation_step=100,observation_monotonic=1.,

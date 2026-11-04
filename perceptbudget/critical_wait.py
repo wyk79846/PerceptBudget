@@ -39,8 +39,6 @@ class PhaseWait:
         from perceptbudget.key_phases import absolute_intervals
         target = wait_target(request)
         kinds = request.get('m3_timing', {}).get('candidate_event_kinds', [])
-        if request.get('m3_timing',{}).get('progress_alert'):
-            return dict(wait=True,reason='new_execution_progress',phase=None,kinds=list(kinds))
         old = self.completed
         opposite = bool(old and (
             ('gripper_open' in kinds and 'gripper_close' in old['kinds']) or
