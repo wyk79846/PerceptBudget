@@ -139,6 +139,8 @@ def main():
     cfg['m3_first_refresh_step']=args.first_refresh_step
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
+    if args.critical_wait:
+        cfg['rtc_critical_wait_prefix_policy']='committed_stop_v1'
     cfg['experimental_setup_reuse']=args.reuse_preparation
     settings=load_settings(ROOT/'m3.json');m4=json.loads((ROOT/'m4.json').read_text())
     from perceptbudget.m4_planner import POLICY_REVISION

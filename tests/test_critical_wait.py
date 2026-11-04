@@ -44,3 +44,32 @@ def test_phase_event_coverage_keeps_opposite_grip_and_outside_events():
     assert covered_by_phase(dict(target_step=60,kind='slowdown'),phase)
     assert not covered_by_phase(dict(target_step=74,kind='gripper_open'),phase)
     assert not covered_by_phase(dict(target_step=80,kind='turn'),phase)
+
+
+def test_known_wait_limits_old_actions_to_those_that_will_actually_execute():
+    from perceptbudget.critical_wait import rtc_prefix_plan
+    request=dict(m3_timing=dict(reason='action_event',critical_step=46))
+    plan=rtc_prefix_plan(request,38,10,dict(wait=True))
+    assert plan['maximum_consumed_steps']==8
+    assert plan['selected_delay_steps']==8
+    # The inference still takes ten ticks of wall time; after eight physical
+    # steps control pauses, so the last two old actions are not committed.
+    assert plan['estimated_delay_steps']==10
+    request['m3_timing']['critical_step']=38
+    assert rtc_prefix_plan(request,38,10,dict(wait=True))['selected_delay_steps']==0
+
+
+def test_phase_dedup_that_allows_control_to_continue_must_not_cap_rtc():
+    from perceptbudget.critical_wait import PhaseWait,rtc_prefix_plan
+    from perceptbudget.action_events import EventConfig
+    guard=PhaseWait()
+    guard.complete(dict(phase=dict(start_step=41,stop_step=64),kinds=['gripper_close']))
+    request=dict(m3_timing=dict(reason='action_event',critical_step=56,candidate_event_kinds=['turn']))
+    review=guard.review(request,[],49,EventConfig())
+    assert not review['wait']
+    assert rtc_prefix_plan(request,49,10,review)['selected_delay_steps']==10
+    # An opposite gripper transition must stop even in that same phase.
+    request['m3_timing']['candidate_event_kinds']=['gripper_open']
+    review=guard.review(request,[],49,EventConfig())
+    assert review['wait']
+    assert rtc_prefix_plan(request,49,10,review)['selected_delay_steps']==7

@@ -428,13 +428,23 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 delay = selected_delay_queue.estimate
             if config.get('rtc_fixed_delay_estimate') is not None:
                 delay=config['rtc_fixed_delay_estimate']
+            if step not in queue:
+                raise RuntimeError(f'RTC old-action target missing at control step {step}')
+            uncapped_delay = delay
+            if config.get('rtc_critical_wait_prefix_policy') == 'committed_stop_v1':
+                from perceptbudget.critical_wait import rtc_prefix_plan, wait_target
+                review = dict(wait=wait_target(request) is not None, reason='point_event')
+                if review['wait'] and config.get('m3_critical_wait_phases'):
+                    owner = requests[queue[step][1]]
+                    review = phase_wait.review(request, owner['actions'],
+                        owner['observation_step'], scheduler.events_config)
+                request['rtc_wait_prefix'] = rtc_prefix_plan(request, step, delay, review)
+                delay = request['rtc_wait_prefix']['selected_delay_steps']
             feasible = (0 <= delay <= config['H'] - executed if delay_queue is not None
                         else delay <= executed <= config['H'] - delay)
             if not feasible:
                 raise RuntimeError(f'RTC infeasible before inference: d={delay}, '
                                    f's={executed}, H={config["H"]}')
-            if step not in queue:
-                raise RuntimeError(f'RTC old-action target missing at control step {step}')
             old_origin = queue[step][2]
             if executed != step - old_origin:
                 raise RuntimeError('RTC executed-prefix length does not match queued chunk origin: '
@@ -456,6 +466,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'old_chunk_origin_step': old_origin,
                 'delay_estimate_mode': ('fixed' if config.get('rtc_fixed_delay_estimate') is not None else 'frequency_history_max' if frequency_delay_queues is not None else 'mode_history_max' if mode_delay_queues is not None else 'history_max' if delay_queue is not None else 'latency'),
             }
+            if 'rtc_wait_prefix' in request:
+                request['rtc_guidance']['uncapped_delay_estimate_steps'] = uncapped_delay
             if delay_queue is not None:
                 request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
                 if mode_delay_queues is not None:

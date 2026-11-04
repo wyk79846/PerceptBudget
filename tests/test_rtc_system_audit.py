@@ -282,6 +282,44 @@ def test_same_control_step_uses_later_commit_after_critical_wait():
         assert latest_commit_at_step(records,90)==future
 
 
+@pytest.mark.parametrize('stop', [5,8,15])
+def test_wait_aware_rtc_audit_checks_committed_prefix_against_real_execution(tmp_path,stop):
+    from perceptbudget.critical_wait import rtc_prefix_plan
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(rtc_paper_schedule=True,m3_critical_wait=True,
+        rtc_critical_wait_prefix_policy='committed_stop_v1')
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    r=requests[1]
+    r['m3_timing']=dict(reason='action_event',critical_step=stop)
+    r['rtc_wait_prefix']=rtc_prefix_plan(r,5,5,dict(wait=True,reason='point_event'))
+    d=min(5,stop-5);at=5+d
+    r['rtc_guidance'].update(delay_estimate_steps=d,actual_delay_steps=d,
+        uncapped_delay_estimate_steps=5,delay_history_steps=[5])
+    r['rtc_solver_inputs']['delay']=d
+    commit=next(e for e in events if e['event']=='prediction_committed' and e['prediction_id']==1)
+    commit.update(commit_step=at,commit_monotonic=at*10.+.5,expired_new_actions=d,
+        new_prediction_remaining_actions=25-d)
+    for e in events:
+        if e['event']=='control_step' and e['step']>=at:
+            offset=e['step']-5
+            e.update(action=r['actions'][offset],source=dict(prediction_id=1,offset=offset,origin_step=5))
+    if stop<=10:
+        events.append(dict(event='critical_wait',prediction_id=1,step=stop,target_step=stop,seconds=.2))
+    save()
+    assert audit(tmp_path)['passed']
+    if d<5:
+        # A solver still guided through the old five-step prefix must fail,
+        # even if its own request metadata claims that prefix was valid.
+        r['rtc_guidance']['delay_estimate_steps']=5
+        r['rtc_solver_inputs']['delay']=5
+        r['rtc_wait_prefix']['selected_delay_steps']=5
+        save()
+        result=audit(tmp_path)
+        assert not result['passed']
+        assert 'known_stop_prefix_record' in [f['check'] for f in result['failures']]
+
+
 def test_unguided_ablation_audit_requires_no_target_and_no_vjp(tmp_path):
     requests,events,save=fixture(tmp_path)
     meta=json.loads((tmp_path/'run.json').read_text());meta['config_snapshot']['rtc_disable_guidance']=True

@@ -13,6 +13,22 @@ def should_wait(request, step):
     return target is not None and step >= target
 
 
+def rtc_prefix_plan(request, step, estimated_delay, review):
+    """Only actions executable before a known pause belong to RTC's prefix.
+
+    A latency estimate counts control ticks while inference runs. When control
+    will stop at an earlier critical step, later old actions are not committed.
+    Keep the latency history for scheduling; cap only RTC's action constraint.
+    """
+    if type(estimated_delay) is not int or estimated_delay < 0:
+        raise ValueError('RTC delay must be a nonnegative integer')
+    target = wait_target(request)
+    cap = max(0, target-step) if target is not None and review['wait'] else None
+    return dict(policy='committed_stop_v1', estimated_delay_steps=estimated_delay,
+        stop_step=target, maximum_consumed_steps=cap, wait_review=review,
+        selected_delay_steps=min(estimated_delay, cap) if cap is not None else estimated_delay)
+
+
 class PhaseWait:
     """One completed wait per finite predicted motion phase; never slide its end."""
 

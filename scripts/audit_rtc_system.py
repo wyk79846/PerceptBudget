@@ -238,6 +238,10 @@ def audit(run):
         service_history['Fast']['recovery']=[]
     previous=None
     slacks=[]
+    from perceptbudget.critical_wait import PhaseWait, wait_target, rtc_prefix_plan
+    from perceptbudget.action_events import EventConfig
+    wait_guard=PhaseWait()
+    critical_waits={e['prediction_id']:e for e in events if e['event']=='critical_wait'}
     for request in requests:
         pid=request['prediction_id'];origin=request['observation_step']
         g=request['rtc_guidance'];solver=request['rtc_solver_inputs']
@@ -627,7 +631,7 @@ def audit(run):
                                and e.get('decision_monotonic')==d.get('decision_monotonic')]
                     decision_step=min(e['step'] for e in originals)
                     period=d['estimated_control_period_seconds']
-                    delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') or cfg.get('m3_fast_enabled') else g['delay_estimate_steps']
+                    delay=max(max(v) for v in mode_histories.values()) if cfg.get('m4_enabled') or cfg.get('m3_fast_enabled') else g.get('uncapped_delay_estimate_steps',g['delay_estimate_steps'])
                     if frequency_histories is not None:
                         delay=(max(frequency_histories[request['m4_compute_profile']])
                             if cfg.get('m3_low_full_rtc_policy')=='per_profile_v2'
@@ -716,8 +720,22 @@ def audit(run):
                     if cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context'):
                         check('m4_compute_delay_key',request.get('planned_delay_key')==key and g.get('delay_history_key')==key,pid)
                     expected_history=mode_histories.get(key,[])
+                expected_delay=max(expected_history) if estimate is None else estimate
+                if cfg.get('rtc_critical_wait_prefix_policy')=='committed_stop_v1':
+                    review=dict(wait=wait_target(request) is not None,reason='point_event')
+                    if review['wait'] and cfg.get('m3_critical_wait_phases'):
+                        review=wait_guard.review(request,old['actions'],old['observation_step'],EventConfig(**cfg['m3_events']))
+                    prefix=rtc_prefix_plan(request,origin,expected_delay,review)
+                    check('known_stop_prefix_record',cfg.get('m3_critical_wait') is True
+                          and request.get('rtc_wait_prefix')==prefix
+                          and g.get('uncapped_delay_estimate_steps')==expected_delay,pid)
+                    expected_delay=prefix['selected_delay_steps']
+                    if pid in critical_waits:
+                        check('known_stop_wait_trace',review['wait'] and
+                              critical_waits[pid]['step']==max(origin,prefix['stop_step']),pid)
+                        wait_guard.complete(review)
                 check('independent_history_max' if estimate is None else 'fixed_guidance_estimate',
-                      g['delay_estimate_steps']==(max(expected_history) if estimate is None else estimate)
+                      g['delay_estimate_steps']==expected_delay
                       and g['delay_history_steps']==expected_history,pid)
             else:
                 check('controlled_d5',g['delay_estimate_steps']==cfg['controlled_delay_steps'],pid)
@@ -734,6 +752,10 @@ def audit(run):
                 check('reported_actual_delay',g['actual_delay_steps']==actual,pid)
         else:
             check('reported_actual_delay',g['actual_delay_steps']==actual,pid)
+        if origin and cfg.get('rtc_critical_wait_prefix_policy')=='committed_stop_v1':
+            cap=request.get('rtc_wait_prefix',{}).get('maximum_consumed_steps')
+            if cap is not None:
+                check('known_stop_no_uncommitted_execution',actual<=cap,pid)
         if origin and not synchronous:
             for step in range(origin,at):
                 source=by_step[step]['source']
