@@ -22,3 +22,7 @@ cd /home/wyk/workspace/PerceptBudget
 ```
 
 结束后交付每任务成功/步数/耗时/总能量、Full与Continue分账、各集合成功率、共同成功任务与全部尝试的两种能量比较，以及相同初态和输入/首次动作检查。保留所有超时，不删除失败来提高成功率。
+
+## 已启动
+
+代码`83002b2`，后台服务`perceptbudget-all40-request-images-20261104.service`。会话目录`M4/20261104T010944.227352Z-paired-acceptance-3b809feb`，先准备40个环境并执行q30，再复用环境缓存执行动态组。主日志`/tmp/perceptbudget-all40-request-images-20261104.log`。当前处于运行阶段；正式结果以会话结束后的`comparison.json`、`comparison.csv`和逐回合原始记录为准。
