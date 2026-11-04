@@ -306,7 +306,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     capture = None
     if config.get('m4_lean_continue'):
         from perceptbudget.continue_camera import ContinueCapture
-        capture = ContinueCapture()
+        capture = ContinueCapture(request_only=bool(config.get('m4_request_only_images')))
     future = None
     previous_request_step = 0
     previous_commit_step = 0
@@ -758,7 +758,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'queue_after_step_actions': buffer_count(queue, step + 1),
                 'inference_active': future is not None,
                 'inference_active_at_action': inference_active_at_action,
-                **({'camera_render_skipped': not inference_active_at_action} if capture is not None else {}),
+                **({'camera_render_skipped': capture.skips_render(inference_active_at_action)} if capture is not None else {}),
                 'deadline_overrun_seconds': overrun,
                 'success': success,
                 'env_done': bool(done),

@@ -1,4 +1,4 @@
-"""Experimental camera suspension for committed-action execution only."""
+"""Suspend unused images while keeping physics and proprioception active."""
 from contextlib import contextmanager
 
 
@@ -25,10 +25,12 @@ def fresh_camera_observation(env, observation):
 
 
 class ContinueCapture:
-    """Skip unused Continue images; request inputs always come from live sensors."""
+    """Skip unused images; every inference request receives live camera inputs."""
 
-    def __init__(self):
+    def __init__(self, *, request_only=False):
+        self.request_only = request_only
         self.skipped_steps = []
+        self.skipped_inference_steps = []
         self.acquisitions = []
         self.frame_steps = []
 
@@ -43,23 +45,31 @@ class ContinueCapture:
         self.frame_steps.append(step)
         return observation, acquisition
 
+    def skips_render(self, inference_active):
+        return self.request_only or not inference_active
+
     def step(self, env, action, *, control_step, inference_active):
-        if inference_active:
+        if not self.skips_render(inference_active):
             return env.step(action)
         with suspend_cameras(env):
             result = env.step(action)
             if any('image' in key for key in result[0]):
-                raise RuntimeError('Continue camera suspension still returned images')
+                raise RuntimeError('Camera suspension still returned images')
         self.skipped_steps.append(control_step)
+        if inference_active:
+            self.skipped_inference_steps.append(control_step)
         return result
 
     def summary(self):
-        return dict(policy='continue_only_camera_suspend_request_frames_v1',
+        return dict(policy=('request_only_camera_suspend_v2' if self.request_only
+                            else 'continue_only_camera_suspend_request_frames_v1'),
             skipped_control_steps=self.skipped_steps,
-            skipped_count=len(self.skipped_steps), acquisitions=self.acquisitions,
+            skipped_count=len(self.skipped_steps),
+            skipped_inference_steps=self.skipped_inference_steps,
+            skipped_inference_count=len(self.skipped_inference_steps), acquisitions=self.acquisitions,
             frame_steps=self.frame_steps, frame_sampling='request observations only',
             physics_and_state_logging='unchanged',
-            scope='Continue rendering/recording optimization; no visual disturbance monitor is enabled')
+            scope='Unused rendering/recording optimization; no visual disturbance monitor is enabled')
 
 
 @contextmanager

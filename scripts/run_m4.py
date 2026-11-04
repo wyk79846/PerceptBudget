@@ -37,6 +37,8 @@ def main():
     capture_options.add_argument('--full-capture',dest='lean_continue',action='store_false',
         help='Retain original per-step camera/recording behavior for reproduction')
     parser.add_argument('--continue-overhead-pair',action='store_true',help='Resident same-policy pair: original capture versus lean Continue, for M3 or q30')
+    parser.add_argument('--request-only-images',action='store_true',help='With lean capture, also skip unused rendering during inference; acquire current dual images before every request')
+    parser.add_argument('--request-capture-pair',action='store_true',help='Resident current lean Continue versus request-only images; requires --request-only-images')
     parser.add_argument('--common-low-tail',action='store_true',help='After pending inference finishes, record the same3s LOW endpoint separately from task energy')
     parser.add_argument('--start-floor-ms',type=int,choices=(0,25),default=0,
         help='Three-state startup-point floor: permit at most25ms intra-tick clock acknowledgement before inference')
@@ -69,6 +71,12 @@ def main():
         parser.error('Continue capture requires --acceptance-group m3 or q30')
     if args.continue_overhead_pair and (args.full_frequency_pair or args.rtc_delay_sensitivity):
         parser.error('Compare capture variants separately from frequency pairs or RTC delay sensitivity')
+    if args.request_only_images and (args.acceptance_group not in ('m3','q30') or args.lean_continue is False):
+        parser.error('--request-only-images requires lean M3 or q30 capture')
+    if args.request_capture_pair and (not args.request_only_images or args.continue_overhead_pair or args.full_frequency_pair or args.rtc_delay_sensitivity or args.ordinary_fast):
+        parser.error('--request-capture-pair requires --request-only-images without another paired policy or Fast')
+    if args.request_only_images and args.continue_overhead_pair:
+        parser.error('Use --request-capture-pair to compare inference image rendering')
     if args.start_floor_ms and not args.three_frequency:
         parser.error('--start-floor-ms requires --three-frequency')
     if args.three_frequency and (not args.low_full or args.acceptance_group!='m3' or args.rtc_delay_sensitivity or args.frequency_reference_run):
@@ -107,6 +115,8 @@ def main():
     cfg['m3_start_floor_ms']=args.start_floor_ms
     cfg['m4_lean_continue']=args.lean_continue if args.lean_continue is not None else args.acceptance_group in ('m3','q30')
     cfg['m4_continue_overhead_pair']=args.continue_overhead_pair
+    cfg['m4_request_only_images']=args.request_only_images
+    cfg['m4_request_capture_pair']=args.request_capture_pair
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
         enable_profiles()
@@ -114,7 +124,7 @@ def main():
     cfg['m4_rtc_delay_sensitivity']=args.rtc_delay_sensitivity
     if args.rtc_delay_reference_run:cfg['rtc_initial_delay_reference_run']=str(args.rtc_delay_reference_run.resolve())
     cfg['m4_full_frequency_pair']=args.full_frequency_pair
-    if args.common_low_tail or args.full_frequency_pair or args.continue_overhead_pair:cfg['m4_common_low_tail_seconds']=3.
+    if args.common_low_tail or args.full_frequency_pair or args.continue_overhead_pair or args.request_capture_pair:cfg['m4_common_low_tail_seconds']=3.
     cfg['m3_phase_refresh']=args.phase_refresh
     cfg['m3_first_refresh_step']=args.first_refresh_step
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
@@ -176,7 +186,7 @@ def main():
     if args.idle_min_ms is not None:
         settings['timing']['minimum_low_idle_seconds']=args.idle_min_ms/1000
         cfg['m3_short_idle_policy']='reuse_planned_ack_v1'
-    pair=bool(args.full_frequency_pair or args.continue_overhead_pair or args.ordinary_fast_pair)
+    pair=bool(args.full_frequency_pair or args.continue_overhead_pair or args.ordinary_fast_pair or args.request_capture_pair)
     if args.ordinary_fast_pair:cfg['m4_common_low_tail_seconds']=3.
     continuation=None
     if args.resume_from:
@@ -195,6 +205,7 @@ def main():
     if args.dry_run:
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast='selective320_no_state' if args.ordinary_fast else ('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
+            request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
             three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else 2 if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=args.phase_refresh,first_refresh_step=args.first_refresh_step,critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else 'fixed q30 Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
@@ -248,6 +259,10 @@ def main():
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['continue_overhead_pairs']=summarize_pairs(result['episodes'],args.run_dir,
                 groups=('full_capture','lean_continue'),stem='continue_overhead_pairs')
+        if args.request_capture_pair:
+            from perceptbudget.full_frequency_pairs import summarize_pairs
+            result['request_capture_pairs']=summarize_pairs(result['episodes'],args.run_dir,
+                groups=('inflight_images','request_images'),stem='request_capture_pairs')
         result.update(mode='short_idle' if args.idle_min_ms is not None else 'full_energy' if args.full_energy else ('ordinary_fast_pair' if args.ordinary_fast_pair else 'ordinary_fast') if args.ordinary_fast else 'm3_three_frequency' if args.three_frequency else ('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
@@ -290,6 +305,8 @@ def main():
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')
+            if args.request_only_images:command.append('--request-only-images')
+            if args.request_capture_pair:command.append('--request-capture-pair')
             if args.common_low_tail:command.append('--common-low-tail')
             if args.start_floor_ms:command.extend(['--start-floor-ms',str(args.start_floor_ms)])
             if args.full_frequency_pair:command.append('--full-frequency-pair')

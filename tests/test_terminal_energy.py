@@ -45,7 +45,7 @@ def test_drain_stops_energy_at_low_endpoint_not_later_restoration(monkeypatch):
     monitor.stop.assert_called_once()
 
 
-@pytest.mark.parametrize('groups,q',[(('full_high','full_low'),5),(('full_two','full_three'),5),(('full_capture','lean_continue'),30)])
+@pytest.mark.parametrize('groups,q',[(('full_high','full_low'),5),(('full_two','full_three'),5),(('full_capture','lean_continue'),30),(('inflight_images','request_images'),5)])
 def test_pair_report_does_not_call_final_commit_executed(tmp_path,groups,q):
     import json
     from perceptbudget.full_frequency_pairs import summarize_pairs

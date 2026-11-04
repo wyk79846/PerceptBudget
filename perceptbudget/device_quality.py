@@ -17,13 +17,16 @@ def camera_view_for_condition(condition):
         from perceptbudget.rtc_sensitivity import variants
         if condition not in variants():raise ValueError('Unknown sensitivity view')
         return 'full'
-    return 'full' if condition in ('full_capture', 'lean_continue', 'full_high', 'full_low', 'full_two', 'full_three',
+    return 'full' if condition in ('full_capture', 'lean_continue', 'inflight_images', 'request_images', 'full_high', 'full_low', 'full_two', 'full_three',
                                   'full_three_strict','full_three_start25','ordinary_full','ordinary_fast',
                                   'full_three_medium','full_three_energy','full_idle100','full_idle200','full_idle_candidate') else condition
 
 
 def frequency_pair_views(config, task_index):
     """Rotate paired policies; capture pairs keep the same clock policy in both."""
+    if config.get('m4_request_capture_pair'):
+        labels=('inflight_images','request_images')
+        return labels if task_index%2==0 else labels[::-1]
     labels=((f"full_idle{config.get('m3_idle_reference_ms',200)}",'full_idle_candidate') if config.get('m3_idle_min_ms') is not None else
             ('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
             ('full_three_medium','full_three_energy') if config.get('m3_full_energy') else
@@ -35,7 +38,11 @@ def frequency_pair_views(config, task_index):
 
 def configure_frequency_variant(config, view):
     """Select clock/capture variants without changing model geometry or RTC rules."""
-    if view in ('full_idle100','full_idle200','full_idle_candidate'):
+    if view in ('inflight_images','request_images'):
+        if not config.get('m4_request_capture_pair'):
+            raise ValueError('Request-only capture comparison requires its explicit opt-in')
+        config.update(m4_lean_continue=True,m4_request_only_images=view=='request_images')
+    elif view in ('full_idle100','full_idle200','full_idle_candidate'):
         if not config.get('m3_three_frequency') or config.get('m3_idle_min_ms') is None:
             raise ValueError('Idle threshold pair requires the three-state candidate threshold')
         value=config['m3_idle_min_ms'] if view=='full_idle_candidate' else int(view.removeprefix('full_idle'))
@@ -439,7 +446,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     if cfg.get('m3_trigger_comparison') and task_plan is not None:
                         cfg['m3_trigger_task_index']=list(task_plan).index((suite,tid))
                     views=comparison_variants(cfg)
-                if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair'):
+                if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_request_capture_pair'):
                     views=frequency_pair_views(cfg,list(task_plan).index((suite,tid)))
                 if cfg.get('m4_rtc_delay_sensitivity'):
                     from perceptbudget.rtc_sensitivity import variants
@@ -620,7 +627,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)
                     child_cfg = copy.deepcopy(cfg)
-                    if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair'):
+                    if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_request_capture_pair'):
                         configure_frequency_variant(child_cfg,view)
                     if cfg.get('m4_rtc_delay_sensitivity'):
                         from perceptbudget.rtc_sensitivity import configure
@@ -785,12 +792,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     if record['selection'] and not calibration_only:
                         pending.extend((s, 3) for s in SUITES)
-            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_rtc_delay_sensitivity'):
+            if cfg.get('m3_formal_comparison') or cfg.get('m3_margin_scan') or cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_rtc_delay_sensitivity') or cfg.get('m4_request_capture_pair'):
                 paired=audit_paired_bootstraps(record['episodes'])
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 record['comparison_initials_exact']=paired['passed']
-                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair')) and not paired['passed']:
+                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_request_capture_pair')) and not paired['passed']:
                     raise RuntimeError('Resident policy comparison requires identical bootstrap inputs and actions')
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     tuple(cfg.get('m3_trigger_variants') or []) in (('events_only','events_and_variance'),('events_only','variance_only')) or
