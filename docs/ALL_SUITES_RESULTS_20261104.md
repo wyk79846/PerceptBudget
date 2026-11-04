@@ -69,3 +69,5 @@ q30共262次Full；动态327次Full，其中224次中频。两组累计执行726
 - [频率恢复读回](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T020210.741552Z-paired-acceptance-8e2e41f2/clock_after.json>)、[配置及运行过程](ALL_SUITES_REQUEST_IMAGES_20261104.md)
 
 本轮测试交付完成。当前结论是省电幅度有限且成功数下降；下一步应先修正已有触发/等待策略，再决定是否继续叠加Fast。
+
+后续已完成[关键刷新排查](CRITICAL_REFRESH_DIAGNOSIS_20261104.md)：旧记录审核符合当时规则，但没有检查暂停执行后RTC承诺前缀是否仍过长。此缺项已修复并完成小规模成对验证，原80回合数值保留。
