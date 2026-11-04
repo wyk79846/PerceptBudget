@@ -171,6 +171,49 @@ def test_all_task_environment_cache_can_cross_full_only_policies_with_identical_
         copy_precompiled_environment_cache(source,tmp_path/'wrong-manifest',[('libero_spatial',0)],dict(cfg,m4_acceptance_manifest={'fingerprint':'other'}))
 
 
+def test_full_resume_retains_timeouts_and_checks_capture_and_task_identity(tmp_path,monkeypatch):
+    from perceptbudget import m4_acceptance as acceptance
+    from scripts import audit_rtc_system
+    cfg=dict(FROZEN,checkpoint_path='/checkpoint',norm_stats_path='/stats',
+             m4_all_tasks=True,m4_acceptance_group='q30',m4_request_only_images=True,
+             m4_lean_continue=True,m4_resident_prefix_graphs=True)
+    fixed=manifest(cfg,all_tasks=True)
+    cfg['m4_acceptance_manifest']=fixed
+    source=tmp_path/'source';source.mkdir()
+    (source/'run.json').write_text(json.dumps({'config_snapshot':cfg}))
+    episodes=[]
+    for tid,outcome in [(0,'success'),(1,'timeout')]:
+        run=tmp_path/str(tid);run.mkdir()
+        (run/'summary.json').write_text(json.dumps({'status':'completed'}))
+        episodes.append(dict(suite='libero_spatial',task_id=tid,view='full',outcome=outcome,run=str(run)))
+    (source/'recording.json').write_text(json.dumps(dict(episodes=episodes,model_loads=1)))
+    monkeypatch.setattr(audit_rtc_system,'audit',lambda path:{'passed':True})
+    monkeypatch.setattr(acceptance,'clock_audit',lambda path:{'passed':True})
+    result=acceptance.resume_full(source,cfg)
+    assert result['episodes']==episodes and result['episodes'][1]['outcome']=='timeout'
+    assert len(result['remaining_tasks'])==38 and result['previous_model_loads']==1
+    assert ['libero_spatial',0] not in result['remaining_tasks']
+    with pytest.raises(ValueError,match='identical'):
+        acceptance.resume_full(source,dict(cfg,m4_request_only_images=False))
+
+
+def test_all_task_cache_subset_reuses_models_without_recompiling_or_changing_source(tmp_path):
+    from perceptbudget.m4_acceptance import copy_precompiled_environment_cache
+    source=tmp_path/'source';source.mkdir()
+    cfg=dict(m4_all_tasks=True,m4_acceptance_group='q30',m4_acceptance_manifest={'fingerprint':'forty'})
+    (source/'run.json').write_text(json.dumps({'config_snapshot':cfg}))
+    cache=dict(status='passed',frozen=True,compiled=2,cases=[dict(suite='libero_spatial',task_id=i,passed=True) for i in (0,1)])
+    (source/'environment_cache.json').write_text(json.dumps(cache))
+    (source/'environment_models').mkdir()
+    for name in ('a','b'):(source/f'environment_models/{name}.mjb').write_bytes(b'binary')
+    dest=tmp_path/'dest';dest.mkdir()
+    copy_precompiled_environment_cache(source,dest,[('libero_spatial',1)],cfg)
+    reduced=json.loads((dest/'environment_cache.json').read_text())
+    assert [c['task_id'] for c in reduced['cases']]==[1]
+    assert len(list((dest/'environment_models').iterdir()))==2
+    assert json.loads((source/'environment_cache.json').read_text())==cache
+
+
 def test_q30_has_no_joint_scheduler_or_fast():
     cfg=dict(m4_enabled=True,m3_scheduler_mode='deadline_dvfs',m3_action_events_enabled=True,
              m3_dvac_enabled=True,m2_visual_fast_enabled=True,m2_split_delay=True)

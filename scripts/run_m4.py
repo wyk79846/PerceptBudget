@@ -18,7 +18,7 @@ def main():
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='Use the first3 fixed tasks for an M3 screen')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(40),help='Explicit canonical task indices;0..11 by default,0..39 with --all-tasks')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
-    parser.add_argument('--resume-from',type=Path,help='Continue audited completed joint tasks from a saved group')
+    parser.add_argument('--resume-from',type=Path,help='Keep audited completed outcomes and run only missing tasks of the same group')
     parser.add_argument('--cover-close-slowdown',action='store_true',help='Experimental timely Full close also covers following slowdown within existing5-step range')
     parser.add_argument('--m3-eta-ms',type=int,choices=(25,50),default=25,help='M3 safety margin;50 reproduces original delivery setting')
     parser.add_argument('--reuse-preparation',action='store_true',help='Experimental setup reuse; pending cross-task GPU parity validation')
@@ -200,9 +200,9 @@ def main():
     if args.ordinary_fast_pair:cfg['m4_common_low_tail_seconds']=3.
     continuation=None
     if args.resume_from:
-        if args.acceptance_group!='joint':parser.error('Resume is only available for joint acceptance')
-        from perceptbudget.m4_acceptance import resume_joint
-        continuation=resume_joint(args.resume_from,cfg)
+        from perceptbudget.m4_acceptance import resume_joint,resume_full
+        if args.acceptance_group not in ('joint','m3','q30'):parser.error('Resume requires a joint or Full-only acceptance group')
+        continuation=(resume_joint if args.acceptance_group=='joint' else resume_full)(args.resume_from,cfg)
         cfg['m3_resume_plan']=continuation
     pending_tasks=continuation['remaining_tasks'] if continuation else settings['calibration_tasks']
     if args.frequency_reference_run:

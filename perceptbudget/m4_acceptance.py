@@ -102,12 +102,13 @@ def copy_precompiled_environment_cache(source, destination, tasks, config):
     expected={tuple(t) for t in tasks}
     cases=report.get('cases',[])
     actual={(c.get('suite'),c.get('task_id')) for c in cases}
-    if (report.get('status')!='passed' or not report.get('frozen') or actual!=expected
-            or len(cases)!=len(expected) or not all(c.get('passed') for c in cases)):
+    subset=bool(shared_policies and expected<=actual)
+    if (report.get('status')!='passed' or not report.get('frozen') or (actual!=expected and not subset)
+            or len(cases)!=len(actual) or not all(c.get('passed') for c in cases)):
         raise ValueError('Require a passed environment cache for exactly these tasks')
     src_models=source/'environment_models'
     model_files=list(src_models.glob('*.mjb'))
-    if not model_files or len(model_files)>len(expected) or any(p.stat().st_size==0 for p in model_files):
+    if not model_files or len(model_files)>report.get('compiled',len(actual)) or any(p.stat().st_size==0 for p in model_files):
         raise ValueError('Environment cache has missing or invalid binary models')
     if (destination/'environment_cache.json').exists() or (destination/'environment_models').exists():
         raise FileExistsError('Destination already contains an environment cache')
@@ -119,6 +120,12 @@ def copy_precompiled_environment_cache(source, destination, tasks, config):
             shutil.copy2(src,dst);counts['copies']+=1
     shutil.copytree(src_models,destination/'environment_models',copy_function=link_or_copy)
     shutil.copy2(source/'environment_cache.json',destination/'environment_cache.json')
+    if actual!=expected:
+        from perceptbudget.experiment import _write_json_atomically
+        report['cases']=[c for c in cases if (c['suite'],c['task_id']) in expected]
+        report['subset_source']=str(source)
+        report['subset_source_task_count']=len(actual)
+        _write_json_atomically(destination/'environment_cache.json',report)
     return dict(source=str(source),models=len(model_files),**counts)
 
 
@@ -184,6 +191,38 @@ def resume_joint(source, config):
     remaining=[t for t in fixed['tasks'] if tuple(t) not in seen]
     if not remaining:raise ValueError('Joint group is already complete')
     return dict(source=str(source),episodes=copy.deepcopy(episodes),remaining_tasks=remaining,
+                previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])
+
+
+def resume_full(source, config):
+    """Preserve every audited outcome of a Full-only cohort after interruption."""
+    import copy
+    from scripts.audit_rtc_system import audit
+    source=Path(source).resolve()
+    original=json.loads((source/'run.json').read_text())['config_snapshot']
+    fixed=manifest(config,all_tasks=bool(config.get('m4_all_tasks')))
+    group=config.get('m4_acceptance_group')
+    keys=('m4_acceptance_group','m4_all_tasks','m4_lean_continue','m4_request_only_images',
+          'm4_resident_prefix_graphs','m3_low_full','m3_three_frequency','m3_start_floor_ms',
+          'm3_idle_min_ms','m3_idle_reference_ms','m3_critical_wait','m3_critical_wait_phases',
+          'm3_phase_refresh','m3_first_refresh_step','m3_replay_eta_ms','m3_full_energy',
+          'm4_common_low_tail_seconds','m4_policy_revision')
+    if (group not in ('q30','m3') or original.get('m4_acceptance_manifest')!=fixed
+            or any(original.get(k)!=config.get(k) for k in keys)):
+        raise ValueError('Full resume requires the identical task/model/capture/scheduling configuration')
+    record=json.loads((source/'recording.json').read_text())
+    expected={tuple(t) for t in fixed['tasks']};seen=set()
+    for row in record['episodes']:
+        key=(row['suite'],row['task_id']);run=Path(row['run'])
+        if key not in expected or key in seen or row['view']!='full':
+            raise ValueError('Unexpected or duplicate completed Full episode')
+        saved=json.loads((run/'summary.json').read_text())
+        if saved.get('status')!='completed' or not audit(run)['passed'] or not clock_audit(run)['passed']:
+            raise ValueError('Completed Full episode failed resume audit: '+str(run))
+        seen.add(key)
+    remaining=[t for t in fixed['tasks'] if tuple(t) not in seen]
+    if not remaining:raise ValueError('Full group is already complete')
+    return dict(source=str(source),episodes=copy.deepcopy(record['episodes']),remaining_tasks=remaining,
                 previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])
 
 
