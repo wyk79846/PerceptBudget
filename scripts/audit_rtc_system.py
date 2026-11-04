@@ -598,13 +598,16 @@ def audit(run):
                         if cfg.get('m3_phase_event_source'):
                             from perceptbudget.key_phases import intervals_for_timing
                             check('remaining_phase_event_source',
-                                cfg['m3_phase_event_source']==d.get('phase_event_source')=='remaining_v1',pid)
+                                cfg['m3_phase_event_source']==d.get('phase_event_source')
+                                and d.get('phase_event_source') in ('remaining_v1','remaining_v2'),pid)
                             shared=intervals_for_timing(old['actions'],old['observation_step'],ec,d)
                             phase=next((p for p in shared if p['end_observed'] and critical is not None
                                 and p['start_step']<=critical<p['stop_step']),None)
                             expected_response=(dict(start_step=phase['start_step'],stop_step=phase['stop_step'],
                                 source_prediction_id=old['prediction_id'],target_step=critical,
                                 kinds=d['candidate_event_kinds']) if phase and d['reason']=='action_event' else None)
+                            if expected_response and cfg['m3_phase_event_source']=='remaining_v2':
+                                expected_response['event_source']='remaining_v2'
                             check('remaining_phase_response_replay',
                                 d.get('refresh_phase_response')==expected_response
                                 and t.get('refresh_phase_response')==expected_response,pid)

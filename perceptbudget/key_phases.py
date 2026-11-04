@@ -64,7 +64,7 @@ def intervals_for_timing(actions,origin,config,timing):
     source=timing.get('phase_event_source')
     if source is None:
         return absolute_intervals(actions,origin,config)
-    if source!='remaining_v1':
+    if source not in ('remaining_v1','remaining_v2'):
         raise ValueError('Unknown phase event source')
     proof=timing['critical_forecast'];result=proof['result'];at=proof['source_step']
     if (proof.get('version')!='remaining_v1' or result['current_step']!=at

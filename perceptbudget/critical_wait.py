@@ -43,23 +43,32 @@ class PhaseWait:
         opposite = bool(old and (
             ('gripper_open' in kinds and 'gripper_close' in old['kinds']) or
             ('gripper_close' in kinds and 'gripper_open' in old['kinds'])))
-        if old and target is not None and old['start_step'] <= target < old['stop_step'] and not opposite:
+        same_kind = (not old or old.get('event_source')!='remaining_v2'
+                     or bool(kinds) and set(kinds)<=set(old['kinds']))
+        if old and target is not None and old['start_step'] <= target < old['stop_step'] and not opposite and same_kind:
             return dict(wait=False, reason='phase_already_waited', covered_phase=dict(old))
         phases = intervals_for_timing(actions, origin, config, request.get('m3_timing', {}))
         phase = next((p for p in phases if p['end_observed'] and target is not None
                       and p['start_step'] <= target < p['stop_step']), None)
-        return dict(wait=True, reason='new_phase' if phase else 'point_event', phase=phase,
+        result=dict(wait=True, reason='new_phase' if phase else 'point_event', phase=phase,
                     kinds=list(kinds))
+        if request.get('m3_timing',{}).get('phase_event_source')=='remaining_v2':
+            result['event_source']='remaining_v2'
+        return result
 
     def complete(self, review):
         phase = review.get('phase')
         self.completed = (dict(start_step=phase['start_step'], stop_step=phase['stop_step'],
                                kinds=review['kinds']) if phase else None)
+        if self.completed and review.get('event_source')=='remaining_v2':
+            self.completed['event_source']='remaining_v2'
 
 
 def covered_by_phase(event, phase):
     if not phase or not phase['start_step'] <= event['target_step'] < phase['stop_step']:
         return False
     kinds = phase['kinds']
+    if phase.get('event_source')=='remaining_v2' and event['kind'] not in kinds:
+        return False
     return not (('gripper_open' == event['kind'] and 'gripper_close' in kinds) or
                 ('gripper_close' == event['kind'] and 'gripper_open' in kinds))

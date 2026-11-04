@@ -271,7 +271,7 @@ class DeadlineRuntime:
         if self.critical_forecast_version and (self.fast_selection or self.dvac_enabled or not self.action_events_enabled):
             raise ValueError('Remaining-action forecast requires Full and action cues only')
         self.phase_event_source=config.get('m3_phase_event_source')
-        if self.phase_event_source not in (None,'remaining_v1'):
+        if self.phase_event_source not in (None,'remaining_v1','remaining_v2'):
             raise ValueError('Unknown phase event source')
         if self.phase_event_source and (self.critical_forecast_version!='remaining_v1' or not self.phase_refresh):
             raise ValueError('Shared phase events require remaining_v1 and phase refresh')
@@ -504,6 +504,8 @@ class DeadlineRuntime:
                 refresh_phase_suppressed=phase_suppressed,
                 refresh_phase_response=dict(start_step=response['start_step'],stop_step=response['stop_step'],
                     source_prediction_id=item[1],target_step=critical,kinds=critical_kinds) if response and self.plan['reason']=='action_event' else None)
+            if getattr(self,'phase_event_source',None)=='remaining_v2' and self.plan['refresh_phase_response']:
+                self.plan['refresh_phase_response']['event_source']='remaining_v2'
         if getattr(self,'key_phase_response_enabled',False):
             self.plan.update(key_phase_response_policy=self.key_phase_response_policy,key_phase_response=phase_response)
         if getattr(self,'key_phase_guard',False) and current is not None:

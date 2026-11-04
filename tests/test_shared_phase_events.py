@@ -99,3 +99,33 @@ def test_explicit_source_does_not_accept_incompatible_runtime():
         m3_service_samples={h:[.5]*20 for h in ('hot','short','long')})
     with pytest.raises(ValueError,match='Shared phase events'):
         DeadlineRuntime(cfg)
+
+
+def test_typed_coverage_does_not_hide_a_later_slowdown_or_grip_after_a_turn():
+    from perceptbudget.critical_wait import covered_by_phase,PhaseWait
+    phase=dict(start_step=38,stop_step=60,kinds=['turn'],event_source='remaining_v2')
+    assert covered_by_phase(dict(target_step=49,kind='turn'),phase)
+    assert not covered_by_phase(dict(target_step=47,kind='slowdown'),phase)
+    assert not covered_by_phase(dict(target_step=52,kind='gripper_close'),phase)
+    guard=PhaseWait();guard.complete(dict(phase=phase,kinds=['turn'],event_source='remaining_v2'))
+    request=dict(m3_timing=dict(reason='action_event',critical_step=47,
+        candidate_event_kinds=['slowdown']))
+    assert guard.review(request,[],35,EventConfig())['wait']
+    request['m3_timing']['candidate_event_kinds']=['turn']
+    assert not guard.review(request,[],35,EventConfig())['wait']
+    request['m3_timing']['candidate_event_kinds']=['turn','slowdown']
+    assert guard.review(request,[],35,EventConfig())['wait']
+
+
+def test_v2_uses_the_same_forecast_geometry_but_retains_new_event_kinds():
+    actions=turning_actions();t=timing(actions)
+    old=intervals_for_timing(actions,100,EventConfig(),t)
+    t['phase_event_source']='remaining_v2'
+    assert intervals_for_timing(actions,100,EventConfig(),t)==old
+    from perceptbudget.critical_wait import PhaseWait
+    guard=PhaseWait();review=guard.review(dict(m3_timing=t),actions,100,EventConfig())
+    assert review['event_source']=='remaining_v2'
+    guard.complete(review)
+    assert guard.completed['event_source']=='remaining_v2'
+    t['critical_step']=107;t['candidate_event_kinds']=['turn']
+    assert guard.review(dict(m3_timing=t),actions,100,EventConfig())['wait']
