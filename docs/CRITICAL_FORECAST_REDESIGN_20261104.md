@@ -221,3 +221,26 @@ Spatial3的记录给出一个具体匹配问题：42步转向的响应主要向�
 
 - [新增16回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/summary.json>)、[完整12任务24回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/combined_development.json>)、[完整逐回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/combined_development.csv>)
 - [新增运行独立审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/postrun_review.json>)、[Spatial3方向核对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T133604.968247Z-phase-history-expand-64e90d3c/spatial3_motion_identity_review.json>)
+
+## 转向方向身份校验：两任务三条件开发小测
+
+新增独立函数`event_identity.review_turn`，显式开关`m3_event_identity=turn_direction_v1`依赖历史记忆。在同类事件和原区间匹配后，比较最近一份同类Full响应的运动方向与新预测转向后的方向；差异达到原有60°，或方向太弱无法可靠比较时，保留新事件。旧方向取该响应目标步与提交步的较大者，避免读取已经过期的前缀；更新过的同类响应优先，其他事件类型不会擦掉记录。只调整转向身份匹配，夹爪/减速、原区间截止、RTC、模型、H/N/精度/state和频率均未改。默认不开启，原V2保留。185项CPU检查通过。
+
+固定旧seed7/init0，预先选定发生退化的Spatial3和此前受益的LIBERO-10 task0，三个条件各一次，共6回合、1次模型加载。以下只比较本批，不替换之前12任务结果。
+
+|同批两个任务|原V2|只保留历史|历史＋方向校验|
+|---|---:|---:|---:|
+|成功|2/2|1/2|2/2|
+|总能量，含超时与在途推理|549.85J|817.51J|488.29J|
+|总任务时间|27.97s|43.36s|25.11s|
+|Full次数|37|55|33|
+|欠载|0|0|0|
+
+Spatial3为96/92/88步，三组均成功。此前历史版220步失败在本批没有复现，不能以方向版这次成功声称严格修复了唯一失败原因。LIBERO-10 task0分别256步成功、520步超时、262步成功；原版与方向版能量396.89→328.92J。方向版整体比原版能量少11.20%、时间少10.24%，仍只是两个已知开发样例的结果。
+
+三组初始物理/双图/state/噪声与首动作精确一致；11294项系统检查、实际频率/恢复及原始功率重积分通过，误差0J。门控实际保留了Spatial3的1条不同方向提示、长任务的5条不同方向提示，同时长任务3条方向相同的提示继续去重。审查独立从原始Full输出重算方向、参考来源及判定，不调用生产方向匹配函数。设备恢复1173/3199/1497.6MHz，FlashRT未改。
+
+当前保留源代码`c9b15b7`的显式方向候选；尚未验证新方向版完整12任务，不将前述历史版的10/12改写为11/12。下一步若扩大，仍固定旧seed7/init0，最近seed17/init1继续留作测试。
+
+- [冻结计划与运行源码](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/plan.json>)、[三条件汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/summary.json>)、[六回合CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/results.csv>)
+- [独立审查及原始功率重算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/postrun_review.json>)、[方向判定实际生效记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T135257.592924Z-turn-identity-seed7-1d0d6ea5/identity_intervention_review.json>)
