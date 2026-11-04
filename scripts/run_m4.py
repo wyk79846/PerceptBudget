@@ -335,15 +335,12 @@ def main():
             if args.resume_from:command.extend(['--resume-from',str(args.resume_from)])
             from scripts.profile_clock_screen import monitored_worker
             if args.acceptance_group:
-                preparation=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),
-                    '--prepare-environments','--acceptance-group',args.acceptance_group,'--run-dir',str(run)]
-                if args.acceptance_group in ('m3','m3_fast'):preparation.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
-                if args.reuse_preparation:preparation.append('--reuse-preparation')
-                if args.all_tasks:preparation.append('--all-tasks')
+                # Resume validates the capture/timing policy even in the
+                # preparation process. Share the exact worker arguments.
+                preparation=list(command)
+                preparation.remove('--worker')
+                preparation.append('--prepare-environments')
                 if args.environment_cache_from:preparation.extend(['--environment-cache-from',str(args.environment_cache_from)])
-                preparation.extend(['--first-tasks',str(args.first_tasks)])
-                if args.task_indices:preparation.extend(['--task-indices',*map(str,args.task_indices)])
-                if args.resume_from:preparation.extend(['--resume-from',str(args.resume_from)])
                 started=time.monotonic()
                 print('ACCEPTANCE_STAGE=environment_preparation_started',flush=True)
                 with (run/'environment_preparation.log').open('w') as log:

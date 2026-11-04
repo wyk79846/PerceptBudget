@@ -197,6 +197,33 @@ def test_full_resume_retains_timeouts_and_checks_capture_and_task_identity(tmp_p
         acceptance.resume_full(source,dict(cfg,m4_request_only_images=False))
 
 
+def test_resume_preparation_receives_the_same_capture_policy_as_the_worker(tmp_path):
+    from unittest.mock import patch
+    from scripts import run_m4
+    cfg=run_m4.load_config();cfg['output_root']=str(tmp_path/'results')
+    commands=[]
+    def stop_before_model(command,*unused,**kwargs):
+        commands.append(command)
+        if '--prepare-environments' in command:return 0
+        raise RuntimeError('stop before model')
+    source=tmp_path/'source'
+    continuation=dict(source=str(source),episodes=[],remaining_tasks=[['libero_10',0]],previous_model_loads=1)
+    args=['entry','--acceptance-group','q30','--all-tasks','--request-only-images',
+          '--reuse-prefix-graphs','--common-low-tail','--resume-from',str(source)]
+    with patch.object(sys,'argv',args),patch.object(run_m4,'load_config',return_value=cfg), \
+         patch.object(run_m4,'validate'),patch.object(run_m4,'clock_preflight'), \
+         patch('perceptbudget.clock_access.authorize'), \
+         patch('perceptbudget.m4_acceptance.resume_full',return_value=continuation), \
+         patch('scripts.profile_clock_screen.monitored_worker',side_effect=stop_before_model):
+        with pytest.raises(RuntimeError,match='stop before model'):run_m4.main()
+    preparation,worker=commands
+    assert '--prepare-environments' in preparation and '--worker' not in preparation
+    for command in commands:
+        assert '--request-only-images' in command and '--reuse-prefix-graphs' in command
+        assert '--common-low-tail' in command and '--all-tasks' in command
+        assert command[command.index('--resume-from')+1]==str(source)
+
+
 def test_all_task_cache_subset_reuses_models_without_recompiling_or_changing_source(tmp_path):
     from perceptbudget.m4_acceptance import copy_precompiled_environment_cache
     source=tmp_path/'source';source.mkdir()
