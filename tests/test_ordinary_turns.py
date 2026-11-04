@@ -55,27 +55,28 @@ def test_expired_prediction_prefix_is_replaced_by_actual_control_history():
     assert r==ordinary_turn_from_record(event,dict(observation_step=0,actions=values),proof,controls,{},[])
 
 
-def runtime():
+def runtime(interval=30):
     from perceptbudget.closed_loop import DeadlineRuntime
     return DeadlineRuntime(dict(H=50,m3_critical_forecast='remaining_v1',m3_phase_event_source='remaining_v2',
         m3_phase_refresh=True,m3_phase_coverage_memory='all_active_v1',
-        m3_event_identity='turn_direction_v1',m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=30,
+        m3_event_identity='turn_direction_v1',m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=interval,
         m3_scheduler_mode='deadline_high',m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,
             maximum_action_offset=50,maximum_observation_age_seconds=None),m3_events={},
         m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05))
 
 
-def test_ordinary_motion_targets30_without_a_hard20_step_minimum():
-    r=runtime();actions=[action(a) for a in (0,15,30,45,60,75)]+[action(90.)]*44
+@pytest.mark.parametrize('interval',[20,30])
+def test_ordinary_motion_targets_cap_without_a_hard20_step_minimum(interval):
+    r=runtime(interval);actions=[action(a) for a in (0,15,30,45,60,75)]+[action(90.)]*44
     r.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions),
         dict(commit_step=0,commit_monotonic=0.))
     q={i:(a,0,0,i) for i,a in enumerate(actions)}
     d=r.decide(now=0.,step=0,queue=q,rows=[],inflight=False,rtc_delay_steps=5)
     assert d['critical_step'] is None and not d['start_now']
-    assert d['first_refresh_cap']['request_step']==30
+    assert d['first_refresh_cap']['request_step']==interval
     assert d['ordinary_turn_suppressed'][0]['target_step']==4
-    assert r.decide(now=1.5,step=30,queue=q,rows=[],inflight=False,rtc_delay_steps=5)['start_now']
-    r=runtime();actions=[list(a) for a in actions]
+    assert r.decide(now=interval*.05,step=interval,queue=q,rows=[],inflight=False,rtc_delay_steps=5)['start_now']
+    r=runtime(interval);actions=[list(a) for a in actions]
     for a in actions[10:]:a[6]=1.
     r.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions),
         dict(commit_step=0,commit_monotonic=0.))
