@@ -56,6 +56,22 @@ def test_synthetic_valid_system_trace(tmp_path):
     assert audit(tmp_path)['passed']
 
 
+def test_phase_reopening_audit_covers_decisions_that_did_not_submit(tmp_path):
+    requests,events,save=fixture(tmp_path)
+    meta=json.loads((tmp_path/'run.json').read_text())
+    meta['config_snapshot'].update(m3_phase_refresh=True,m3_phase_refresh_policy='event_shift_v1',m3_events={})
+    (tmp_path/'run.json').write_text(json.dumps(meta))
+    phase=dict(start_step=1,stop_step=12,target_step=2,kinds=['gripper_close'])
+    shifted=dict(kind='gripper_close',target_step=8)
+    decision=dict(event='m3_decision',step=1,refresh_phase_policy='event_shift_v1',
+        refresh_phase_covered=phase,refresh_phase_suppressed=[shifted],refresh_phase_reopened=[])
+    events.append(decision);save()
+    result=audit(tmp_path)
+    assert 'phase_decision_anchor_suppression' in [f['check'] for f in result['failures']]
+    decision.update(refresh_phase_suppressed=[],refresh_phase_reopened=[shifted]);save()
+    assert audit(tmp_path)['passed']
+
+
 def test_formal_event_only_audit_checks_config_and_runtime_switches(tmp_path):
     requests,events,save=fixture(tmp_path)
     meta=json.loads((tmp_path/'run.json').read_text())

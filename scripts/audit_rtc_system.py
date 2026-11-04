@@ -190,6 +190,20 @@ def audit(run):
         count+=1
         if not ok:failures.append(dict(check=name,where=where))
     eq=lambda a,b:np.array_equal(np.asarray(a,dtype=np.float32),np.asarray(b,dtype=np.float32))
+    if cfg.get('m3_phase_refresh'):
+        from perceptbudget.action_events import EventConfig
+        from perceptbudget.critical_wait import covered_by_phase
+        refresh_policy=cfg.get('m3_phase_refresh_policy','phase_once_v1')
+        match=EventConfig(**cfg.get('m3_events',{})).match_steps if refresh_policy=='event_shift_v1' else None
+        for decision in (e for e in events if e['event']=='m3_decision'):
+            phase=decision.get('refresh_phase_covered')
+            check('phase_decision_policy',refresh_policy in ('phase_once_v1','event_shift_v1')
+                  and decision.get('refresh_phase_policy','phase_once_v1')==refresh_policy,decision['step'])
+            check('phase_decision_anchor_suppression',all(covered_by_phase(e,phase,match_steps=match)
+                  for e in decision.get('refresh_phase_suppressed',[])),decision['step'])
+            check('phase_decision_anchor_reopening',all(refresh_policy=='event_shift_v1'
+                  and covered_by_phase(e,phase) and not covered_by_phase(e,phase,match_steps=match)
+                  for e in decision.get('refresh_phase_reopened',[])),decision['step'])
     group=cfg.get('m3_formal_group')
     if group is not None:
         # Historical runs before the explicit selector used variance_only.
