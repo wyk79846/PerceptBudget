@@ -41,3 +41,23 @@
 
 - [三组闭环汇总、输入配对与独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T061546.452855Z-critical-forecast-online-9e7e549a/summary.json>)、[逐组CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T061546.452855Z-critical-forecast-online-9e7e549a/results.csv>)
 - [原始三回合记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T061941.405033Z-acceptance-m3-f5eefc4f/summary.json>)、[执行入口](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T061546.452855Z-critical-forecast-online-9e7e549a/comparison.py>)
+
+## 新版无固定30：原失败任务复测
+
+按用户授权，沿用原40任务中动态方案失败的11项名单，使用`remaining_v1`、无固定30步。Spatial9复用上一轮117步成功记录；其余10项各新测一次，一份常驻模型，未中断或重载。seed7/init0、原中频优先、RTC、阈值及模型参数均保持一致，运行期间源码未改。
+
+|集合|本轮成功任务及步数|仍超时|
+|---|---|---|
+|Spatial|task2：101；task9：117（复用）|无|
+|Object|task4：136；task5：131|无|
+|Goal|task0：121；task5：149|task6：300步|
+|LIBERO-10|task1：236；task2：211；task9：254|task8：520步|
+
+原失败子集恢复9/11，上轮旧提取器＋30步上限为3/11。新增恢复Spatial9、Object4/5、Goal0、LIBERO-10 task1/2；上版已恢复的Spatial2、Goal5、LIBERO-10 task9均保持成功。
+
+11条有效记录（新测10＋复用1）共15785项独立检查通过，包括新提取器来源、实际执行历史、关键时刻重算、RTC及频率恢复；均无缓冲耗尽。当前策略无首次/周期30步限制，最大实际刷新间隔36步；允许原有关键等待，累计6.76秒，不将有等待描述为连续20Hz。整板任务加在途推理能量合计2157.38J、任务时间合计137.36秒，包含两项超时，不含准备、3秒终态尾段及恢复。
+
+这是同一通用配置的旧失败子集复测，不是新旧同模型成对消融；原动态成功的另外29项尚未用新版复测，因此不换算成新的40任务成功率或整体节能率。新版无固定30候选继续保留，默认配置尚未切换。
+
+- [11项结果与独立检查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/summary.json>)、[逐任务CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/results.csv>)、[固定名单及复用来源](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/plan.json>)
+- [本批原始10回合汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T063010.708240Z-acceptance-m3-a4448304/summary.json>)、[结束频率读数](</home/wyk/workspace/任务产出/perceptbudget/M4/20261104T062940.154276Z-remaining-forecast-failures-9cdcf1da/clock_after.json>)
