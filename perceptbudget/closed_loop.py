@@ -228,7 +228,10 @@ class DeadlineRuntime:
         self.progress=None
         if self.progress_mode:
             from perceptbudget.motion_progress import DownwardProgress
-            self.progress=DownwardProgress(self.events_config.minimum_motion)
+            policy=config.get('m3_motion_progress_policy','state_only_v1')
+            if policy not in ('state_only_v1','continuation_v2'):raise ValueError('Unknown progress policy')
+            self.progress=DownwardProgress(self.events_config.minimum_motion,
+                continuation_steps=self.settings.get('minimum_request_steps',5) if policy=='continuation_v2' else 0)
         self.times = FullServiceTimes(config['m3_service_samples'],
                                      probability=self.settings['service_quantile'])
         for seconds in config.get('m3_recovery_samples',[]):
@@ -317,6 +320,7 @@ class DeadlineRuntime:
             from perceptbudget.key_phases import absolute_intervals
             self.chunks[pid]['key_phases']=absolute_intervals(request['actions'],origin,self.events_config)
         if self.progress is not None:
+            self.chunks[pid]['progress_actions']=request['actions']
             if 'refresh_phases' not in self.chunks[pid]:
                 from perceptbudget.key_phases import absolute_intervals
                 self.chunks[pid]['refresh_phases']=absolute_intervals(request['actions'],origin,self.events_config)
@@ -389,7 +393,14 @@ class DeadlineRuntime:
 
     def decide(self, *, now, step, queue, rows, inflight, rtc_delay_steps=None):
         item = queue.get(step)
-        progress=self.progress.update(rows,protected=self._progress_grasp_protected) if self.progress else None
+        def continuation():
+            from perceptbudget.motion_progress import downward_plan
+            pid=item[1] if item is not None else None
+            chunk=self.chunks.get(pid,{})
+            return downward_plan(chunk.get('progress_actions',[]),chunk.get('origin',step),step,
+                self.progress.continuation_steps,self.events_config.minimum_motion,pid)
+        progress=self.progress.update(rows,protected=self._progress_grasp_protected,
+            continuation=continuation) if self.progress else None
         intervals = [b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.)
                      for a,b in zip(rows[-17:], rows[-16:])] if len(rows)>=17 else [
                          b['action_start_monotonic']-a['action_start_monotonic']-b.get('critical_wait_seconds',0.) for a,b in zip(rows,rows[1:])]

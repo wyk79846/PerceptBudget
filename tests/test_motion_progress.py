@@ -1,4 +1,5 @@
 from perceptbudget.motion_progress import DownwardProgress
+import pytest
 
 
 def row(step,z0,z1,command=-.5,pid=0):
@@ -71,11 +72,12 @@ def test_new_progress_waits_even_if_old_forecast_phase_already_waited():
     assert rtc_prefix_plan(request,105,10,review)['selected_delay_steps']==0
 
 
-def test_runtime_alert_and_record_audit_use_only_completed_state_rows():
+@pytest.mark.parametrize('policy',['state_only_v1','continuation_v2'])
+def test_runtime_alert_and_record_audit_use_only_completed_state_rows(policy):
     import copy
     from perceptbudget.closed_loop import DeadlineRuntime
     from scripts.audit_rtc_system import audit_motion_progress
-    cfg=dict(H=50,m3_phase_refresh=True,m3_motion_progress='refresh',m3_scheduler_mode='deadline_high',
+    cfg=dict(H=50,m3_phase_refresh=True,m3_motion_progress='refresh',m3_motion_progress_policy=policy,m3_scheduler_mode='deadline_high',
         m3_timing=dict(service_quantile=.95,safety_margin_seconds=.025,maximum_action_offset=50,
             maximum_observation_age_seconds=None,margin_updates=False),m3_events={},
         m3_service_samples={h:[.5]*20 for h in ('hot','short','long')},rtc_initial_control_period_seconds=.05)
@@ -103,3 +105,28 @@ def test_runtime_alert_and_record_audit_use_only_completed_state_rows():
             z=.96-(e['step']-8)*.005;e['before']['raw_state'][2]=z;e['after']['raw_state'][2]=z-.005
     audit_motion_progress(cfg,damaged,lambda name,ok,where=None:failures.append(name) if not ok else None)
     assert 'progress_known_state_replay' in failures
+
+
+def test_planned_stop_suppresses_refresh_without_rearming_same_contact():
+    from perceptbudget.motion_progress import downward_plan
+    actions=[[0.,0.,-.5,0.,0.,0.,-1.]]*4+[[0.,0.,0.,0.,0.,0.,-1.]]*46
+    stop=downward_plan(actions,10,10,5,.1,2)
+    keep=downward_plan([[0.,0.,-.5,0.,0.,0.,-1.]]*50,10,10,5,.1,2)
+    assert not stop['allowed'] and keep['allowed']
+    assert not downward_plan(actions,10,58,5,.1,2)['allowed']
+    watch=DownwardProgress(continuation_steps=5);rows=warm(watch)
+    for i in range(8,13):
+        rows.append(row(i,.96,.96));watch.update(rows,protected=lambda r:False,continuation=lambda:stop)
+    assert watch.onsets==watch.planned_stop_skips==1 and watch.pending is None
+    watch.update(rows,protected=lambda r:False,continuation=lambda:keep)
+    assert watch.pending is None and watch.onsets==1
+    for i in range(13,19):
+        z=.96-(i-13)*.005;rows.append(row(i,z,z-.005))
+        watch.update(rows,protected=lambda r:False,continuation=lambda:keep)
+    for i in range(19,23):
+        rows.append(row(i,.93,.93));watch.update(rows,protected=lambda r:False,continuation=lambda:keep)
+    assert watch.pending is not None and watch.onsets==2
+    # A result that has just committed may already plan to stop. Re-evaluate
+    # the remaining commands before spending another Full on an older alert.
+    watch.update(rows,protected=lambda r:False,continuation=lambda:stop)
+    assert watch.pending is None and watch.planned_stop_skips==2

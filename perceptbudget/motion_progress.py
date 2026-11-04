@@ -9,15 +9,25 @@ from collections import deque
 from statistics import median
 
 
+def downward_plan(actions, origin, step, required_steps, minimum_command, prediction_id):
+    offset=step-origin
+    future=actions[offset:offset+required_steps] if offset>=0 else []
+    commands=[max(-1.,min(1.,float(a[2]))) for a in future]
+    return dict(prediction_id=prediction_id,control_step=step,required_steps=required_steps,
+        available_steps=len(commands),commands_z=commands,
+        allowed=len(commands)==required_steps and all(z<=-minimum_command for z in commands))
+
+
 class DownwardProgress:
-    def __init__(self, minimum_command=.1):
+    def __init__(self, minimum_command=.1, *, continuation_steps=0):
         self.minimum_command=minimum_command
+        self.continuation_steps=continuation_steps;self.planned_stop_skips=0;self.last_plan=None
         self.samples=[];self.reference=None;self.window=deque(maxlen=3)
         self.processed=0;self.active=False;self.recovered=0
         self.onsets=0;self.protected_onsets=0;self.pending=None
         self.latest=None;self.last_onset=None;self.last_coverage=None
 
-    def update(self, rows, *, protected):
+    def update(self, rows, *, protected, continuation=None):
         for row in rows[self.processed:]:
             command=max(-1.,min(1.,float(row['action'][2])))
             before=float(row['before']['raw_state'][2]);after=float(row['after']['raw_state'][2])
@@ -48,6 +58,11 @@ class DownwardProgress:
                 self.recovered=self.recovered+1 if recovered else 0
                 if self.recovered>=3:self.active=False;self.recovered=0
         self.processed=len(rows)
+        if self.continuation_steps and self.pending is not None:
+            self.last_plan=continuation()
+            if not self.last_plan['allowed']:
+                self.planned_stop_skips+=1
+                self.pending=None
         return self.status()
 
     def committed(self, request, commit):
@@ -60,10 +75,14 @@ class DownwardProgress:
         return dict(self.last_coverage)
 
     def status(self):
-        return dict(processed_controls=self.processed,calibration_samples=len(self.samples),
+        result=dict(processed_controls=self.processed,calibration_samples=len(self.samples),
             reference_meters_per_command=self.reference,active=self.active,recovery_samples=self.recovered,
             onsets=self.onsets,protected_onsets=self.protected_onsets,
             latest=dict(self.latest) if self.latest else None,
             pending=dict(self.pending) if self.pending else None,
             last_onset=dict(self.last_onset) if self.last_onset else None,
             last_coverage=dict(self.last_coverage) if self.last_coverage else None)
+        if self.continuation_steps:
+            result.update(continuation_steps=self.continuation_steps,planned_stop_skips=self.planned_stop_skips,
+                last_continuation_review=dict(self.last_plan) if self.last_plan else None)
+        return result
