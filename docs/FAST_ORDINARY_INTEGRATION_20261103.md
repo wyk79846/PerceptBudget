@@ -201,3 +201,21 @@ Fast高频/中频推理中位342.1/482.2ms，相比上一轮带state的433.2/610
 ### state长度核对
 
 当前LeRobot checkpoint实际输入8维，配置`max_state_dim=32`；其配套`Pi05PrepareStateTokenizerProcessorStep`先补零到32维，再将全部32维数字写进语言prompt。项目`h50_checkpoint.normalize_state`遵循该格式。200是语言＋state容量上限。用本机实际分词器复算Object0：纯任务文字13token，只编码8维为48token，当前32维为144token；24个补零在量化后成为24个128，贡献96token。这是与配套预处理相符的占位成本，未擅自删除32维输入的尾部。旧Fast无state与新Fast带state的差异，不等于同为带state的Full/Fast差异。
+
+## 2026-11-06 原位置Fast仅在普通阶段刷新
+
+用户同意重试非关键阶段Fast。复用现有feedback_v3准入：普通buffer刷新、未处于夹爪关键区间、上次不是Fast，且同窗能量与时延允许时才使用Fast；关键动作触发的刷新用Full，Fast之后至少接一次Full。保持外部64＋腕部256、原位置、Fast不带state/Full带state；不修改RTC、关键阈值、刷新时间表或FlashRT。只在旧seed7/init0开发，不用seed17输入校准。
+
+扩展原成本探针`--pool-agent`，同三份seed7保存输入、每模式每频率6次，实测高频Full/Fast468.8/329.6ms、10.945/7.704J，中频642.8/463.2ms、10.166/7.177J。Full/Fast各一次作者采样体对照差0，频率与恢复通过；闭环严格使用匹配输入合同的实测成本，不再使用几何proxy。69项相关检查通过；修复三处绕过构造函数的测试替身缺少position_policy初始化，生产适配器没有改动。代码6eed0a3。
+
+一模型完成Spatial0、Object0、Long0各纯Full/候选一次，共六回合，两组均3/3成功、零断供。6次Fast实际发生在Sp0步60、Object0步33/76/152、Long0步81/157；全部符合普通阶段门槛、非连续Fast、state关闭、320token和位置偏移192，所有回合既有审查通过。
+
+|任务|纯Full步数|候选步数|纯Full任务＋在途J|候选J|Fast次数|
+|---|---:|---:|---:|---:|---:|
+|Spatial0|76|77|67.473|66.663|1|
+|Object0|137|209|101.587|136.226|3|
+|Long0|223|257|165.153|188.301|2|
+
+全部三个共同成功任务合计334.212→391.191J（增加17.05%），27.032→33.092s（增加22.42%），请求20→23。单次Fast更省，但Object和Long完成过程变长，整任务未省电；只按当前预测判为普通阶段并不足以保证压缩输入不影响后续动作。保留实验入口及全部数据，不替换Full＋Continue，不据三任务推断总体效果。结束恢复1173/3199/1497.6MHz。
+
+[三任务配对报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T162003.832561Z-noncritical-fast-dev3-61ea3668/review.md>) · [逐请求准入与汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T162003.832561Z-noncritical-fast-dev3-61ea3668/review.json>) · [匹配成本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T161648.953070Z-dual-selective-fast-36c56aa5/ordinary_fast_costs.json>)。
