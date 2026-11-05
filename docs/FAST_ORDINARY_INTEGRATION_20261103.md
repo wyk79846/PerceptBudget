@@ -189,3 +189,15 @@ seed7/init0，四套各task0/3/6，同一320token（外部64＋腕部256）、st
 全部尝试包含超时，任务与在途推理总能量5116.780 J，任务执行420.262 s，不含加载和任务准备。非初次推理中位数：高频Full470.9/Fast433.2 ms，中频Full651.2/Fast610.4 ms。该候选在Goal和长任务取得10/10，但Spatial/Object仍有7项超时，暂不替换Full＋Continue基线；不能把本轮与不同成像设置的历史数据直接解释为池化的独立收益。
 
 [全40项结果及逐任务表](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142840.502775Z-fast-positions-seed17-all40-6f18caf8/results.md>) · [JSON](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142840.502775Z-fast-positions-seed17-all40-6f18caf8/results.json>) · [原始父记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142852.290479Z-acceptance-m3-0e288582/recording.json>)。
+
+## 2026-11-06 原位置Fast关闭state：seed17全40任务
+
+按用户要求，只对Fast加`--fast-no-state`，Full仍带state；同seed17/init1、320视觉token（外部64＋腕部256）、原位置编号与动作偏移192、Full/Fast直接交替、H50/N5/BF16及原调度参数。40项一次模型连续完成，无内存保护中断、零断供，全部已有回合检查通过，所有请求的state/位置模式记录符合配置。结果33/40：Spatial9/10、Object7/10、Goal8/10、Long9/10。超时Spatial6、Object0/5/7、Goal3/5、Long8，全部保留。
+
+Fast高频/中频推理中位342.1/482.2ms，相比上一轮带state的433.2/610.4ms均快约21%；Full为477.7/652.7ms。327次请求中150次Fast，平均23.52步刷新；上一轮带state为308次请求、平均24.20步。单次提速没有转成相同比例整任务收益：任务实耗430.566s，全部尝试任务＋在途推理5064.752J，相比纯Full 5253.250J省3.59%（35→33成功）；共同成功30项仅省0.48%。相比带state交替版5116.780J省1.02%，共同成功28项省3.26%，总耗时增加约2.45%。三批为不同进程的固定参数历史对照，无逐任务调参，不把轨迹与成功变化全部归因于state开关。暂不替换Full＋Continue基线。
+
+[完整40项结果与能量对照](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T153705.566883Z-fast-pos-nostate-seed17-all40-6658feb2/results.md>) · [JSON与分段能量](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T153705.566883Z-fast-pos-nostate-seed17-all40-6658feb2/results.json>) · [原始父记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T153753.507758Z-acceptance-m3-9fb292d7/recording.json>)。结束已确认恢复GPU1173/EMC3199/CPU1497.6MHz。
+
+### state长度核对
+
+当前LeRobot checkpoint实际输入8维，配置`max_state_dim=32`；其配套`Pi05PrepareStateTokenizerProcessorStep`先补零到32维，再将全部32维数字写进语言prompt。项目`h50_checkpoint.normalize_state`遵循该格式。200是语言＋state容量上限。用本机实际分词器复算Object0：纯任务文字13token，只编码8维为48token，当前32维为144token；24个补零在量化后成为24个128，贡献96token。这是与配套预处理相符的占位成本，未擅自删除32维输入的尾部。旧Fast无state与新Fast带state的差异，不等于同为带state的Full/Fast差异。
