@@ -11,6 +11,7 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False,expan
             if expand_kv:
                 from perceptbudget.expanded_context import ExpandedQKV
                 self.fvk=ExpandedQKV(self.fvk,self)
+                self.attn._pb_pool_pipeline=self
 
         def transformer_decoder(self,*args,**kwargs):
             if expand_kv:raise RuntimeError('Expanded context uses the separate original RTC expert')
@@ -57,7 +58,7 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False,expan
                     self._rope_table_np[:512+self.max_prompt_len]))
             if expand_kv:
                 self._expanded_qkv=torch.empty(512+self.max_prompt_len,2560,device='cuda',dtype=torch.bfloat16)
-                self._expanded_queries=torch.empty(512+self.max_prompt_len,2048,device='cuda',dtype=torch.bfloat16)
+                self._compact_attention_output=torch.empty(visual_tokens+self.max_prompt_len,2048,device='cuda',dtype=torch.bfloat16)
 
         def record_infer_graph(self,external_stream_int=None):
             self._prepare_selector()
