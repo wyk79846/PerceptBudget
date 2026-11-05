@@ -31,14 +31,14 @@ class TuneOnce:
         return result
 
 
-def clock_costs(infer, records, torch, run, write, *, visual_tokens=320,preserve_positions=False,input_contract=None):
+def clock_costs(infer, records, torch, run, write, *, visual_tokens=320,preserve_positions=False):
     """Hot request/hold costs after clock acknowledgement; one resident model."""
     from perceptbudget.three_frequency import ThreeClocks
     from perceptbudget.power import PowerMonitor
     from perceptbudget.device_clock_screen import energy_window,frequency_check
     clock=ThreeClocks(run);monitor=PowerMonitor(.02,max_gap_seconds=.1)
     result=dict(status='running',cells={},rows=[],restored=False,
-        fast_input_contract=input_contract or dict(visual_mode='selective'+str(visual_tokens),visual_tokens=visual_tokens,state_enabled=False,
+        fast_input_contract=dict(visual_mode='selective'+str(visual_tokens),visual_tokens=visual_tokens,state_enabled=False,
             position_policy='original_camera_and_text_coordinates_v1' if preserve_positions else 'contiguous_v1'),
         scope='Fixed-input request energy after frequency acknowledgement; shared entry cost cancels in the same-time same-frequency mode comparison')
     entered=False

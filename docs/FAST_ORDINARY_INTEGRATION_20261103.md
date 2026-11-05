@@ -90,3 +90,17 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 快3.3%–5.0%，但净收益不足，不扩大闭环。原型源码保存在`archive/expanded-attention-probes-20261105`（686fd06），从当前代码删除其分支；数据和GPU行路由/动态图检查完整保留。[实测成本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T082939.130085Z-dual-selective-fast-87af879c/common_window_review.json>)。
 
 继续目标：Fast成功率保持稳定并完成seed17全40验收，目前未达到。下一候选先验证只重算变化较大的一个摄像头的SigLIP特征、另一摄像头保留最近Full特征，再用完整VLM和最新state生成新KV；不复用整份旧KV，不连续Fast。尚未实现或验证，不计入已有成果；先用seed7固定输入及配对小测。
+
+
+## 2026-11-05 单路视觉特征复用小测
+
+只重算变化较大一路SigLIP，另一摄像头保留最近Full特征；两路特征一起经过完整VLM并加入最新state，重算全部KV，RTC不变。未进入生产闭环。Full输出与原记录及Fast后重复Full均差0；作者采样体对照差0。相同图像按单路/双路编码也有BF16算法差异，输出最大差约0.011，不能声称完全等价。
+
+|频率|Full ms|Fast ms|Full J|Fast J|同窗口净节能J/次|
+|---|---:|---:|---:|---:|---:|
+|高频|464.61|442.01|10.959|10.940|-0.2680|
+|中频|640.27|603.15|10.059|9.790|-0.0555|
+
+每模式每挡6个样本，频率读回与恢复通过；速度收益有限，实测同窗口没有净节能，不扩大闭环。缓存第0步视觉特征、在第33步刷新腕部的一帧动作偏差也较大，但单帧不作为成功率结论。代码归档`archive/camera-feature-cache-probe-20261105`（6a6cbe0），主干移除未采用原型。
+
+[原始记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T090015.842587Z-camera-feature-fast-45d9c441/summary.json>) · [能量复算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T090015.842587Z-camera-feature-fast-45d9c441/common_window_review.json>)。继续保留Full＋Continue基线35/40；Fast稳定验收仍未完成。
