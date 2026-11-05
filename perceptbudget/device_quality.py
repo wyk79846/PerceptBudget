@@ -554,12 +554,13 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    if visual_fast_mode=='selective416':
+                    if visual_fast_mode=='selective416' or (visual_fast_mode=='wrist' and not cfg.get('m2_fast_no_state',False)):
                         full_lengths=list(lengths)
-                        fast_lengths=[n-96 for n in full_lengths]
-                        if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-96:
-                            raise RuntimeError('Selective416 changed prompt/state tokenization')
-                        coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode='selective416',fast_state_enabled=True)
+                        offset=96 if visual_fast_mode=='selective416' else 256
+                        fast_lengths=[n-offset for n in full_lengths]
+                        if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-offset:
+                            raise RuntimeError('Stateful Fast changed prompt/state tokenization')
+                        coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode=visual_fast_mode,fast_state_enabled=True)
                         lengths=full_lengths+fast_lengths
                     elif cfg.get('m4_acceptance_group') in ('joint','m3_fast') or cfg.get('m3_ordinary_fast_context'):
                         from perceptbudget.m4_acceptance import visual_prefixes

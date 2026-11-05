@@ -14,7 +14,8 @@ def visual_geometry(mode):
 
 def configure_explicit_inputs(config):
     """Worker-level binding; retain state for416, preserve legacy320 behavior."""
-    config['m2_fast_no_state']=not config.get('m3_fast_selective416',False)
+    stateful_wrist=(config.get('m3_ordinary_fast_context') and config.get('m3_ordinary_fast_visual_mode')=='wrist')
+    config['m2_fast_no_state']=not (config.get('m3_fast_selective416',False) or stateful_wrist)
     if config.get('m3_fast_selective416'):
         config.pop('m4_fast_prompt_capacity',None)
 

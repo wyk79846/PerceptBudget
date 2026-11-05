@@ -115,6 +115,29 @@ def test_mild_fast_rejects_320_costs_before_any_model_load(tmp_path):
     with pytest.raises(ValueError,match='geometry/state mismatch'):load_costs(path,config)
 
 
+def test_stateful_wrist_binds_latest_state_and_only_the_current_wrist_image():
+    from perceptbudget.rtc_visual_alternation import configure_explicit_inputs,FreshViewRTCAdapter
+    cfg=dict(m3_ordinary_fast_context=True,m3_ordinary_fast_visual_mode='wrist',m2_fast_no_state=True)
+    configure_explicit_inputs(cfg)
+    adapter=object.__new__(FreshViewRTCAdapter);adapter.config=cfg
+    snapshot=dict(images=['external-now','wrist-now'],state=[.2]*32,raw_state=[.1]*8)
+    fast=adapter.context_inputs(snapshot,'wrist')
+    assert fast['images']==['wrist-now'] and fast['state'] is snapshot['state']
+    assert adapter.context_inputs(snapshot,'full')['images']==snapshot['images']
+    assert not cfg['m2_fast_no_state']
+
+
+def test_stateful_wrist_costs_reject_silently_omitted_state(tmp_path):
+    from perceptbudget.ordinary_fast import load_costs
+    cfg=dict(H=50,N=5,precision='bfloat16',checkpoint_provenance_revision='frozen',rtc_beta=5.,
+        m3_ordinary_fast_visual_mode='wrist')
+    (tmp_path/'run.json').write_text(json.dumps(dict(config_snapshot=cfg)))
+    path=tmp_path/'costs.json'
+    path.write_text(json.dumps(dict(status='completed',restored=True,
+        fast_input_contract=dict(visual_mode='wrist',visual_tokens=256,state_enabled=False))))
+    with pytest.raises(ValueError,match='geometry/state mismatch'):load_costs(path,cfg)
+
+
 def test_original_coordinates_shift_fast_actions_and_leave_full_inputs_exact():
     import torch
     from types import SimpleNamespace

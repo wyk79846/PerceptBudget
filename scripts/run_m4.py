@@ -33,6 +33,8 @@ def main():
         help='Reference for an idle threshold pair;200 reproduces the original comparison')
     parser.add_argument('--ordinary-fast',action='store_true',help='Replace one ordinary Full with reduced-input Fast; keep Full schedule/frequency, then require Full')
     parser.add_argument('--ordinary-fast-tokens',type=int,choices=(320,464),default=320,help='Selective visual budget for ordinary Fast;464 merges only8 blocks per camera')
+    parser.add_argument('--ordinary-fast-view',choices=('dual','wrist'),default='dual',help='Ordinary Fast: selective dual views without state, or native wrist view with latest state')
+    parser.add_argument('--ordinary-fast-costs',type=Path,help='Completed measured costs for the explicitly selected ordinary Fast geometry')
     parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     capture_options=parser.add_mutually_exclusive_group()
@@ -84,6 +86,10 @@ def main():
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
+    if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
+        parser.error('Ordinary Fast geometry/costs require --ordinary-fast')
+    if args.ordinary_fast_view=='wrist' and (args.ordinary_fast_positions or args.ordinary_fast_tokens!=320 or args.ordinary_fast_costs is None):
+        parser.error('Stateful wrist needs its measured --ordinary-fast-costs, without selective-token overrides')
     if (args.lean_continue is not None or args.continue_overhead_pair) and args.acceptance_group not in ('m3','q30'):
         parser.error('Continue capture requires --acceptance-group m3 or q30')
     if args.continue_overhead_pair and (args.full_frequency_pair or args.rtc_delay_sensitivity):
@@ -210,9 +216,11 @@ def main():
             m2_fast_no_state=True,m4_fast_prompt_capacity=32 if args.energy_refresh else 20,m4_policy_revision=policy,
             m3_ordinary_fast_policy=policy,m3_ordinary_fast_visual_mode='selective'+str(args.ordinary_fast_tokens),
             m3_ordinary_fast_positions=args.ordinary_fast_positions)
+        if args.ordinary_fast_view=='wrist':
+            cfg.update(m3_ordinary_fast_visual_mode='wrist',m2_fast_no_state=False)
         cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
-        if cost_key not in m4:parser.error('Measure the selected Fast costs before closed-loop use: '+cost_key)
-        cfg['ordinary_fast_costs']=fast_costs(m4[cost_key],cfg)
+        if args.ordinary_fast_costs is None and cost_key not in m4:parser.error('Measure the selected Fast costs before closed-loop use: '+cost_key)
+        cfg['ordinary_fast_costs']=fast_costs(args.ordinary_fast_costs or m4[cost_key],cfg)
     if args.full_energy:
         from perceptbudget.full_energy import load_costs as energy_costs,POLICY as ENERGY_POLICY
         cfg.update(m3_full_energy=True,m3_full_energy_costs=energy_costs(m4['full_energy_cost_source'],cfg),
@@ -238,7 +246,7 @@ def main():
         if source_cfg.get('m4_acceptance_manifest')!=cfg.get('m4_acceptance_manifest'):
             parser.error('Reference model/task manifest differs')
     if args.dry_run:
-        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast=cfg['m3_ordinary_fast_visual_mode']+'_no_state' if args.ordinary_fast else ('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
+        print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast=cfg['m3_ordinary_fast_visual_mode']+('_with_state' if args.ordinary_fast_view=='wrist' else '_no_state') if args.ordinary_fast else ('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
             ordinary_fast_positions=args.ordinary_fast_positions,
@@ -344,6 +352,8 @@ def main():
             if args.idle_min_ms is not None:command.extend(['--idle-min-ms',str(args.idle_min_ms)])
             if args.idle_reference_ms!=200:command.extend(['--idle-reference-ms',str(args.idle_reference_ms)])
             if args.ordinary_fast:command.extend(['--ordinary-fast','--ordinary-fast-tokens',str(args.ordinary_fast_tokens)])
+            if args.ordinary_fast_view!='dual':command.extend(['--ordinary-fast-view',args.ordinary_fast_view])
+            if args.ordinary_fast_costs is not None:command.extend(['--ordinary-fast-costs',str(args.ordinary_fast_costs)])
             if args.ordinary_fast_positions:command.append('--ordinary-fast-positions')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if cfg['m4_lean_continue']:command.append('--lean-continue')
