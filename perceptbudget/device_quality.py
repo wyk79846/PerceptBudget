@@ -101,7 +101,7 @@ def quality_run_purpose(label):
     return 'fast-quality-' + short
 
 
-def install_render_buffer_cleanup(*, shared_egl=False):
+def install_render_buffer_cleanup(*, shared_egl=False, synchronize_release=False):
     """Release MuJoCo render buffers, retain the upstream EGL-destroy workaround.
 
     Process-local M2 diagnostic only. Call after base._patch_egl_cleanup().
@@ -110,7 +110,15 @@ def install_render_buffer_cleanup(*, shared_egl=False):
     import robosuite.utils.binding_utils as binding
     import threading
     audit = dict(freed=0, errors=[], egl_destroy_enabled=False,
-                 shared_egl=shared_egl, egl_contexts_created=0, explicit_sim_frees=0)
+                 shared_egl=shared_egl, egl_contexts_created=0, explicit_sim_frees=0,
+                 synchronize_release=synchronize_release, synchronized_frees=0,
+                 host_trim_calls=0)
+    if synchronize_release:
+        import ctypes
+        from OpenGL.GL import glFinish
+        host_trim = ctypes.CDLL(None).malloc_trim
+        host_trim.argtypes = [ctypes.c_size_t]
+        host_trim.restype = ctypes.c_int
     if shared_egl:
         original_factory = binding.GLContext
         cache = {}
@@ -137,6 +145,11 @@ def install_render_buffer_cleanup(*, shared_egl=False):
                 con.free()
                 context._pb_buffers_freed = True
                 audit['freed'] += 1
+                if synchronize_release:
+                    # Complete deferred GL deletion before allocating the next
+                    # hard-reset renderer. No physics/reset operations change.
+                    glFinish()
+                    audit['synchronized_frees'] += 1
         except Exception as exc:
             audit['errors'].append(f'{type(exc).__name__}: {exc}')
     binding.MjRenderContext.__del__ = free_buffers
@@ -149,7 +162,11 @@ def install_render_buffer_cleanup(*, shared_egl=False):
         if context is not None:
             free_buffers(context)
             audit['explicit_sim_frees'] += 1
-        return previous_free(sim)
+        result = previous_free(sim)
+        if synchronize_release:
+            host_trim(0)
+            audit['host_trim_calls'] += 1
+        return result
     binding.MjSim.free = free_sim
     return audit
 
@@ -393,7 +410,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     base._patch_egl_cleanup()
     if cleanup_gate:
         record['render_buffer_cleanup'] = install_render_buffer_cleanup(
-            shared_egl=gate_record.get('candidate') == 'hard_reset_shared_egl')
+            shared_egl=gate_record.get('candidate') == 'hard_reset_shared_egl',
+            synchronize_release=bool(cfg.get('m3_ordinary_fast_context')))
     setup_started=time.monotonic()
     def stage_progress(stage):
         row=dict(stage=stage,elapsed_seconds=round(time.monotonic()-setup_started,3))

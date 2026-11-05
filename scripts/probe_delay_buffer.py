@@ -289,6 +289,14 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         raise ValueError('RTC VJP rollout is an isolated asynchronous condition')
     if not 0 < pending_arm_gain <= 1:
         raise ValueError('pending arm gain must be in (0, 1]')
+    def setup_memory(stage):
+        if config.get('m3_ordinary_fast_context'):
+            from perceptbudget.rtc_memory import memory_record
+            from perceptbudget.experiment import _write_json_atomically
+            row = dict(memory_record(torch, stage), monotonic=time.monotonic())
+            _write_json_atomically(run_dir/'setup_memory.json', row)
+            print('episode_setup='+json.dumps(row), flush=True)
+    setup_memory('before_environment_reset')
     if prepared_start is None:
         observation, hz = base._prepare_env_episode(env, task, np)
     else:
@@ -296,6 +304,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             raise ValueError('Prepared start is restricted to explicit M3/M4 acceptance')
         from perceptbudget.m4_acceptance import calibrated_start
         observation,hz=calibrated_start(env,task,prepared_start,np)
+    setup_memory('environment_reset_finished')
     assert hz == 20
     base._seed_process(7, np, torch)
     period = 1 / hz
@@ -613,9 +622,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             # reset() above replaces MjSim; install only on the live instance.
             env_context = reuse_control_forward(env)
             env_audit = env_context.__enter__()
+        setup_memory('before_bootstrap')
         future, current_request = submit(observation, 0)
         future.result(timeout=config.get('m3_request_timeout_seconds'))  # Bootstrap only; no env steps yet.
         harvest(0)
+        setup_memory('bootstrap_finished')
         deadline = time.monotonic()
         for step in range(task['max_steps']):
             if fixed_clocks is not None:

@@ -55,7 +55,24 @@ def monitored_worker(command, out, *, request_watchdog=None, watchdog_grace_seco
                     record=dict(record, detected_monotonic=time.monotonic())
                     _write_json_atomically(Path(request_watchdog).parent/'outer_watchdog_timeout.json',record)
                     raise InferenceTimeout(record)
-            if available_ram_bytes() < RAM_FLOOR_BYTES:
+            available = available_ram_bytes()
+            if available < RAM_FLOOR_BYTES:
+                # Persist actual stop evidence before terminating the worker.
+                # Read only memory counters, never process command lines/env.
+                record = dict(pid=child.pid, detected_monotonic=time.monotonic(),
+                              available_bytes=available, floor_bytes=RAM_FLOOR_BYTES)
+                try:
+                    wanted = {'VmRSS','VmSize','RssAnon','RssFile','VmSwap','Threads'}
+                    record['worker_status'] = {
+                        line.split(':',1)[0]:line.split(':',1)[1].strip()
+                        for line in Path(f'/proc/{child.pid}/status').read_text().splitlines()
+                        if line.split(':',1)[0] in wanted}
+                    if request_watchdog is not None:
+                        from perceptbudget.experiment import _write_json_atomically
+                        _write_json_atomically(Path(request_watchdog).parent/'ram_protection.json',record)
+                except OSError as exc:
+                    record['snapshot_error'] = type(exc).__name__
+                print('RAM_PROTECTION='+json.dumps(record),flush=True)
                 raise RuntimeError('RAM protection stopped worker; wait for finite root helper and verify restoration')
             time.sleep(.1)
         return child.returncode
