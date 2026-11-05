@@ -20,11 +20,14 @@ def load_costs(path, config):
         if recorded[field]!=config[field]:raise ValueError('Fast cost model mismatch: '+field)
     contract=costs.get('fast_input_contract',dict(visual_mode='selective320',visual_tokens=320,state_enabled=False))
     mode=config.get('m3_ordinary_fast_visual_mode','selective320')
-    if mode not in ('selective320','selective464','wrist'):
+    if mode not in ('selective320','selective464','wrist','pool2_agent'):
         raise ValueError('Unsupported ordinary Fast input mode')
-    expected=dict(visual_mode=mode,visual_tokens=256 if mode=='wrist' else int(mode[9:]),
+    expected=dict(visual_mode=mode,visual_tokens=256 if mode=='wrist' else 320 if mode=='pool2_agent' else int(mode[9:]),
         state_enabled=not config.get('m2_fast_no_state',mode!='wrist'))
-    if any(contract.get(k)!=v for k,v in expected.items()):
+    proxy=(mode=='pool2_agent' and contract.get('visual_mode')=='selective320'
+        and config.get('m3_fast_alternation') and contract.get('visual_tokens')==320
+        and contract.get('state_enabled') is False and expected['state_enabled'] is False)
+    if not proxy and any(contract.get(k)!=v for k,v in expected.items()):
         raise ValueError('Fast cost input geometry/state mismatch')
     positions='original_camera_and_text_coordinates_v1' if config.get('m3_ordinary_fast_positions') else 'contiguous_v1'
     if contract.get('position_policy','contiguous_v1')!=positions:
@@ -36,7 +39,9 @@ def load_costs(path, config):
             values=[cell['hold_power_w'],sample['mean_energy_j'],sample['mean_seconds'],*sample['samples_seconds']]
             if len(sample['samples_seconds'])<4 or any(not math.isfinite(v) or v<=0 for v in values):
                 raise ValueError('Missing positive measured Full/Fast costs')
-    return dict(costs,source=str(path))
+    return dict(costs,source=str(path),cost_geometry_scope=(
+        '320-token stateless timing prior reused for direct alternation; not measured pool2_agent energy. Live request timing and whole-task energy are recorded separately.'
+        if proxy else 'matching measured input contract'))
 
 
 def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,

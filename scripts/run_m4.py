@@ -33,7 +33,7 @@ def main():
         help='Reference for an idle threshold pair;200 reproduces the original comparison')
     parser.add_argument('--ordinary-fast',action='store_true',help='Replace one ordinary Full with reduced-input Fast; keep Full schedule/frequency, then require Full')
     parser.add_argument('--ordinary-fast-tokens',type=int,choices=(320,464),default=320,help='Selective visual budget for ordinary Fast;464 merges only8 blocks per camera')
-    parser.add_argument('--ordinary-fast-view',choices=('dual','wrist'),default='dual',help='Ordinary Fast: selective dual views without state, or native wrist view with latest state')
+    parser.add_argument('--ordinary-fast-view',choices=('dual','wrist','pool2_agent'),default='dual',help='Fast geometry: selective dual, wrist only, or external64 plus full wrist256')
     parser.add_argument('--ordinary-fast-costs',type=Path,help='Completed measured costs for the explicitly selected ordinary Fast geometry')
     parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
@@ -88,8 +88,10 @@ def main():
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
     if args.fast_alternate and (not args.ordinary_fast or args.ordinary_fast_positions or args.ordinary_fast_costs is None):
         parser.error('--fast-alternate requires --ordinary-fast and matching stateful costs without position overrides')
-    if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view!='dual'):
+    if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view not in ('dual','pool2_agent')):
         parser.error('--fast-no-state requires alternating dual-view Fast')
+    if args.ordinary_fast_view=='pool2_agent' and (not args.fast_no_state or args.ordinary_fast_tokens!=320 or args.ordinary_fast_positions):
+        parser.error('External64 plus wrist256 uses320 tokens, --fast-no-state, and native pooling positions')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
@@ -224,6 +226,8 @@ def main():
             m3_ordinary_fast_positions=args.ordinary_fast_positions)
         if args.ordinary_fast_view=='wrist':
             cfg.update(m3_ordinary_fast_visual_mode='wrist',m2_fast_no_state=False)
+        if args.ordinary_fast_view=='pool2_agent':
+            cfg.update(m3_ordinary_fast_visual_mode='pool2_agent')
         if args.fast_alternate:
             cfg.update(m3_fast_alternation=True,m3_fast_no_state=args.fast_no_state,m2_fast_no_state=args.fast_no_state)
         cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
