@@ -37,11 +37,14 @@ def main():
     parser.add_argument('--stateful-positions',action='store_true',help='Also test complete state with original-position320/464 and explicit expert geometry')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     parser.add_argument('--mapped-embeddings',action='store_true',help='Before Full_repeat, map frozen vocabulary rows and check all BF16 table values')
+    parser.add_argument('--expanded-kv',action='store_true',help='Keep original visual KV positions/multiplicity while computing compact encoder queries and MLPs')
     args=parser.parse_args()
     if args.preserve_positions and (not (args.selective320 or args.selective464) or args.resident_check):
         parser.error('Original-position input probe requires selective320/464 without resident-check')
     if args.stateful_positions and not ((args.selective320 or args.selective464) and args.preserve_positions):
         parser.error('Stateful position probe requires selective320/464 and --preserve-positions')
+    if args.expanded_kv and not ((args.selective320 or args.selective464) and args.preserve_positions and not args.stateful_positions):
+        parser.error('Expanded KV uses selective320/464, original positions and no action-position offset')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import create_run,_write_json_atomically
@@ -67,7 +70,7 @@ def main():
                 delay=solver['delay'],executed=solver['executed'],model_loads=0,cases={},
                 probe_arguments=dict(selective320=args.selective320,selective416=args.selective416,
                     selective464=args.selective464,preserve_positions=args.preserve_positions,
-                    stateful_positions=args.stateful_positions,resident_check=args.resident_check,mapped_embeddings=args.mapped_embeddings),
+                    stateful_positions=args.stateful_positions,resident_check=args.resident_check,mapped_embeddings=args.mapped_embeddings,expanded_kv=args.expanded_kv),
                 scope='Identical observation/noise/previous_raw/delay/executed; action sensitivity, no closed-loop outcome or latency claim')
     def save():_write_json_atomically(run/'summary.json',result)
     print('run_dir='+str(run),flush=True);save();adapter=None
@@ -101,7 +104,7 @@ def main():
             import types
             kind='selective464' if args.selective464 else 'selective416' if args.selective416 else 'selective320' if args.selective320 else 'pool2_agent'
             frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=False,
-                preserve_positions=args.preserve_positions)
+                preserve_positions=args.preserve_positions,expand_kv=args.expanded_kv)
             def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
             frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
             model._pipe._set_prompt_per_length=types.MethodType(fixed_prompt,model._pipe)
@@ -111,7 +114,11 @@ def main():
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
             active_geometry=dict(fast=False)
-            if args.preserve_positions:
+            if args.expanded_kv:
+                result['position_policy']=dict(policy='full_visual_multiplicity_and_coordinates_v1',
+                    action_position_offset=0,expert_visual_tokens=512,encoder_compute_visual_tokens=320 if args.selective320 else 464,
+                    rtc_sampler_changed=False)
+            elif args.preserve_positions:
                 from perceptbudget.selective_pipeline import align_expert_positions
                 result['position_policy']=align_expert_positions(adapter.expert,
                     464 if args.selective464 else 320,200 if args.stateful_positions else 32,
@@ -128,7 +135,7 @@ def main():
                 finally:adapter._dual_bank_preparing=False
             outputs={}
             conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.resident_check else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
-            if args.preserve_positions and not args.stateful_positions:conditions=[c for c in conditions if c[0]!='Fast_state']
+            if args.preserve_positions and not (args.stateful_positions or args.expanded_kv):conditions=[c for c in conditions if c[0]!='Fast_state']
             for name,frontend,state in conditions:
                 active_geometry['fast']=not name.startswith('Full')
                 if name=='Full_repeat' and args.mapped_embeddings:
@@ -143,7 +150,7 @@ def main():
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
                 pl=frontend._pipe.pipeline
-                expected=(512 if name.startswith('Full') else 464 if args.selective464 else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
+                expected=(512 if name.startswith('Full') or args.expanded_kv else 464 if args.selective464 else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
@@ -165,6 +172,7 @@ def main():
                 if not np.isfinite(out).all():raise ValueError('Nonfinite actions')
                 diff=out[:,:7]-outputs['Full'][:,:7];start=solver['delay']
                 result['cases'][name]=dict(state=state,visual_tokens=pl.vision_seq_enc,valid_prefix=valid,
+                    expert_visual_tokens=512 if args.expanded_kv else pl.vision_seq_enc,
                     all_action7_rmse=float(np.sqrt(np.mean(diff**2))),
                     next10_executable_action7_rmse=float(np.sqrt(np.mean(diff[start:start+10]**2))),
                     next10_executable_arm6_rmse=float(np.sqrt(np.mean(diff[start:start+10,:6]**2))),
@@ -181,7 +189,7 @@ def main():
                     if result['cases'][name]['resident_vs_reference_max_abs']>1e-4:raise ValueError('Resident graph differs from reference on real input')
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
             result['factorial_pairs']={}
-            pairs=([('Full','Full_no_state'),('Full','Fast'),('Full_no_state','Fast')] if args.preserve_positions and not args.stateful_positions else
+            pairs=([('Full','Full_no_state'),('Full','Fast'),('Full_no_state','Fast')] if args.preserve_positions and not (args.stateful_positions or args.expanded_kv) else
                 [('Full','Fast_state')] if args.resident_check else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')])
             for a,b in pairs:
                 delta=outputs[a][:,:7]-outputs[b][:,:7]

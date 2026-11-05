@@ -24,4 +24,8 @@ def load():
         function.restype=ctypes.c_int
     lib.selective_rope.argtypes=[ctypes.c_void_p]*3+[ctypes.c_int]*2+[ctypes.c_void_p]
     lib.selective_rope.restype=ctypes.c_int
+    lib.expand_selected_rows.argtypes=[ctypes.c_void_p]*4+[ctypes.c_int]*3+[ctypes.c_void_p]
+    lib.expand_selected_rows.restype=ctypes.c_int
+    lib.gather_selected_rows.argtypes=[ctypes.c_void_p]*3+[ctypes.c_int]*3+[ctypes.c_void_p]
+    lib.gather_selected_rows.restype=ctypes.c_int
     _LIB=lib;return lib

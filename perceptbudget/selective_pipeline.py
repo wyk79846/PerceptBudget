@@ -1,10 +1,20 @@
 """Project-side selective token pipeline with GPU redundancy selection."""
 
 
-def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
+def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False,expand_kv=False):
     if visual_tokens not in (320,416,464):raise ValueError('Selective pooling supports320,416 or464 tokens')
     if preserve_positions and visual_tokens==416:raise ValueError('Original-position probe supports dual selected views')
+    if expand_kv and not preserve_positions:raise ValueError('Expanded KV requires original positions')
     class SelectivePipeline(base_type):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            if expand_kv:
+                from perceptbudget.expanded_context import ExpandedQKV
+                self.fvk=ExpandedQKV(self.fvk,self)
+
+        def transformer_decoder(self,*args,**kwargs):
+            if expand_kv:raise RuntimeError('Expanded context uses the separate original RTC expert')
+            return super().transformer_decoder(*args,**kwargs)
         def _build_rope_table(self):
             # Build the native table at original512-image coordinates. Compute
             # still uses the reduced sequence; the larger table is only data.
@@ -25,6 +35,7 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
             if self.num_views!=2 or self.vision_pool_factor!=2:
                 raise ValueError('Selective pooling requires dual views and pool storage')
             self._pb_original_visual_positions=preserve_positions
+            self._pb_expanded_kv=expand_kv
             self.vision_seq_enc=visual_tokens
             self.encoder_seq_len=visual_tokens+self.max_prompt_len
             self.total_kv=self.encoder_seq_len+self.chunk_size
@@ -44,6 +55,9 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
                 from flash_rt.core.cuda_buffer import CudaBuffer
                 self._selector_original_rope=CudaBuffer.from_numpy(np.ascontiguousarray(
                     self._rope_table_np[:512+self.max_prompt_len]))
+            if expand_kv:
+                self._expanded_qkv=torch.empty(512+self.max_prompt_len,2560,device='cuda',dtype=torch.bfloat16)
+                self._expanded_queries=torch.empty(512+self.max_prompt_len,2048,device='cuda',dtype=torch.bfloat16)
 
         def record_infer_graph(self,external_stream_int=None):
             self._prepare_selector()

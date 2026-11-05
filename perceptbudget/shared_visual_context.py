@@ -71,7 +71,7 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
-def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False):
+def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False,expand_kv=False):
     if preserve_positions and fast_kind not in ('selective320','selective464'):
         raise ValueError('Original positions require dual selected camera tokens')
     if no_state and fast_kind not in ('pool2_agent','selective320','selective464'):
@@ -90,7 +90,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
         if fast_kind in ('selective416','selective320','selective464'):
             from perceptbudget.selective_pipeline import pipeline_type as selective_type
             selected_type=selective_type(Pi05Pipeline,visual_tokens=int(fast_kind.removeprefix('selective')),
-                preserve_positions=preserve_positions)
+                preserve_positions=preserve_positions,expand_kv=expand_kv)
         else:selected_type=pipeline_type(Pi05Pipeline,'agent')
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
                            pipeline_type=selected_type,exact_no_state=no_state,
@@ -111,7 +111,11 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
     clone._frame_count = 0
     clone._flashrt_subgraph_frontend_hooks = list(getattr(full, '_flashrt_subgraph_frontend_hooks', ()))
     from flash_rt.frontends.torch.pi05_rtx import RtxFlashAttnBackend, ENC_L
-    clone.attn_backend = RtxFlashAttnBackend(num_views=clone.num_views,
+    backend=RtxFlashAttnBackend
+    if expand_kv:
+        from perceptbudget.expanded_context import backend_type
+        backend=backend_type(backend,int(fast_kind.removeprefix('selective')))
+    clone.attn_backend = backend(num_views=clone.num_views,
         encoder_seq_max=256*clone.num_views+clone.max_prompt_len, chunk_size=clone.chunk_size, num_encoder_layers=ENC_L)
     return clone
 
