@@ -48,6 +48,8 @@
 
 # 项目协作与当前状态
 
+> 2026-11-05最新：原位置编号Fast已扩完seed7/init0四套task0/3/6共12项，9/12成功，Spatial3/3、Object3/3、Goal1/3、Long2/3；超时Goal0/6及Long0，0欠载。Fast外部64＋腕部256、state启用、原RoPE及专家偏移192、Full/Fast直接交替，H50/N5/BF16原RTC/调度不改。source5be6d71；数据来自父6424ac53、a0c9c3f7、c9b72d0c、441c0ae0、3bc56ed6，后两次RAM仅续缺项，含此前单例共5次加载。最后Long6成功213步，所有GPU服务已退出，不自动重跑/扩seed17。总表在M4/20261105T134834.166051Z-acceptance-m3-a0c9c3f7/expanded12_results.json/md/csv。用户之前已明确停止seed17全40（7项4成功3失败），保持停止。当前新版本仍实验开关；不宣称已达到Full稳定性/总体节能目标。用户周报不动，不做多余备份或hash验证。
+
 > 2026-11-05最新：用户已停止seed17全40（完成7项4成功3超时，原结果保留，不自动续）。随后授权检查池化位置，原连续编号前后一致并无错位；新增实验开关保留原位置，并按Fast确切prefix集合给动作专家加192，Full不变。pool2_agent外部64＋腕部256＋state、原RTC/N5/H50、直接交替，seed7/init0 Object0单次已成功154步/9.507s/0欠载；此前同配置连续编号280步超时。父M4/20261105T134010.066356Z-acceptance-m3-6424ac53 completed，child811274b8，系统/频率/恢复通过。本轮只小测一次，尚未扩样，不将单例归因推广全部失败。未改FlashRT、无新备份分支/额外hash检查，用户周报脏改不动。
 
 > 2026-11-05最新后续：用户要求Fast腕部完整256、外部池化64、无state，已用现成pool2_agent模式直接与Full交替测完相同seed7/init0 Sp0/Object0/Long0三任务6回合，一模型无报错/RAM保护/欠载，恢复1173/3199/1497.6。父M4/20261105T123601.494699Z-acceptance-m3-9b7b4e3d completed；源f7882c7。Full3/3、交替1/3：Sp76/78均成功、Object136成功/280超时、Long248成功/520超时。全尝试任务及在途推理360.973/581.641J，Sp省6.41%；不得据此宣称质量已稳定。中频Full/Fast651.7/482.5ms，高487.7/339.0ms；实际记录核对Fast为pool2_agent、agent池化、双相机320且state=False，Full512/state=True。只复用旧320无state成本作相同token形状的时延初值，未冒充外部64模式专属能量测量，交替不按成本选模式，结果J均为真实整任务测量。未改FlashRT，未做额外哈希核验/备份分支；后续等待用户指示，不自动扩任务或恢复packed改造。

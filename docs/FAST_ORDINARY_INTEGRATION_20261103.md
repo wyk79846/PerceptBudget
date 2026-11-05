@@ -174,3 +174,10 @@ Full3/3、交替1/3，尚未改善这三任务的成功数。Spatial共同成功
 seed7/init0，保留state、外部64＋腕部256、Full/Fast交替：之前连续编号280步超时，本次原编号154步成功、9.507s、0欠载。单例出现改善，尚未扩大测试。
 
 [原始结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T134010.066356Z-acceptance-m3-6424ac53/summary.json>)。
+
+
+## 2026-11-05 原位置编号扩大到12任务
+
+seed7/init0，四套各task0/3/6，同一320token（外部64＋腕部256）、state开启、原位置及动作偏移192、Full/Fast直接交替。12项全部有有效结果，9成功：Spatial3/3、Object3/3、Goal1/3、Long2/3；失败Goal0/6、Long0均超时。Long6补测成功213步；既有Object0成功154步，其余已完成项均未重跑。两次准备阶段内存中断不计作任务失败，五次加载含最早Object0单例，全部原始记录保留。未修改算法或阈值、未重启用户已停止的seed17测试。
+
+[完整12项报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T134834.166051Z-acceptance-m3-a0c9c3f7/expanded12_results.md>)。本批为开发样本，不将不同任务组的历史成功率或能量直接当同期对照。
