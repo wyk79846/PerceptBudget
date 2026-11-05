@@ -114,6 +114,7 @@ class ThreeFullRuntime(LowFullRuntime):
         super().__init__(config)
         self.ordinary_fast=bool(config.get('m3_ordinary_fast'))
         self.ordinary_costs=config.get('ordinary_fast_costs')
+        self.ordinary_policy=config.get('m3_ordinary_fast_policy','ordinary_fast_same_full_schedule_v1')
         self.ordinary_previous='Full'
         self.fast_delays={}
         self.full_energy=bool(config.get('m3_full_energy'))
@@ -215,7 +216,8 @@ class ThreeFullRuntime(LowFullRuntime):
             from perceptbudget.ordinary_fast import choose
             d['m3_fast_formula']=choose(d,step=step,previous_mode=self.ordinary_previous,
                 phases=self.chunks[item[1]].get('low_full_phases',[]),events=self.events,
-                costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']])
+                costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']],
+                policy=self.ordinary_policy,match_steps=self.events_config.match_steps)
         self.plan=d
         return d
 
@@ -242,7 +244,8 @@ class ThreeFullRuntime(LowFullRuntime):
             from perceptbudget.ordinary_fast import choose
             decision['m3_fast_formula']=choose(decision,step=self.ordinary_step,
                 previous_mode=self.ordinary_previous,phases=self.ordinary_phases,events=self.events,
-                costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']])
+                costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']],
+                policy=self.ordinary_policy,match_steps=self.events_config.match_steps)
             self.plan=decision
         return decision
 

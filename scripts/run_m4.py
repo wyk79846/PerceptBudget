@@ -63,6 +63,8 @@ def main():
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
     args.simplified_refresh=args.simplified_refresh or args.energy_refresh
+    # Fast needs the request snapshot, never extra images while it computes.
+    args.request_only_images=args.request_only_images or args.ordinary_fast
     if args.all_tasks and args.acceptance_group not in ('m3','q30'):
         parser.error('--all-tasks requires --acceptance-group m3 or q30')
     if args.reuse_prefix_graphs and args.acceptance_group not in ('m3','q30'):
@@ -71,8 +73,8 @@ def main():
         parser.error('Task indices above11 require --all-tasks')
     if args.idle_reference_ms!=200 and (args.idle_min_ms is None or not args.full_frequency_pair):
         parser.error('--idle-reference-ms requires --idle-min-ms and --full-frequency-pair')
-    if args.idle_min_ms is not None and (not args.three_frequency or args.acceptance_group!='m3' or args.full_energy or args.ordinary_fast or args.continue_overhead_pair):
-        parser.error('--idle-min-ms requires three-frequency M3, without energy-selection, Fast or capture comparisons')
+    if args.idle_min_ms is not None and (not args.three_frequency or args.acceptance_group!='m3' or args.full_energy or args.continue_overhead_pair):
+        parser.error('--idle-min-ms requires three-frequency M3, without energy-selection or capture comparisons')
     if args.full_energy and (not args.three_frequency or args.acceptance_group!='m3' or args.ordinary_fast or args.continue_overhead_pair):
         parser.error('--full-energy requires three-frequency M3, without Fast or capture changes')
     if args.ordinary_fast and (not args.three_frequency or args.acceptance_group!='m3' or args.full_frequency_pair or args.continue_overhead_pair):
@@ -106,7 +108,7 @@ def main():
             parser.error('Reference must contain completed Full frequency pairs')
     if args.low_full and args.acceptance_group!='m3':parser.error('--low-full requires M3 without Fast')
     if args.phase_refresh and args.acceptance_group!='m3':parser.error('--phase-refresh requires M3')
-    if args.simplified_refresh and (args.acceptance_group!='m3' or args.ordinary_fast or args.first_refresh_step is not None):
+    if args.simplified_refresh and (args.acceptance_group!='m3' or args.first_refresh_step is not None):
         parser.error('--simplified-refresh requires Full-only M3 without --first-refresh-step')
     if args.first_refresh_step is not None and args.acceptance_group!='m3':parser.error('--first-refresh-step requires M3')
     if args.critical_wait_phases and not args.critical_wait:parser.error('--critical-wait-phases requires --critical-wait')
@@ -198,9 +200,11 @@ def main():
         cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
     if args.ordinary_fast:
-        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY
+        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY,FEEDBACK_POLICY
+        policy=FEEDBACK_POLICY if args.energy_refresh else POLICY
         cfg.update(m3_ordinary_fast=True,m3_ordinary_fast_context=True,m3_ordinary_fast_pair=args.ordinary_fast_pair,
-            m2_fast_no_state=True,m4_fast_prompt_capacity=20,m4_policy_revision=POLICY)
+            m2_fast_no_state=True,m4_fast_prompt_capacity=32 if args.energy_refresh else 20,m4_policy_revision=policy,
+            m3_ordinary_fast_policy=policy)
         cfg['ordinary_fast_costs']=fast_costs(m4['ordinary_fast_cost_source'],cfg)
     if args.full_energy:
         from perceptbudget.full_energy import load_costs as energy_costs,POLICY as ENERGY_POLICY
@@ -276,7 +280,7 @@ def main():
         if args.full_frequency_pair or args.ordinary_fast_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
-                groups=(f'full_idle{args.idle_reference_ms}','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else ('full_three_strict','full_three_start25') if args.start_floor_ms else
+                groups=('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else (f'full_idle{args.idle_reference_ms}','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('full_three_strict','full_three_start25') if args.start_floor_ms else
                        ('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'

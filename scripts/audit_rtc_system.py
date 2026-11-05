@@ -271,6 +271,16 @@ def audit(run):
               and cfg.get('m3_action_events_enabled')==expected_events and cfg.get('m3_merge_slowdown_steps') is None)
         check('formal_request_watchdog',cfg.get('m3_request_timeout_seconds')==3. and bool(cfg.get('m3_watchdog_path')))
     check('sequential_control_steps',[r['step'] for r in controls]==list(range(len(controls))))
+    if cfg.get('m3_ordinary_fast_policy')=='ordinary_fast_feedback_buffer_v2':
+        check('fast_request_only_capture_enabled',cfg.get('m4_lean_continue') is True
+              and cfg.get('m4_request_only_images') is True)
+        for row in controls:
+            active=row.get('inference_active_at_action')
+            source=by_id.get(row.get('inference_prediction_id_at_action')) if active else None
+            mode=source.get('m3_fast_choice',{}).get('mode','Full') if source else None
+            check('fast_inflight_mode_provenance',row.get('inference_mode_at_action')==mode
+                  and (not active or source is not None),row['step'])
+            check('fast_no_unused_inflight_images',row.get('camera_render_skipped') is True,row['step'])
     check('unique_request_ids',len(by_id)==len(requests))
     check('unique_commit_ids',len(committed)==len(commits))
     check('single_bootstrap',requests[0]['observation_step']==0 and commits[0]['commit_step']==0)
@@ -357,6 +367,14 @@ def audit(run):
                         if source['observation_step']+e['offset']>=origin and
                         (source['observation_step']+e['offset']-origin)*decision['estimated_control_period_seconds']<=decision['service_seconds']+decision['margin_seconds']]
                     ordinary=decision['reason']=='buffer' and not active and not near
+                    if cfg.get('m3_ordinary_fast_policy')=='ordinary_fast_feedback_buffer_v2':
+                        raw=decision['critical_forecast']['result']['events']
+                        near=[dict(e,prediction_id=previous['prediction_id']) for e in raw
+                              if e['kind'].startswith('gripper_') and abs(e['target_step']-origin)<=ec.match_steps]
+                        ordinary=decision['reason']=='buffer' and not near
+                        check('ordinary_feedback_policy',f['policy']==cfg['m3_ordinary_fast_policy']
+                              and cfg.get('m3_feedback_policy')=='overlap_pacing_v2'
+                              and f.get('gripper_margin_steps')==ec.match_steps,pid)
                     check('ordinary_phase_gate',f['ordinary']==ordinary and f['active_phases']==active,pid)
                     check('ordinary_previous_mode',f['previous_mode']==prior,pid)
                     check('ordinary_full_schedule_preserved',all(decision[k]==v for k,v in f['full_schedule'].items()),pid)

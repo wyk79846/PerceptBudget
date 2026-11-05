@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 POLICY = 'ordinary_fast_same_full_schedule_v1'
+FEEDBACK_POLICY = 'ordinary_fast_feedback_buffer_v2'
 
 
 def load_costs(path, config):
@@ -24,7 +25,8 @@ def load_costs(path, config):
     return dict(costs,source=str(path))
 
 
-def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay):
+def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
+           policy=POLICY, match_steps=5):
     """The same clock preparation and initial waiting cancel between candidates.
 
     Compare absolute request energy plus the remaining hold on the SAME window.
@@ -37,6 +39,16 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay):
           (e['target_step']-step)*period<=decision['service_seconds']+decision['margin_seconds']]
     active=[p for p in phases if p['start_step']<=step<p['stop_step']]
     ordinary=decision['reason']=='buffer' and not near and not active
+    if policy==FEEDBACK_POLICY:
+        # The energy controller has already removed predictable motion cues.
+        # Do not resurrect them through the legacy raw phase detector. Keep a
+        # local gripper margin; every unhandled future key still chooses Full
+        # through the unchanged action-event deadline.
+        near=[e for e in events if e['kind'].startswith('gripper_')
+              and abs(e['target_step']-step)<=match_steps]
+        ordinary=decision['reason']=='buffer' and not near
+    elif policy!=POLICY:
+        raise ValueError('Unknown ordinary Fast policy')
     window=max(0.,decision['deadline']-decision['margin_seconds']-
                max(decision['decision_monotonic'],decision['latest_start']))
     rows=[]
@@ -52,13 +64,14 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay):
              rows[1]['service_mean_seconds']<=rows[0]['service_mean_seconds'])
     saving=rows[0]['comparable_window_energy_j']-rows[1]['comparable_window_energy_j']
     selected='Fast' if allowed and saving>0 else 'Full'
-    return dict(policy=POLICY,mode=selected,
+    return dict(policy=policy,mode=selected,
         reason='ordinary_cheaper_fast' if selected=='Fast' else
                'full_after_fast' if previous_mode=='Fast' else
                'full_key_stage' if not ordinary else 'full_cost_or_timing',
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,
         active_phases=active,near_events=near,fast_delay_steps=fast_delay,
         profile=profile,window_seconds=window,candidates=rows,
+        gripper_margin_steps=match_steps if policy==FEEDBACK_POLICY else None,
         estimated_saving_j=saving,cost_source=costs.get('source'),
         shared_preparation='Same start and selected frequency; common preparation energy cancels',
         hold_scope='Measured fixed-input hold power; ranking prior, task energy measured separately',

@@ -27,8 +27,8 @@ def frequency_pair_views(config, task_index):
     if config.get('m4_request_capture_pair'):
         labels=('inflight_images','request_images')
         return labels if task_index%2==0 else labels[::-1]
-    labels=((f"full_idle{config.get('m3_idle_reference_ms',200)}",'full_idle_candidate') if config.get('m3_idle_min_ms') is not None else
-            ('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
+    labels=(('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
+            (f"full_idle{config.get('m3_idle_reference_ms',200)}",'full_idle_candidate') if config.get('m3_idle_min_ms') is not None else
             ('full_three_medium','full_three_energy') if config.get('m3_full_energy') else
             ('full_capture','lean_continue') if config.get('m4_continue_overhead_pair') else
             ('full_three_strict','full_three_start25') if config.get('m3_start_floor_ms') else

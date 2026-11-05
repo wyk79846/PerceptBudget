@@ -735,6 +735,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             action_start = time.monotonic()
             planned_action = action.copy()
             inference_active_at_action = future is not None
+            inference_prediction_id_at_action=(current_request['prediction_id'] if inference_active_at_action else None)
+            inference_mode_at_action=(current_request.get('m3_fast_choice',{}).get('mode','Full')
+                                      if inference_active_at_action else None)
             arm_gain = pending_arm_gain if future is not None else 1.0
             action = action.copy()
             action[:6] *= arm_gain
@@ -770,6 +773,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'queue_after_step_actions': buffer_count(queue, step + 1),
                 'inference_active': future is not None,
                 'inference_active_at_action': inference_active_at_action,
+                'inference_prediction_id_at_action': inference_prediction_id_at_action,
+                'inference_mode_at_action': inference_mode_at_action,
                 **({'camera_render_skipped': capture.skips_render(inference_active_at_action)} if capture is not None else {}),
                 'deadline_overrun_seconds': overrun,
                 'success': success,
