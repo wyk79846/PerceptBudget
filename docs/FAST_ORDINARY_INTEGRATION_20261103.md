@@ -150,3 +150,18 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 Full3/3、交替1/3；Fast中频481.3ms、高频352.7ms，相应Full654.5/487.8ms。所有尝试的任务与在途推理能量合计361.086/642.667J；Spatial共同成功省2.29%，不能掩盖另两项超时。实测22次Fast，确认实际state关闭、320token；Full保持state及512token。本批说明速度提升，但质量尚不稳定。未使用或保留前轮新增的packed注意力原型，未修改FlashRT。
 
 [原始配对表](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T122153.255435Z-acceptance-m3-d5fcb279/full_frequency_pairs.json>)。代码7814eb6。
+
+
+## 2026-11-05 腕部256＋外部64、不带state的直接交替
+
+用户指定的原生pool2_agent模式，外部图像做2×2平均池化到64token，腕部256token完整保留；Fast无state，Full保留state。沿用同一三个任务、seed7/init0、RTC、刷新及频率规则，一模型6回合完成，无欠载、报错或内存保护。
+
+|任务|全Full|交替|全Full J|交替J|
+|---|---|---|---:|---:|
+|Spatial0|成功76步|成功78步|67.309|62.994|
+|Object0|成功136步|超时280步|102.152|187.043|
+|Long0|成功248步|超时520步|191.511|331.604|
+
+Full3/3、交替1/3，尚未改善这三任务的成功数。Spatial共同成功省6.41%；所有尝试含超时的任务及在途推理360.973/581.641J。Full/Fast中频中位651.7/482.5ms，高频487.7/339.0ms。旧双图320无state成本只作同token形状的时延初值，在配置中明确标注geometry proxy；纯交替不以该成本选模式，表中J均为本批真实任务测量。
+
+[本批原始配对结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T123601.494699Z-acceptance-m3-9b7b4e3d/full_frequency_pairs.json>)；代码f7882c7。
