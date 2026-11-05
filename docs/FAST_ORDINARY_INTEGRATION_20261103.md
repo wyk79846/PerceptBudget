@@ -58,3 +58,17 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 [配对结果CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T073603.551457Z-acceptance-m3-11d83a4d/full_frequency_pairs.csv>) · [逐例审查与原始运行链接](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T073603.551457Z-acceptance-m3-11d83a4d/postrun_review.json>) · [批次记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261103T073603.551457Z-acceptance-m3-11d83a4d/summary.json>)。
 
 代码：[模式选择](../perceptbudget/ordinary_fast.py)、[原三频调度后的接入点](../perceptbudget/three_frequency.py)、[独立记录审查](../scripts/audit_rtc_system.py)。修改前保存于 Git 分支 `archive/before-three-frequency-ordinary-fast-20261103`。
+
+
+## 2026-11-05 原坐标464开发验证与冻结
+
+开发仅用seed7/init0，Long0、Object0、Spatial0/3、Goal0各做Full/Fast配对。原坐标选择器保留图像和文本坐标，并为专家匹配动作坐标；普通缓冲刷新可用Fast，已有夹爪锚点的有限抓放区间仍用Full，禁止连续Fast。Full的刷新计划、选频、H50/N5/BF16/state200及作者RTC采样体不变。
+
+- 原坐标v2为Full4/5、Fast3/5，Long失败；不能把它称为已通过。v3开发对照两组均4/5，Long均成功（225/226步），Goal均超时300步。
+- 新v3一模型连续完成10回合，零断供。全部任务及在途推理能量Full601.528J、Fast596.596J，省0.820%；时间49.890/50.682s，增加1.59%。仅小样本，不外推40任务收益。
+- 实际8次Fast；中频Full/Fast引导推理中位652.197/528.666ms，接续中位13/11步。Fast在途84步均跳过无用成像；每次新请求补采当前双图。严格配对起点、系统/频率/恢复审核及原始功率复算通过。
+- 资源清理在原hard-reset边界完成GL删除并退还CPU空闲页，不改变reset或控制；Long/Object各三次20步重放的物理/state/图像/接触完全相同。模型常驻开发批也未触发RAM保护。仍保留900/768MiB保护线与异常证据。
+
+证据：[开发复算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054640.548752Z-fast-phase-dev-r2-e5670d46/review.json>)；[原始父目录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054715.837417Z-acceptance-m3-a62be153/recording.json>)；[资源释放重放](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054305.690913Z-reset-release-replay-0a2e1b01/summary.json>)。68相关CPU检查通过，FlashRT未修改。
+
+下一步冻结当前源与成本表后做seed17/init1全40。保留原Full+Continue的35/40和q30的33/40比较，所有失败与在途推理能量均计入；不按验收结果改阈值或筛任务。
