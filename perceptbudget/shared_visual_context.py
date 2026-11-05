@@ -94,7 +94,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
         else:selected_type=pipeline_type(Pi05Pipeline,'agent')
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
                            pipeline_type=selected_type,exact_no_state=no_state,
-                           stateless_capacity=no_state_prompt_capacity)
+                           stateless_capacity=no_state_prompt_capacity if no_state else None)
         clone=kind.__new__(kind)
         clone.__dict__.update(full.__dict__)
     # Separate dictionaries so context-only cleanup cannot mutate the peer.

@@ -6,6 +6,7 @@ from pathlib import Path
 POLICY = 'ordinary_fast_same_full_schedule_v1'
 FEEDBACK_POLICY_V2 = 'ordinary_fast_feedback_buffer_v2'
 FEEDBACK_POLICY = 'ordinary_fast_feedback_buffer_v3'
+ALTERNATING_POLICY = 'full_fast_alternating_state_v1'
 
 
 def load_costs(path, config):
@@ -20,7 +21,8 @@ def load_costs(path, config):
     mode=config.get('m3_ordinary_fast_visual_mode','selective320')
     if mode not in ('selective320','selective464','wrist'):
         raise ValueError('Unsupported ordinary Fast input mode')
-    expected=dict(visual_mode=mode,visual_tokens=256 if mode=='wrist' else int(mode[9:]),state_enabled=mode=='wrist')
+    expected=dict(visual_mode=mode,visual_tokens=256 if mode=='wrist' else int(mode[9:]),
+        state_enabled=not config.get('m2_fast_no_state',mode!='wrist'))
     if any(contract.get(k)!=v for k,v in expected.items()):
         raise ValueError('Fast cost input geometry/state mismatch')
     positions='original_camera_and_text_coordinates_v1' if config.get('m3_ordinary_fast_positions') else 'contiguous_v1'
@@ -65,7 +67,7 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
             protected=[p for p in active if any(a['kind'].startswith('gripper_')
                 for a in p.get('anchors',[]))]
         ordinary=decision['reason']=='buffer' and not near and not protected
-    elif policy!=POLICY:
+    elif policy not in (POLICY,ALTERNATING_POLICY):
         raise ValueError('Unknown ordinary Fast policy')
     window=max(0.,decision['deadline']-decision['margin_seconds']-
                max(decision['decision_monotonic'],decision['latest_start']))
@@ -82,8 +84,13 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
              rows[1]['service_mean_seconds']<=rows[0]['service_mean_seconds'])
     saving=rows[0]['comparable_window_energy_j']-rows[1]['comparable_window_energy_j']
     selected='Fast' if allowed and saving>0 else 'Full'
+    if policy==ALTERNATING_POLICY:
+        # Diagnostic requested by the user: every other refresh uses Fast.
+        # No phase, quality, energy or timing admission gate changes the order.
+        # Scheduling and clock selection still use the complete Full plan.
+        selected='Fast' if previous_mode=='Full' else 'Full'
     return dict(policy=policy,mode=selected,
-        reason='ordinary_cheaper_fast' if selected=='Fast' else
+        reason='alternating_refresh' if policy==ALTERNATING_POLICY else 'ordinary_cheaper_fast' if selected=='Fast' else
                'full_after_fast' if previous_mode=='Fast' else
                'full_key_stage' if not ordinary else 'full_cost_or_timing',
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,

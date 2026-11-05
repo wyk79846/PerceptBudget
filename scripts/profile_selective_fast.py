@@ -228,6 +228,7 @@ def main():
     parser.add_argument('--visual-tokens',type=int,choices=(320,464),default=320,help='Dual-camera selective token budget')
     parser.add_argument('--preserve-positions',action='store_true',help='Measure selective input with original camera/text/action positions')
     parser.add_argument('--wrist-state',action='store_true',help='Fixed-input clock costs for one fresh wrist view with latest state; no pooling')
+    parser.add_argument('--fast-state',action='store_true',help='Keep latest state with dual-camera selective Fast during clock-cost measurement')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
@@ -239,6 +240,9 @@ def main():
     if args.preserve_positions and not (args.clock_costs or args.author_audit_only):parser.error('Original positions use clock-cost or author-audit mode')
     if args.wrist_state and (not args.clock_costs or args.preserve_positions or args.visual_tokens!=320):
         parser.error('--wrist-state requires --clock-costs without selective geometry overrides')
+    if args.fast_state and (not args.clock_costs or args.wrist_state or args.preserve_positions):
+        parser.error('--fast-state requires dual-camera clock costs without position overrides')
+    stateful=args.wrist_state or args.fast_state
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically as write
@@ -250,6 +254,7 @@ def main():
         m3_ordinary_fast_visual_mode='selective'+str(args.visual_tokens),m3_ordinary_fast_positions=args.preserve_positions)
     if args.wrist_state:
         cfg.update(m2_visual_fast_mode='wrist',m2_fast_no_state=False,mapped_prompt_embedding=True)
+    if args.fast_state:cfg.update(m2_fast_no_state=False,mapped_prompt_embedding=True)
     with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         run=create_run(cfg,'M4','dual-selective-fast',repo_root=ROOT)
@@ -257,7 +262,7 @@ def main():
         print('run_dir='+str(run),flush=True)
         result=dict(status='running',model_loads=0,clocks_changed=False,source=str(args.source_run),
             cases=[],power_blocks=[],probe_arguments=dict(request_ids=args.request_ids,block_requests=args.block_requests,
-                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache),author_audit_only=args.author_audit_only,wrist_state=args.wrist_state),
+                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache),author_audit_only=args.author_audit_only,wrist_state=args.wrist_state,fast_state=args.fast_state),
             scope=('Paired fixedq30 task attempts; Full versus alternating Full/DualFast, high clocks, no production policy change'
                 if args.rollout_pair else 'Fixed-input comparison only; no task execution or energy-saving claim for closed-loop deployment'))
         adapter=monitor=None
@@ -308,13 +313,13 @@ def main():
             fast_kind='wrist' if args.wrist_state else 'selective'+str(args.visual_tokens)
             peers=[('DualFast',fast_kind)] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast',fast_kind)]
             for label,kind in peers:
-                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=not args.wrist_state,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20),preserve_positions=args.preserve_positions)
+                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=not stateful,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20),preserve_positions=args.preserve_positions)
                 peer=VLAModel(frontend,'torch');enable(peer)
                 snap=(dict(records[0]['snapshot'],images=[records[0]['snapshot']['images'][1]]) if args.wrist_state else
-                      dict(records[0]['snapshot'],state=None))
+                      dict(records[0]['snapshot'],state=records[0]['snapshot']['state'] if stateful else None))
                 result.setdefault('fast_context_preparation',{})[label]=prepare_context_only(peer,snap,task['instruction'],torch)
                 models[label]=peer;mem(label+'_ready')
-            result['geometry']={label:dict(visual_tokens=m._pipe.pipeline.vision_seq_enc,state=label=='Full' or args.wrist_state,views=m._pipe.pipeline.num_views,
+            result['geometry']={label:dict(visual_tokens=m._pipe.pipeline.vision_seq_enc,state=label=='Full' or stateful,views=m._pipe.pipeline.num_views,
                 camera_tokens=[256,256] if label=='Full' else [0,256] if args.wrist_state else [64,256] if label=='OldFast' else [args.visual_tokens//2]*2) for label,m in models.items()}
             for m in models.values():release_unused_native_expert(m,torch)
             mem('native_experts_released')
@@ -343,7 +348,7 @@ def main():
             def context(label,record):
                 mdl=models[label];pipe=mdl._pipe;pl=pipe.pipeline
                 with torch.cuda.stream(pipe._graph_torch_stream):
-                    mdl.set_prompt(task['instruction'],state=record['snapshot']['state'] if label=='Full' or args.wrist_state else None)
+                    mdl.set_prompt(task['instruction'],state=record['snapshot']['state'] if label=='Full' or stateful else None)
                     images=record['snapshot']['images']
                     pipe._fill_img_buf({'images':[images[1]] if args.wrist_state and label!='Full' else images})
                     pipe._copy_tensor_to_pipeline_buf_stream(pipe._img_buf,pl.input_images_buf,pipe._graph_torch_stream.cuda_stream)
@@ -366,7 +371,7 @@ def main():
                 raw,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'])
                 return raw.detach().cpu().numpy().copy()
             if args.clock_costs:
-                if args.wrist_state:
+                if stateful:
                     result['fixed_input_action_difference']=[]
                     for record in records:
                         full_raw=infer('Full',record);fast_raw=infer('DualFast',record)
@@ -378,7 +383,7 @@ def main():
                             next10_gripper_max_abs=float(np.max(np.abs(diff[:,6]))),
                             full_vs_recorded_max_abs=float(np.max(np.abs(full_raw-np.asarray(record['request']['actions_raw']))))))
                     save()
-                if args.preserve_positions or args.wrist_state:
+                if args.preserve_positions or stateful:
                     from perceptbudget.rtc_author_source import sample_author_source
                     result['positioned_author_audit']=[]
                     record=records[0];s=record['request']['rtc_solver_inputs']
@@ -391,7 +396,8 @@ def main():
                         error=float(np.max(np.abs(raw-author.detach().cpu().numpy())))
                         result['positioned_author_audit'].append(dict(mode=label,max_abs=error,author_source_sha256=sha))
                         if error>1e-4:raise RuntimeError('Positioned RTC graph differs from author sampling loop')
-                contract=dict(visual_mode='wrist',visual_tokens=256,state_enabled=True,position_policy='contiguous_v1') if args.wrist_state else None
+                contract=dict(visual_mode=fast_kind,visual_tokens=256 if args.wrist_state else args.visual_tokens,
+                    state_enabled=True,position_policy='contiguous_v1') if stateful else None
                 result['clock_costs']=clock_costs(infer,records,torch,run,write,visual_tokens=args.visual_tokens,preserve_positions=args.preserve_positions,input_contract=contract)
                 result.update(status='completed',clocks_changed=True,production_default_changed=False)
                 return 0

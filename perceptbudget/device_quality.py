@@ -554,9 +554,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    if visual_fast_mode=='selective416' or (visual_fast_mode=='wrist' and not cfg.get('m2_fast_no_state',False)):
+                    if not cfg.get('m2_fast_no_state',False) and visual_fast_mode in ('selective416','selective464','wrist'):
                         full_lengths=list(lengths)
-                        offset=96 if visual_fast_mode=='selective416' else 256
+                        from perceptbudget.rtc_visual_alternation import visual_geometry
+                        offset=512-visual_geometry(visual_fast_mode)['visual_tokens']
                         fast_lengths=[n-offset for n in full_lengths]
                         if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-offset:
                             raise RuntimeError('Stateful Fast changed prompt/state tokenization')

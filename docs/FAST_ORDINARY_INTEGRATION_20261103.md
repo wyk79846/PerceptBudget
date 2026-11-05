@@ -104,3 +104,34 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 每模式每挡6个样本，频率读回与恢复通过；速度收益有限，实测同窗口没有净节能，不扩大闭环。缓存第0步视觉特征、在第33步刷新腕部的一帧动作偏差也较大，但单帧不作为成功率结论。代码归档`archive/camera-feature-cache-probe-20261105`（6a6cbe0），主干移除未采用原型。
 
 [原始记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T090015.842587Z-camera-feature-fast-45d9c441/summary.json>) · [能量复算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T090015.842587Z-camera-feature-fast-45d9c441/common_window_review.json>)。继续保留Full＋Continue基线35/40；Fast稳定验收仍未完成。
+
+
+## 2026-11-05 保留state与简单交替对照
+
+用户确认先比较全Full、Full/腕部Fast交替、Full/双图温和池化Fast交替。新增显式`--fast-alternate`：首次Full，后续每次刷新严格轮流Fast和Full，不加入阶段准入或能量门槛。刷新和选频仍沿用同一套Full规则，RTC、H50/N5/BF16、完整state不变；Continue仍只执行队列。生产默认与原35/40基线不变，FlashRT源码未修改。76相关检查通过。
+
+腕部单图固定输入成本23f6cd34：高频Full465.32/Fast334.03ms、10.931/7.961J，中640.67/467.15ms、10.036/7.271J；相同时间窗补计Continue后每次净省1.352/1.248J。原五任务配对62f13d36在首个Long0首次推理时触发RAM保护，零完整回合，不报告成功率。此次先从Spatial0开始，按原900/768MiB保护执行，另检查allocator峰值；不能把小场景成功当作长场景内存问题已修复。
+
+保留state的双图464token成本测量f16d841b完成：两摄像头各232token，合并各8/64块。每挡每模式6样本，作者采样体与优化图差0、三个Full与原记录差0。
+
+|频率|Full ms|池化Fast ms|Full J/次|Fast J/次|同时间窗净省J/次|
+|---|---:|---:|---:|---:|---:|
+|高频|472.19|457.04|11.060|11.255|-0.368|
+|中频|641.58|628.50|10.055|10.173|-0.233|
+
+本轮只快2–3%，单次和同窗能量均未下降；仍按约定补同任务交替质量对照，不将它称作有效节能方案。固定输入的夹爪动作也可能变化，不能据此推断闭环成功率。此前27/34为另一版no-state464/v3结果，不能当作本轮stateful交替结果。
+
+[池化成本与作者对照](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T113126.685816Z-dual-selective-fast-f16d841b/summary.json>) · [原始成本表](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T113126.685816Z-dual-selective-fast-f16d841b/ordinary_fast_costs.json>)。
+
+首个Spatial0配对小测已完成，全部seed7/init0、保留state、真实RTC异步。每种Fast分别有本批全Full对照，两个进程的Full绝对能量不同，不能拿一组Full能量给另一组计算收益。
+
+|配对|组别|结果/步数|任务耗时s|任务与在途推理J|请求/其中Fast|
+|---|---|---:|---:|---:|---:|
+|腕部|全Full|成功/76|5.910|70.146|4/0|
+|腕部|Full/腕部交替|成功/79|6.092|77.001|5/2|
+|池化|全Full|成功/76|5.622|67.040|4/0|
+|池化|Full/双图464交替|成功/79|6.087|69.805|4/2|
+
+本例两种交替均能完成，能量分别增加9.77%和4.12%，尚未证明整任务节能。两对初始物理、双图、state、噪声及原始动作精确，系统/频率/恢复审核均通过，零断供。两种Fast分别9/19个在途控制步全部跳过成像。原腕部父记录因审查器仍检查旧普通阶段准入诊断而标invalid，原始状态与错误不修改；显式交替不依赖该诊断，已修正审查器并重查两个真实回合，独立序列Full/Fast/Full/Fast/Full、state与原RTC索引通过，无需重跑。
+
+[腕部原始数据与更正审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T113431.307509Z-acceptance-m3-ca08474a/corrected_auditor_review/review.json>) · [池化原始配对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T114451.857403Z-acceptance-m3-bd1c396b/full_frequency_pairs.json>)。以上只是一任务可行性，不作为总体成功率或长场景内存通过。

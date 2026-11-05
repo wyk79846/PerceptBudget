@@ -53,6 +53,30 @@ def test_idle_threshold_does_not_override_fast_pair_labels():
     assert frequency_pair_views(c,1)==('ordinary_fast','ordinary_full')
 
 
+def test_simple_alternation_keeps_order_even_at_key_phases():
+    from perceptbudget.ordinary_fast import ALTERNATING_POLICY
+    phase=dict(start_step=20,stop_step=40,anchors=[dict(kind='gripper_close',offset=4)])
+    d=decision();d['reason']='action_event'
+    args=dict(step=30,phases=[phase],events=[dict(kind='gripper_close',target_step=31)],
+        costs=ordinary_costs(),fast_delay=12,policy=ALTERNATING_POLICY)
+    before=dict(d)
+    assert choose(d,previous_mode='Full',**args)['mode']=='Fast'
+    assert choose(d,previous_mode='Fast',**args)['mode']=='Full'
+    assert d==before
+
+
+def test_alternating_pool_retains_current_state_in_real_context_inputs():
+    from perceptbudget.rtc_visual_alternation import configure_explicit_inputs,FreshViewRTCAdapter
+    cfg=dict(m3_ordinary_fast_context=True,m3_fast_alternation=True,
+        m3_ordinary_fast_visual_mode='selective464',m2_fast_no_state=True)
+    configure_explicit_inputs(cfg)
+    adapter=object.__new__(FreshViewRTCAdapter);adapter.config=cfg
+    snapshot=dict(images=[object(),object()],state=object())
+    result=adapter.context_inputs(snapshot,'selective464')
+    assert cfg['m2_fast_no_state'] is False
+    assert result['state'] is snapshot['state'] and result['images']==snapshot['images']
+
+
 @pytest.mark.parametrize('tokens,positions',[(320,False),(464,False),(464,True)])
 def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(monkeypatch,capsys,tokens,positions):
     from scripts import run_m4

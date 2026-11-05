@@ -271,7 +271,7 @@ def audit(run):
               and cfg.get('m3_action_events_enabled')==expected_events and cfg.get('m3_merge_slowdown_steps') is None)
         check('formal_request_watchdog',cfg.get('m3_request_timeout_seconds')==3. and bool(cfg.get('m3_watchdog_path')))
     check('sequential_control_steps',[r['step'] for r in controls]==list(range(len(controls))))
-    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3'):
+    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','full_fast_alternating_state_v1'):
         check('fast_request_only_capture_enabled',cfg.get('m4_lean_continue') is True
               and cfg.get('m4_request_only_images') is True)
         for row in controls:
@@ -367,6 +367,10 @@ def audit(run):
                         if source['observation_step']+e['offset']>=origin and
                         (source['observation_step']+e['offset']-origin)*decision['estimated_control_period_seconds']<=decision['service_seconds']+decision['margin_seconds']]
                     ordinary=decision['reason']=='buffer' and not active and not near
+                    alternating=cfg.get('m3_ordinary_fast_policy')=='full_fast_alternating_state_v1'
+                    if alternating:
+                        check('alternating_stateful_policy',f['policy']=='full_fast_alternating_state_v1'
+                            and cfg.get('m3_fast_alternation') is True and cfg.get('m2_fast_no_state') is False,pid)
                     if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3'):
                         raw=decision['critical_forecast']['result']['events']
                         near=[dict(e,prediction_id=previous['prediction_id']) for e in raw
@@ -379,7 +383,11 @@ def audit(run):
                         check('ordinary_feedback_policy',f['policy']==cfg['m3_ordinary_fast_policy']
                               and cfg.get('m3_feedback_policy')=='overlap_pacing_v2'
                               and f.get('gripper_margin_steps')==ec.match_steps,pid)
-                    check('ordinary_phase_gate',f['ordinary']==ordinary and f['active_phases']==active,pid)
+                    # Alternation deliberately ignores ordinary-stage admission.
+                    # Reconstruct its order below, independently of that unused
+                    # legacy diagnostic (which can name a different old chunk).
+                    if not alternating:
+                        check('ordinary_phase_gate',f['ordinary']==ordinary and f['active_phases']==active,pid)
                     check('ordinary_previous_mode',f['previous_mode']==prior,pid)
                     check('ordinary_full_schedule_preserved',all(decision[k]==v for k,v in f['full_schedule'].items()),pid)
                     window=max(0.,decision['deadline']-decision['margin_seconds']-max(decision['decision_monotonic'],decision['latest_start']))
@@ -395,6 +403,7 @@ def audit(run):
                     allowed=(ordinary and prior!='Fast' and not decision['deadline_already_unreachable']
                         and estimate<=decision['rtc_delay_steps'] and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds'])
                     expected='Fast' if allowed and energy[1]<energy[0] else 'Full'
+                    if alternating:expected='Fast' if prior=='Full' else 'Full'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
