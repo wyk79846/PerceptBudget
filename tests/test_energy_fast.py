@@ -123,6 +123,7 @@ def test_mild_fast_uses_shorter_real_encoder_and_exact_geometry_bank(monkeypatch
         return dict(prepare_seconds=0.)
     monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
     adapter=object.__new__(FreshViewRTCAdapter)
+    adapter.position_policy=None
     adapter.config=dict(m2_visual_fast_mode='selective464',m2_visual_prefix_coverage=coverage,
         source_prefix_coverage_rule='h50_state8_tokenizer_bounds_v1')
     adapter.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))

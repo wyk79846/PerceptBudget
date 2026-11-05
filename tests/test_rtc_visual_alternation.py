@@ -25,6 +25,7 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
     monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
     adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
     adapter.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))
+    adapter.position_policy=None
     adapter.config={'source_prefix_coverage_rule':'h50_state8_tokenizer_bounds_v1'}
     adapter._step_bank_stream=object()
     full=list(range(650,667)); wrist=list(range(394,411))
@@ -173,6 +174,7 @@ def test_task_switch_keeps_separate_bounded_full_fast_banks(monkeypatch):
         return dict(passed=True,prepare_seconds=0.)
     monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
     a=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    a.position_policy=None
     a.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))
     a.config=dict(source_prefix_coverage_rule='h50_state8_tokenizer_bounds_v1',
                   m2_visual_fast_mode='pool2_agent')

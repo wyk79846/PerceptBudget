@@ -229,6 +229,7 @@ def main():
     parser.add_argument('--preserve-positions',action='store_true',help='Measure selective input with original camera/text/action positions')
     parser.add_argument('--wrist-state',action='store_true',help='Fixed-input clock costs for one fresh wrist view with latest state; no pooling')
     parser.add_argument('--fast-state',action='store_true',help='Keep latest state with dual-camera selective Fast during clock-cost measurement')
+    parser.add_argument('--pool-agent',action='store_true',help='Clock costs for external64 plus wrist256 Fast without state')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
@@ -242,6 +243,8 @@ def main():
         parser.error('--wrist-state requires --clock-costs without selective geometry overrides')
     if args.fast_state and (not args.clock_costs or args.wrist_state or args.preserve_positions):
         parser.error('--fast-state requires dual-camera clock costs without position overrides')
+    if args.pool_agent and (not args.clock_costs or args.wrist_state or args.fast_state or args.visual_tokens!=320):
+        parser.error('--pool-agent requires stateless320 clock costs')
     stateful=args.wrist_state or args.fast_state
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
@@ -252,6 +255,9 @@ def main():
         cfg.update(json.loads((args.source_run/'run.json').read_text())['config_snapshot'])
     cfg.update(m2_visual_fast_mode='selective'+str(args.visual_tokens),m2_fast_no_state=True,
         m3_ordinary_fast_visual_mode='selective'+str(args.visual_tokens),m3_ordinary_fast_positions=args.preserve_positions)
+    if args.pool_agent:
+        cfg.update(m2_visual_fast_mode='pool2_agent',m3_ordinary_fast_visual_mode='pool2_agent',
+            m4_fast_prompt_capacity=32,mapped_prompt_embedding=True)
     if args.wrist_state:
         cfg.update(m2_visual_fast_mode='wrist',m2_fast_no_state=False,mapped_prompt_embedding=True)
     if args.fast_state:cfg.update(m2_fast_no_state=False,mapped_prompt_embedding=True)
@@ -262,7 +268,7 @@ def main():
         print('run_dir='+str(run),flush=True)
         result=dict(status='running',model_loads=0,clocks_changed=False,source=str(args.source_run),
             cases=[],power_blocks=[],probe_arguments=dict(request_ids=args.request_ids,block_requests=args.block_requests,
-                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache),author_audit_only=args.author_audit_only,wrist_state=args.wrist_state,fast_state=args.fast_state),
+                rollout_only=args.rollout_only,rollout_tasks=args.rollout_tasks,environment_cache=str(args.environment_cache),author_audit_only=args.author_audit_only,wrist_state=args.wrist_state,fast_state=args.fast_state,pool_agent=args.pool_agent),
             scope=('Paired fixedq30 task attempts; Full versus alternating Full/DualFast, high clocks, no production policy change'
                 if args.rollout_pair else 'Fixed-input comparison only; no task execution or energy-saving claim for closed-loop deployment'))
         adapter=monitor=None
@@ -270,7 +276,7 @@ def main():
         save()
         try:
             torch,_=base._check_cuda_and_native(cfg);torch.use_deterministic_algorithms(True)
-            result['kernel_checks']=[] if args.wrist_state else kernel_checks(torch,np);save()
+            result['kernel_checks']=[] if args.wrist_state or args.pool_agent else kernel_checks(torch,np);save()
             if args.kernel_only:
                 result.update(status='completed',kernel_only=True);return 0
             from perceptbudget.h50_checkpoint import image_input,normalize_state,decode_actions
@@ -310,7 +316,7 @@ def main():
             enable(model)
             result['full_context_preparation']=prepare_context_only(model,records[0]['snapshot'],task['instruction'],torch)
             models={'Full':model}
-            fast_kind='wrist' if args.wrist_state else 'selective'+str(args.visual_tokens)
+            fast_kind='wrist' if args.wrist_state else 'pool2_agent' if args.pool_agent else 'selective'+str(args.visual_tokens)
             peers=[('DualFast',fast_kind)] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast',fast_kind)]
             for label,kind in peers:
                 frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=not stateful,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20),preserve_positions=args.preserve_positions)
@@ -320,7 +326,7 @@ def main():
                 result.setdefault('fast_context_preparation',{})[label]=prepare_context_only(peer,snap,task['instruction'],torch)
                 models[label]=peer;mem(label+'_ready')
             result['geometry']={label:dict(visual_tokens=m._pipe.pipeline.vision_seq_enc,state=label=='Full' or stateful,views=m._pipe.pipeline.num_views,
-                camera_tokens=[256,256] if label=='Full' else [0,256] if args.wrist_state else [64,256] if label=='OldFast' else [args.visual_tokens//2]*2) for label,m in models.items()}
+                camera_tokens=[256,256] if label=='Full' else [0,256] if args.wrist_state else [64,256] if label=='OldFast' or args.pool_agent else [args.visual_tokens//2]*2) for label,m in models.items()}
             for m in models.values():release_unused_native_expert(m,torch)
             mem('native_experts_released')
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
@@ -398,6 +404,9 @@ def main():
                         if error>1e-4:raise RuntimeError('Positioned RTC graph differs from author sampling loop')
                 contract=dict(visual_mode=fast_kind,visual_tokens=256 if args.wrist_state else args.visual_tokens,
                     state_enabled=True,position_policy='contiguous_v1') if stateful else None
+                if args.pool_agent:
+                    contract=dict(visual_mode=fast_kind,visual_tokens=320,state_enabled=False,
+                        position_policy='original_camera_and_text_coordinates_v1' if args.preserve_positions else 'contiguous_v1')
                 result['clock_costs']=clock_costs(infer,records,torch,run,write,visual_tokens=args.visual_tokens,preserve_positions=args.preserve_positions,input_contract=contract)
                 result.update(status='completed',clocks_changed=True,production_default_changed=False)
                 return 0
