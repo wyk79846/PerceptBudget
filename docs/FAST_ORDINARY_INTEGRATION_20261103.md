@@ -219,3 +219,9 @@ Fast高频/中频推理中位342.1/482.2ms，相比上一轮带state的433.2/610
 全部三个共同成功任务合计334.212→391.191J（增加17.05%），27.032→33.092s（增加22.42%），请求20→23。单次Fast更省，但Object和Long完成过程变长，整任务未省电；只按当前预测判为普通阶段并不足以保证压缩输入不影响后续动作。保留实验入口及全部数据，不替换Full＋Continue，不据三任务推断总体效果。结束恢复1173/3199/1497.6MHz。
 
 [三任务配对报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T162003.832561Z-noncritical-fast-dev3-61ea3668/review.md>) · [逐请求准入与汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T162003.832561Z-noncritical-fast-dev3-61ea3668/review.json>) · [匹配成本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T161648.953070Z-dual-selective-fast-36c56aa5/ordinary_fast_costs.json>)。
+
+## 2026-11-06 普通阶段Fast与q20/q10全40扩测完成
+
+同seed17/init1，三组各40任务、共120回合全部完成，结果分别为普通阶段Fast29/40、q20 35/40、q10 36/40。任务＋在途推理5817.540/6664.085/9688.585J，时间473.092/391.584/401.603s，全部既有回合检查通过、零断供。Fast实际74次，均通过普通阶段、非连续、原位置、无state输入记录核对；但相对纯Full动态35/40，成功数下降6项，总能量增加10.74%，共同成功28项仍多耗0.86%，故不替换基线。q20与q10静态组完整保留，不能只按更耗能的参照宣称Fast优势。q20 RAM中断后只补缺少任务，后6项及q10全组使用已有按需词表存储节约1004.5MiB；普通Fast/q20/q10计1/4/1次模型加载。结束频率已恢复，未改FlashRT、RTC、阈值或保护线。
+
+[本次正式报告](FAST_ORDINARY_AND_STATIC_Q_20261106.md) · [120回合与历史参照汇总](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T164037.405631Z-fast-q20-q10-all40-cb285719/results.json>)。
