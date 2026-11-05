@@ -63,6 +63,10 @@ def load_model(config):
     if not pipe._force_bf16 or any((pipe._fp8_weights, pipe._int8_weights,
                                   pipe._use_int8_encoder, pipe._use_int8_vision)):
         raise RuntimeError("Requested full BF16 path did not take effect")
+    if config.get('mapped_prompt_embedding',False):
+        from perceptbudget.mapped_embedding import install_mapped_prompt_embeddings
+        install_mapped_prompt_embeddings([pipe],config['model_path'],
+            checkpoint_prefix=config.get('checkpoint_key_prefix',''))
     if config.get('checkpoint_profile')=='lerobot_h50_quantiles_v044':
         # Mixed F32/BF16 source conversion can leave freed host arenas resident.
         # Release only already-unused allocator pages, never weights or GPU data.

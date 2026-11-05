@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--preserve-positions',action='store_true',help='Probe original image/text/action coordinates with stateless selective320/464')
     parser.add_argument('--stateful-positions',action='store_true',help='Also test full state with original-position320; live prompt must stay below192 tokens')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
+    parser.add_argument('--mapped-embeddings',action='store_true',help='Before Full_repeat, map frozen vocabulary rows and check all BF16 table values')
     args=parser.parse_args()
     if args.preserve_positions and (not (args.selective320 or args.selective464) or args.resident_check):
         parser.error('Original-position input probe requires selective320/464 without resident-check')
@@ -65,7 +66,7 @@ def main():
                 delay=solver['delay'],executed=solver['executed'],model_loads=0,cases={},
                 probe_arguments=dict(selective320=args.selective320,selective416=args.selective416,
                     selective464=args.selective464,preserve_positions=args.preserve_positions,
-                    stateful_positions=args.stateful_positions,resident_check=args.resident_check),
+                    stateful_positions=args.stateful_positions,resident_check=args.resident_check,mapped_embeddings=args.mapped_embeddings),
                 scope='Identical observation/noise/previous_raw/delay/executed; action sensitivity, no closed-loop outcome or latency claim')
     def save():_write_json_atomically(run/'summary.json',result)
     print('run_dir='+str(run),flush=True);save();adapter=None
@@ -126,6 +127,14 @@ def main():
             conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.resident_check else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
             if args.preserve_positions and not args.stateful_positions:conditions=[c for c in conditions if c[0]!='Fast_state']
             for name,frontend,state in conditions:
+                if name=='Full_repeat' and args.mapped_embeddings:
+                    from perceptbudget.mapped_embedding import install_mapped_prompt_embeddings
+                    from perceptbudget.rtc_memory import memory_record
+                    result['before_mapped_embedding']=memory_record(torch,'before_mapped_embedding')
+                    result['mapped_embedding']=install_mapped_prompt_embeddings(
+                        [model._pipe,pooled._pipe],cfg['model_path'],
+                        checkpoint_prefix=cfg.get('checkpoint_key_prefix',''),verify_all=True)
+                    result['after_mapped_embedding']=memory_record(torch,'after_mapped_embedding')
                 adapter.model=frontend;adapter.pipe=frontend._pipe;adapter.pipeline=frontend._pipe.pipeline
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
@@ -176,6 +185,10 @@ def main():
                 delta=outputs[a][:,:7]-outputs[b][:,:7]
                 result['factorial_pairs'][a+'_vs_'+b]=dict(all_action7_rmse=float(np.sqrt(np.mean(delta**2))),next10_executable_action7_rmse=float(np.sqrt(np.mean(delta[solver['delay']:solver['delay']+10]**2))))
             np.savez(run/'actions.npz',**outputs)
+            if args.mapped_embeddings:
+                result['mapped_full_raw_max_abs_all32']=float(np.max(np.abs(outputs['Full_repeat']-outputs['Full'])))
+                if result['mapped_full_raw_max_abs_all32']!=0:
+                    raise ValueError('Mapped embedding changed Full RTC output')
             if result['cases']['Full_repeat']['action7_max_abs']>1e-4:raise ValueError('Full repeat changed after pooled cases')
             result.update(status='completed',passed=True)
     except BaseException as exc:
