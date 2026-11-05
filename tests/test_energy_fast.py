@@ -33,6 +33,19 @@ def test_energy_fast_keeps_gripper_margin_required_feedback_and_full_after_fast(
     assert choose(d,**dict(args,fast_delay=11))['mode']=='Full'
 
 
+def test_ordinary_fast_keeps_finite_gripper_operations_full_without_blocking_motion():
+    from perceptbudget.ordinary_fast import FEEDBACK_POLICY_V2
+    d=decision();phase=dict(start_step=20,stop_step=31,anchors=[dict(kind='gripper_open',offset=4)])
+    args=dict(step=30,previous_mode='Full',phases=[phase],events=[],costs=ordinary_costs(),fast_delay=5)
+    assert choose(d,**args,policy=FEEDBACK_POLICY_V2)['mode']=='Fast'
+    result=choose(d,**args,policy=FEEDBACK_POLICY)
+    assert result['mode']=='Full' and result['protected_gripper_phases']==[phase]
+    assert result['full_schedule']==choose(d,**args,policy=FEEDBACK_POLICY_V2)['full_schedule']
+    assert choose(d,**dict(args,step=31),policy=FEEDBACK_POLICY)['mode']=='Fast'
+    motion=dict(phase,anchors=[dict(kind='turn',offset=4)])
+    assert choose(d,**dict(args,phases=[motion]),policy=FEEDBACK_POLICY)['mode']=='Fast'
+
+
 def test_idle_threshold_does_not_override_fast_pair_labels():
     from perceptbudget.device_quality import frequency_pair_views
     c=dict(m3_ordinary_fast_pair=True,m3_idle_min_ms=50,m3_three_frequency=True)

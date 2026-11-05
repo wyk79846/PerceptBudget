@@ -34,10 +34,13 @@ def main():
     selective.add_argument('--selective320',action='store_true',help='Separate state and dual selective320 effects on identical recorded inputs')
     selective.add_argument('--selective464',action='store_true',help='Mild dual-view pooling,8 of64 blocks per camera')
     parser.add_argument('--preserve-positions',action='store_true',help='Probe original image/text/action coordinates with stateless selective320/464')
+    parser.add_argument('--stateful-positions',action='store_true',help='Also test full state with original-position320; live prompt must stay below192 tokens')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     args=parser.parse_args()
     if args.preserve_positions and (not (args.selective320 or args.selective464) or args.resident_check):
         parser.error('Original-position input probe requires selective320/464 without resident-check')
+    if args.stateful_positions and not (args.selective320 and args.preserve_positions):
+        parser.error('Stateful position probe requires selective320 and --preserve-positions')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import create_run,_write_json_atomically
@@ -61,7 +64,8 @@ def main():
     result=dict(status='running',source_run=str(args.source_run),observation_step=args.observation_step,
                 delay=solver['delay'],executed=solver['executed'],model_loads=0,cases={},
                 probe_arguments=dict(selective320=args.selective320,selective416=args.selective416,
-                    selective464=args.selective464,preserve_positions=args.preserve_positions,resident_check=args.resident_check),
+                    selective464=args.selective464,preserve_positions=args.preserve_positions,
+                    stateful_positions=args.stateful_positions,resident_check=args.resident_check),
                 scope='Identical observation/noise/previous_raw/delay/executed; action sensitivity, no closed-loop outcome or latency claim')
     def save():_write_json_atomically(run/'summary.json',result)
     print('run_dir='+str(run),flush=True);save();adapter=None
@@ -107,7 +111,7 @@ def main():
             if args.preserve_positions:
                 from perceptbudget.selective_pipeline import align_expert_positions
                 result['position_policy']=align_expert_positions(adapter.expert,
-                    464 if args.selective464 else 320,32)
+                    464 if args.selective464 else 320,191 if args.stateful_positions else 32)
             # Initialize the frozen expert attention/norm implementation via normal adapter.
             adapter.bootstrap(snapshot,task['instruction'],{})
             noise=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
@@ -120,7 +124,7 @@ def main():
                 finally:adapter._dual_bank_preparing=False
             outputs={}
             conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.resident_check else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
-            if args.preserve_positions:conditions=[c for c in conditions if c[0]!='Fast_state']
+            if args.preserve_positions and not args.stateful_positions:conditions=[c for c in conditions if c[0]!='Fast_state']
             for name,frontend,state in conditions:
                 adapter.model=frontend;adapter.pipe=frontend._pipe;adapter.pipeline=frontend._pipe.pipeline
                 data=dict(snapshot,state=snapshot['state'] if state else None)
@@ -128,6 +132,8 @@ def main():
                 pl=frontend._pipe.pipeline
                 expected=(512 if name.startswith('Full') else 464 if args.selective464 else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
+                if args.stateful_positions and not name.startswith('Full') and frontend._pipe.current_prompt_len>191:
+                    raise ValueError('Stateful diagnostic prompt overlaps Full visual prefix geometry')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
                     if args.selective416 or args.selective320 or args.selective464:
@@ -164,7 +170,7 @@ def main():
                     if result['cases'][name]['resident_vs_reference_max_abs']>1e-4:raise ValueError('Resident graph differs from reference on real input')
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
             result['factorial_pairs']={}
-            pairs=([('Full','Full_no_state'),('Full','Fast'),('Full_no_state','Fast')] if args.preserve_positions else
+            pairs=([('Full','Full_no_state'),('Full','Fast'),('Full_no_state','Fast')] if args.preserve_positions and not args.stateful_positions else
                 [('Full','Fast_state')] if args.resident_check else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')])
             for a,b in pairs:
                 delta=outputs[a][:,:7]-outputs[b][:,:7]

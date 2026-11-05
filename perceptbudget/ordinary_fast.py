@@ -4,7 +4,8 @@ import math
 from pathlib import Path
 
 POLICY = 'ordinary_fast_same_full_schedule_v1'
-FEEDBACK_POLICY = 'ordinary_fast_feedback_buffer_v2'
+FEEDBACK_POLICY_V2 = 'ordinary_fast_feedback_buffer_v2'
+FEEDBACK_POLICY = 'ordinary_fast_feedback_buffer_v3'
 
 
 def load_costs(path, config):
@@ -47,14 +48,21 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
           (e['target_step']-step)*period<=decision['service_seconds']+decision['margin_seconds']]
     active=[p for p in phases if p['start_step']<=step<p['stop_step']]
     ordinary=decision['reason']=='buffer' and not near and not active
-    if policy==FEEDBACK_POLICY:
+    protected=[]
+    if policy in (FEEDBACK_POLICY_V2,FEEDBACK_POLICY):
         # The energy controller has already removed predictable motion cues.
         # Do not resurrect them through the legacy raw phase detector. Keep a
         # local gripper margin; every unhandled future key still chooses Full
         # through the unchanged action-event deadline.
         near=[e for e in events if e['kind'].startswith('gripper_')
               and abs(e['target_step']-step)<=match_steps]
-        ordinary=decision['reason']=='buffer' and not near
+        if policy==FEEDBACK_POLICY:
+            # A predictable bend may be ordinary while a bounded grasp/place
+            # operation is still active. Keep only gripper-anchored intervals;
+            # do not re-enable all legacy motion-phase refreshes.
+            protected=[p for p in active if any(a['kind'].startswith('gripper_')
+                for a in p.get('anchors',[]))]
+        ordinary=decision['reason']=='buffer' and not near and not protected
     elif policy!=POLICY:
         raise ValueError('Unknown ordinary Fast policy')
     window=max(0.,decision['deadline']-decision['margin_seconds']-
@@ -79,7 +87,8 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,
         active_phases=active,near_events=near,fast_delay_steps=fast_delay,
         profile=profile,window_seconds=window,candidates=rows,
-        gripper_margin_steps=match_steps if policy==FEEDBACK_POLICY else None,
+        gripper_margin_steps=match_steps if policy in (FEEDBACK_POLICY_V2,FEEDBACK_POLICY) else None,
+        protected_gripper_phases=protected,
         estimated_saving_j=saving,cost_source=costs.get('source'),
         shared_preparation='Same start and selected frequency; common preparation energy cancels',
         hold_scope='Measured fixed-input hold power; ranking prior, task energy measured separately',
