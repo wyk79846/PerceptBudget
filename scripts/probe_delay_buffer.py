@@ -643,7 +643,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 if config.get('m3_ordinary_fast_context'):
                     rtc_delay=mode_delay_queues['full:baseline'].estimate
                     scheduler.low_delay_steps=mode_delay_queues['full:gpu_emc'].estimate
-                    scheduler.fast_delays={p:mode_delay_queues['selective320:'+p].estimate for p in ('baseline','gpu_emc')}
+                    fast_mode=config.get('m3_ordinary_fast_visual_mode','selective320')
+                    scheduler.fast_delays={p:mode_delay_queues[fast_mode+':'+p].estimate for p in ('baseline','gpu_emc')}
                 if config.get('rtc_fixed_delay_estimate') is not None:
                     rtc_delay=config['rtc_fixed_delay_estimate']
                     if frequency_delay_queues is not None:scheduler.low_delay_steps=rtc_delay
