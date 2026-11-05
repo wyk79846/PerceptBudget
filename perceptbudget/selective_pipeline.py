@@ -24,6 +24,7 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
         def _allocate_buffers(self):
             if self.num_views!=2 or self.vision_pool_factor!=2:
                 raise ValueError('Selective pooling requires dual views and pool storage')
+            self._pb_original_visual_positions=preserve_positions
             self.vision_seq_enc=visual_tokens
             self.encoder_seq_len=visual_tokens+self.max_prompt_len
             self.total_kv=self.encoder_seq_len+self.chunk_size

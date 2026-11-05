@@ -117,3 +117,24 @@ def test_original_coordinates_shift_fast_actions_and_leave_full_inputs_exact():
     assert bridge.forward(**full) is full['position_ids']
     assert policy['full_position_offset']==0 and policy['rtc_sampler_changed'] is False
     with pytest.raises(ValueError):bridge.forward(**arguments(400))
+
+
+def test_original_position_table_does_not_restore_full_encoder_compute():
+    from perceptbudget.selective_pipeline import pipeline_type
+    class Base:
+        def _allocate_buffers(self):pass
+        def _build_rope_table(self):self.table_sequence=self.encoder_seq_len
+    p=pipeline_type(Base,visual_tokens=464,preserve_positions=True)()
+    p.num_views=2;p.vision_pool_factor=2;p.max_prompt_len=32;p.chunk_size=50
+    p._allocate_buffers();p._build_rope_table()
+    assert p.table_sequence==544 and p.encoder_seq_len==496 and p.total_kv==546
+    assert p._pb_original_visual_positions is True
+
+
+def test_positioned_fast_rejects_unpositioned_cost_table(tmp_path):
+    from perceptbudget.ordinary_fast import load_costs
+    cfg=dict(H=50,N=5,precision='bfloat16',checkpoint_provenance_revision='frozen',rtc_beta=5.,
+        m3_ordinary_fast_visual_mode='selective320',m3_ordinary_fast_positions=True)
+    (tmp_path/'run.json').write_text(json.dumps(dict(config_snapshot=cfg)))
+    path=tmp_path/'costs.json';path.write_text(json.dumps(dict(status='completed',restored=True)))
+    with pytest.raises(ValueError,match='position policy mismatch'):load_costs(path,cfg)

@@ -48,6 +48,11 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
 
     def __init__(self, model, torch, config):
         super().__init__(model, torch, config)
+        self.position_policy=None
+        if config.get('m3_ordinary_fast_positions'):
+            from perceptbudget.selective_pipeline import align_expert_positions
+            self.position_policy=align_expert_positions(self.expert,
+                visual_geometry(self.fast_mode())['visual_tokens'],config['m4_fast_prompt_capacity'])
         self._full_model = model
         self._wrist_model = None
         self._guided_requests = 0
@@ -167,6 +172,12 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             request['context_refresh'].update(compression='redundancy_selected_32_of64_blocks_per_camera',external_tokens=160,wrist_tokens=160)
         if mode=='selective464':
             request['context_refresh'].update(compression='redundancy_selected_8_of64_blocks_per_camera',external_tokens=232,wrist_tokens=232)
+        if self.config.get('m3_ordinary_fast_positions'):
+            offset=self.position_policy['action_position_offset'] if mode!='full' else 0
+            aligned=getattr(self.pipeline,'_pb_original_visual_positions',False)
+            request['context_refresh'].update(position_coordinates=(
+                'original_camera_and_text_coordinates_v1' if aligned else 'contiguous_v1'),
+                action_position_offset=offset,action_position_start=int(self.pipe.current_prompt_len)+self.pipeline.vision_seq_enc+offset)
         if guided:
             self._guided_requests += 1
         return actions

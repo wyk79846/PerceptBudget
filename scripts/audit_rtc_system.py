@@ -512,6 +512,12 @@ def audit(run):
                 check('selective464_camera_counts',visual.get('pooled_view')=='both'
                     and visual.get('compression')=='redundancy_selected_8_of64_blocks_per_camera'
                     and visual.get('external_tokens')==232 and visual.get('wrist_tokens')==232,pid)
+            if cfg.get('m3_ordinary_fast_positions'):
+                offset=512-visual['visual_tokens'] if expected_mode!='full' else 0
+                check('selective_original_position_input',visual.get('position_coordinates')==(
+                    'original_camera_and_text_coordinates_v1' if expected_mode!='full' else 'contiguous_v1')
+                    and visual.get('action_position_offset')==offset
+                    and visual.get('action_position_start')==request['rtc_guidance']['valid_prefix_length']+offset,pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})

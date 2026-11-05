@@ -33,6 +33,7 @@ def main():
         help='Reference for an idle threshold pair;200 reproduces the original comparison')
     parser.add_argument('--ordinary-fast',action='store_true',help='Replace one ordinary Full with reduced-input Fast; keep Full schedule/frequency, then require Full')
     parser.add_argument('--ordinary-fast-tokens',type=int,choices=(320,464),default=320,help='Selective visual budget for ordinary Fast;464 merges only8 blocks per camera')
+    parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     capture_options=parser.add_mutually_exclusive_group()
     capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
@@ -82,6 +83,7 @@ def main():
         parser.error('--ordinary-fast requires the three-frequency M3 path, without other paired policies')
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
+    if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.lean_continue is not None or args.continue_overhead_pair) and args.acceptance_group not in ('m3','q30'):
         parser.error('Continue capture requires --acceptance-group m3 or q30')
     if args.continue_overhead_pair and (args.full_frequency_pair or args.rtc_delay_sensitivity):
@@ -206,8 +208,9 @@ def main():
         policy=FEEDBACK_POLICY if args.energy_refresh else POLICY
         cfg.update(m3_ordinary_fast=True,m3_ordinary_fast_context=True,m3_ordinary_fast_pair=args.ordinary_fast_pair,
             m2_fast_no_state=True,m4_fast_prompt_capacity=32 if args.energy_refresh else 20,m4_policy_revision=policy,
-            m3_ordinary_fast_policy=policy,m3_ordinary_fast_visual_mode='selective'+str(args.ordinary_fast_tokens))
-        cost_key='ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
+            m3_ordinary_fast_policy=policy,m3_ordinary_fast_visual_mode='selective'+str(args.ordinary_fast_tokens),
+            m3_ordinary_fast_positions=args.ordinary_fast_positions)
+        cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
         if cost_key not in m4:parser.error('Measure the selected Fast costs before closed-loop use: '+cost_key)
         cfg['ordinary_fast_costs']=fast_costs(m4[cost_key],cfg)
     if args.full_energy:
@@ -238,6 +241,7 @@ def main():
         print(json.dumps(dict(tasks=pending_tasks,reused_episodes=len(continuation['episodes']) if continuation else 0,group=args.acceptance_group or 'joint',model_loads=1,Full=True,Fast=cfg['m3_ordinary_fast_visual_mode']+'_no_state' if args.ordinary_fast else ('selective416_with_state' if args.fast_selective416 else 'pool2_agent_no_state') if cfg['m4_enabled'] or cfg.get('m3_fast_enabled') else 'disabled',
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
+            ordinary_fast_positions=args.ordinary_fast_positions,
             all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
             simplified_refresh=args.simplified_refresh,phase_coverage_memory=cfg.get('m3_phase_coverage_memory'),
             event_identity=cfg.get('m3_event_identity'),ordinary_turn_policy=cfg.get('m3_ordinary_turn_policy'),
@@ -340,6 +344,7 @@ def main():
             if args.idle_min_ms is not None:command.extend(['--idle-min-ms',str(args.idle_min_ms)])
             if args.idle_reference_ms!=200:command.extend(['--idle-reference-ms',str(args.idle_reference_ms)])
             if args.ordinary_fast:command.extend(['--ordinary-fast','--ordinary-fast-tokens',str(args.ordinary_fast_tokens)])
+            if args.ordinary_fast_positions:command.append('--ordinary-fast-positions')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')

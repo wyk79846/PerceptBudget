@@ -72,6 +72,8 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
 
 
 def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False):
+    if preserve_positions and fast_kind not in ('selective320','selective464'):
+        raise ValueError('Original positions require dual selected camera tokens')
     if no_state and fast_kind not in ('pool2_agent','selective320','selective464'):
         raise ValueError('Stateless Fast experiment supports mixed pooling only')
     if fast_kind not in ('wrist','pool2','pool2_agent','selective416','selective320','selective464'):

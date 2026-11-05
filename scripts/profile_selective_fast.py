@@ -31,14 +31,15 @@ class TuneOnce:
         return result
 
 
-def clock_costs(infer, records, torch, run, write, *, visual_tokens=320):
+def clock_costs(infer, records, torch, run, write, *, visual_tokens=320,preserve_positions=False):
     """Hot request/hold costs after clock acknowledgement; one resident model."""
     from perceptbudget.three_frequency import ThreeClocks
     from perceptbudget.power import PowerMonitor
     from perceptbudget.device_clock_screen import energy_window,frequency_check
     clock=ThreeClocks(run);monitor=PowerMonitor(.02,max_gap_seconds=.1)
     result=dict(status='running',cells={},rows=[],restored=False,
-        fast_input_contract=dict(visual_mode='selective'+str(visual_tokens),visual_tokens=visual_tokens,state_enabled=False),
+        fast_input_contract=dict(visual_mode='selective'+str(visual_tokens),visual_tokens=visual_tokens,state_enabled=False,
+            position_policy='original_camera_and_text_coordinates_v1' if preserve_positions else 'contiguous_v1'),
         scope='Fixed-input request energy after frequency acknowledgement; shared entry cost cancels in the same-time same-frequency mode comparison')
     entered=False
     try:
@@ -225,6 +226,7 @@ def main():
     parser.add_argument('--author-audit-only',action='store_true',help='Compare current RTC graph with author function on saved inputs; no power blocks or rollout')
     parser.add_argument('--clock-costs',action='store_true',help='Measure Full/DualFast at HIGH and MID for ordinary-stage substitution')
     parser.add_argument('--visual-tokens',type=int,choices=(320,464),default=320,help='Dual-camera selective token budget')
+    parser.add_argument('--preserve-positions',action='store_true',help='Measure selective input with original camera/text/action positions')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
@@ -232,7 +234,8 @@ def main():
     if (args.rollout_only or args.rollout_tasks) and not args.rollout_pair:parser.error('Rollout options require --rollout-pair')
     if args.author_audit_only and (args.kernel_only or args.rollout_pair):parser.error('Author audit is a standalone fixed-input comparison')
     if args.clock_costs and (args.kernel_only or args.rollout_pair or args.author_audit_only):parser.error('Clock costs are a standalone measurement')
-    if args.visual_tokens!=320 and (args.rollout_pair or args.author_audit_only):parser.error('Use464 for fixed inputs and clock costs; rollout uses run_m4')
+    if args.visual_tokens!=320 and args.rollout_pair:parser.error('Use464 for fixed inputs and clock costs; rollout uses run_m4')
+    if args.preserve_positions and not (args.clock_costs or args.author_audit_only):parser.error('Original positions use clock-cost or author-audit mode')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically as write
@@ -240,7 +243,8 @@ def main():
     cfg=load_config(repo_root=ROOT)
     if args.source_run:
         cfg.update(json.loads((args.source_run/'run.json').read_text())['config_snapshot'])
-    cfg.update(m2_visual_fast_mode='selective'+str(args.visual_tokens),m2_fast_no_state=True)
+    cfg.update(m2_visual_fast_mode='selective'+str(args.visual_tokens),m2_fast_no_state=True,
+        m3_ordinary_fast_visual_mode='selective'+str(args.visual_tokens),m3_ordinary_fast_positions=args.preserve_positions)
     with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         run=create_run(cfg,'M4','dual-selective-fast',repo_root=ROOT)
@@ -299,7 +303,7 @@ def main():
             fast_kind='selective'+str(args.visual_tokens)
             peers=[('DualFast',fast_kind)] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast',fast_kind)]
             for label,kind in peers:
-                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20))
+                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20),preserve_positions=args.preserve_positions)
                 peer=VLAModel(frontend,'torch');enable(peer)
                 snap=dict(records[0]['snapshot'],state=None)
                 result.setdefault('fast_context_preparation',{})[label]=prepare_context_only(peer,snap,task['instruction'],torch)
@@ -309,6 +313,9 @@ def main():
             for m in models.values():release_unused_native_expert(m,torch)
             mem('native_experts_released')
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
+            if args.preserve_positions:
+                from perceptbudget.selective_pipeline import align_expert_positions
+                result['position_policy']=align_expert_positions(adapter.expert,args.visual_tokens,cfg.get('m4_fast_prompt_capacity',20))
             adapter.bootstrap(records[0]['snapshot'],task['instruction'],{})
             def collect_rollouts():
                 nonlocal adapter
@@ -352,7 +359,20 @@ def main():
                 raw,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'])
                 return raw.detach().cpu().numpy().copy()
             if args.clock_costs:
-                result['clock_costs']=clock_costs(infer,records,torch,run,write,visual_tokens=args.visual_tokens)
+                if args.preserve_positions:
+                    from perceptbudget.rtc_author_source import sample_author_source
+                    result['positioned_author_audit']=[]
+                    record=records[0];s=record['request']['rtc_solver_inputs']
+                    for label in ('Full','DualFast'):
+                        raw=infer(label,record)
+                        valid=models[label]._pipe.pipeline.vision_seq_enc+models[label]._pipe.current_prompt_len
+                        expert,_=adapter.step_bank.select(valid)
+                        author,_,_,sha=sample_author_source(expert,record['noise'],record['previous'],s['delay'],s['executed'],
+                            source=Path(cfg['output_root'])/'rtc-author-reference/src/model.py',beta=cfg['rtc_beta'])
+                        error=float(np.max(np.abs(raw-author.detach().cpu().numpy())))
+                        result['positioned_author_audit'].append(dict(mode=label,max_abs=error,author_source_sha256=sha))
+                        if error>1e-4:raise RuntimeError('Positioned RTC graph differs from author sampling loop')
+                result['clock_costs']=clock_costs(infer,records,torch,run,write,visual_tokens=args.visual_tokens,preserve_positions=args.preserve_positions)
                 result.update(status='completed',clocks_changed=True,production_default_changed=False)
                 return 0
             if args.author_audit_only:

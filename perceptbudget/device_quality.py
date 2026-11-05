@@ -492,7 +492,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         from flash_rt.api import VLAModel
                         wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode,
                             no_state=cfg.get('m2_fast_no_state',False),
-                            no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity')), 'torch')
+                            no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity'),
+                            preserve_positions=bool(cfg.get('m3_ordinary_fast_positions'))), 'torch')
                         enable(wrist_model)
                         fast_prepared = select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full')
                         if cfg.get('m2_fast_no_state',False):
