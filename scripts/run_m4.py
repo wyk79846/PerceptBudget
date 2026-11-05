@@ -38,6 +38,7 @@ def main():
     parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     parser.add_argument('--fast-alternate',action='store_true',help='Simple Full/Fast alternation with state in both; retain Full refresh and clock rules')
+    parser.add_argument('--fast-no-state',action='store_true',help='Keep state for Full, omit state only for alternating dual-view Fast')
     capture_options=parser.add_mutually_exclusive_group()
     capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
         help='Skip idle camera rendering and save request frames only; default for new Full/Continue M3 and q30 runs')
@@ -87,6 +88,8 @@ def main():
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
     if args.fast_alternate and (not args.ordinary_fast or args.ordinary_fast_positions or args.ordinary_fast_costs is None):
         parser.error('--fast-alternate requires --ordinary-fast and matching stateful costs without position overrides')
+    if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view!='dual'):
+        parser.error('--fast-no-state requires alternating dual-view Fast')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
@@ -213,8 +216,8 @@ def main():
         cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
     if args.ordinary_fast:
-        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY,FEEDBACK_POLICY,ALTERNATING_POLICY
-        policy=ALTERNATING_POLICY if args.fast_alternate else FEEDBACK_POLICY if args.energy_refresh else POLICY
+        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY,FEEDBACK_POLICY,ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY
+        policy=(ALTERNATING_NO_STATE_POLICY if args.fast_no_state else ALTERNATING_POLICY) if args.fast_alternate else FEEDBACK_POLICY if args.energy_refresh else POLICY
         cfg.update(m3_ordinary_fast=True,m3_ordinary_fast_context=True,m3_ordinary_fast_pair=args.ordinary_fast_pair,
             m2_fast_no_state=True,m4_fast_prompt_capacity=32 if args.energy_refresh else 20,m4_policy_revision=policy,
             m3_ordinary_fast_policy=policy,m3_ordinary_fast_visual_mode='selective'+str(args.ordinary_fast_tokens),
@@ -222,7 +225,7 @@ def main():
         if args.ordinary_fast_view=='wrist':
             cfg.update(m3_ordinary_fast_visual_mode='wrist',m2_fast_no_state=False)
         if args.fast_alternate:
-            cfg.update(m3_fast_alternation=True,m2_fast_no_state=False)
+            cfg.update(m3_fast_alternation=True,m3_fast_no_state=args.fast_no_state,m2_fast_no_state=args.fast_no_state)
         cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
         if args.ordinary_fast_costs is None and cost_key not in m4:parser.error('Measure the selected Fast costs before closed-loop use: '+cost_key)
         cfg['ordinary_fast_costs']=fast_costs(args.ordinary_fast_costs or m4[cost_key],cfg)
@@ -363,6 +366,7 @@ def main():
             if args.ordinary_fast_positions:command.append('--ordinary-fast-positions')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if args.fast_alternate:command.append('--fast-alternate')
+            if args.fast_no_state:command.append('--fast-no-state')
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')

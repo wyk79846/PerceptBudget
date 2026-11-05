@@ -271,7 +271,7 @@ def audit(run):
               and cfg.get('m3_action_events_enabled')==expected_events and cfg.get('m3_merge_slowdown_steps') is None)
         check('formal_request_watchdog',cfg.get('m3_request_timeout_seconds')==3. and bool(cfg.get('m3_watchdog_path')))
     check('sequential_control_steps',[r['step'] for r in controls]==list(range(len(controls))))
-    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','full_fast_alternating_state_v1'):
+    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','full_fast_alternating_state_v1','full_fast_alternating_no_state_v1'):
         check('fast_request_only_capture_enabled',cfg.get('m4_lean_continue') is True
               and cfg.get('m4_request_only_images') is True)
         for row in controls:
@@ -367,10 +367,11 @@ def audit(run):
                         if source['observation_step']+e['offset']>=origin and
                         (source['observation_step']+e['offset']-origin)*decision['estimated_control_period_seconds']<=decision['service_seconds']+decision['margin_seconds']]
                     ordinary=decision['reason']=='buffer' and not active and not near
-                    alternating=cfg.get('m3_ordinary_fast_policy')=='full_fast_alternating_state_v1'
+                    alternating=cfg.get('m3_ordinary_fast_policy') in ('full_fast_alternating_state_v1','full_fast_alternating_no_state_v1')
                     if alternating:
-                        check('alternating_stateful_policy',f['policy']=='full_fast_alternating_state_v1'
-                            and cfg.get('m3_fast_alternation') is True and cfg.get('m2_fast_no_state') is False,pid)
+                        check('alternating_state_contract',f['policy']==cfg['m3_ordinary_fast_policy']
+                            and cfg.get('m3_fast_alternation') is True and cfg.get('m2_fast_no_state')==
+                            (cfg['m3_ordinary_fast_policy']=='full_fast_alternating_no_state_v1'),pid)
                     if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3'):
                         raw=decision['critical_forecast']['result']['events']
                         near=[dict(e,prediction_id=previous['prediction_id']) for e in raw
