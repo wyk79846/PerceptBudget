@@ -67,7 +67,7 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
     return SelectivePipeline
 
 
-def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fast=None):
+def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fast=None,fast_prefixes=None):
     """Use matching action positions with the original-coordinate prefix KV.
 
     The author denoising/VJP sampler and frozen modules remain intact. Only
@@ -77,7 +77,7 @@ def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fa
     """
     if visual_tokens not in (320,464) or not 0<fast_prompt_capacity<=200:
         raise ValueError('Need a supported visual and prompt capacity')
-    if active_fast is None and fast_prompt_capacity>=512-visual_tokens:
+    if active_fast is None and fast_prefixes is None and fast_prompt_capacity>=512-visual_tokens:
         raise ValueError('Need a disjoint stateless visual prefix family or explicit geometry')
     if active_fast is not None and not callable(active_fast):raise ValueError('Geometry selector must be callable')
     bridge=expert.suffix.paligemma_with_expert
@@ -86,7 +86,7 @@ def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fa
     original=bridge.forward;offset=512-visual_tokens
     def forward(*args,**kwargs):
         prefix=kwargs['attention_mask'].shape[-1]-kwargs['inputs_embeds'][1].shape[1]
-        compact=(bool(active_fast()) if active_fast is not None else
+        compact=(prefix in fast_prefixes if fast_prefixes is not None else bool(active_fast()) if active_fast is not None else
                  visual_tokens<prefix<=visual_tokens+fast_prompt_capacity)
         if compact:
             if not visual_tokens<prefix<=visual_tokens+fast_prompt_capacity:
@@ -99,4 +99,4 @@ def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fa
     bridge.forward=forward
     return dict(policy='original_camera_and_text_coordinates_v1',visual_tokens=visual_tokens,
         action_position_offset=offset,fast_prompt_capacity=fast_prompt_capacity,
-        full_position_offset=0,rtc_sampler_changed=False,explicit_geometry=active_fast is not None)
+        full_position_offset=0,rtc_sampler_changed=False,explicit_geometry=active_fast is not None or fast_prefixes is not None)

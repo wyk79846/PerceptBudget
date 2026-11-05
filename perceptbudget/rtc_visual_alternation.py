@@ -54,8 +54,12 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         self.position_policy=None
         if config.get('m3_ordinary_fast_positions'):
             from perceptbudget.selective_pipeline import align_expert_positions
+            stateful=not config.get('m2_fast_no_state',False)
+            self._position_fast_prefixes=set()
             self.position_policy=align_expert_positions(self.expert,
-                visual_geometry(self.fast_mode())['visual_tokens'],config['m4_fast_prompt_capacity'])
+                visual_geometry(self.fast_mode())['visual_tokens'],
+                config['state_prompt_capacity'] if stateful else config['m4_fast_prompt_capacity'],
+                fast_prefixes=self._position_fast_prefixes if stateful else None)
         self._full_model = model
         self._wrist_model = None
         self._guided_requests = 0
@@ -76,6 +80,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             raise ValueError('Require both exact geometry families, at most17 lengths each')
         if self.config.get('source_prefix_coverage_rule') != 'h50_state8_tokenizer_bounds_v1':
             raise ValueError('Dual context bank requires verified H50 state tokenizer bounds')
+        if self.position_policy is not None and not self.config.get('m2_fast_no_state',False):
+            self._position_fast_prefixes.clear();self._position_fast_prefixes.update(wrist)
         # Both geometries use the same frozen expert, one request at a time.
         # Share scratch storage just as exact lengths already do within a bank.
         if getattr(self,'_shared_step_bank_pool',None) is None:

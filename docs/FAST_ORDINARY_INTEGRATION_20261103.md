@@ -165,3 +165,12 @@ Full3/3、交替1/3；Fast中频481.3ms、高频352.7ms，相应Full654.5/487.8m
 Full3/3、交替1/3，尚未改善这三任务的成功数。Spatial共同成功省6.41%；所有尝试含超时的任务及在途推理360.973/581.641J。Full/Fast中频中位651.7/482.5ms，高频487.7/339.0ms。旧双图320无state成本只作同token形状的时延初值，在配置中明确标注geometry proxy；纯交替不以该成本选模式，表中J均为本批真实任务测量。
 
 [本批原始配对结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T123601.494699Z-acceptance-m3-9b7b4e3d/full_frequency_pairs.json>)；代码f7882c7。
+
+
+## 2026-11-05 池化位置编号检查与Object0小测
+
+原池化的编码器、语言、动作编号前后一致，没有发现相互错位；它使用压缩后的连续编号。新增显式`--ordinary-fast-positions`池化候选：外部2×2块取原左上角token位置，腕部仍为256..511，语言从512起，动作专家同步加192。Full、RTC采样体、H50/N5、state、320token及交替规则不变，不修改FlashRT。只检查了坐标映射并直接运行Object0，没有新增备份分支。
+
+seed7/init0，保留state、外部64＋腕部256、Full/Fast交替：之前连续编号280步超时，本次原编号154步成功、9.507s、0欠载。单例出现改善，尚未扩大测试。
+
+[原始结果](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T134010.066356Z-acceptance-m3-6424ac53/summary.json>)。

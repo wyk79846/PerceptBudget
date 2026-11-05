@@ -72,7 +72,7 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
 
 
 def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False):
-    if preserve_positions and fast_kind not in ('selective320','selective464'):
+    if preserve_positions and fast_kind not in ('selective320','selective464','pool2_agent'):
         raise ValueError('Original positions require dual selected camera tokens')
     if no_state and fast_kind not in ('pool2_agent','selective320','selective464'):
         raise ValueError('Stateless Fast experiment supports mixed pooling only')
@@ -91,7 +91,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
             from perceptbudget.selective_pipeline import pipeline_type as selective_type
             selected_type=selective_type(Pi05Pipeline,visual_tokens=int(fast_kind.removeprefix('selective')),
                 preserve_positions=preserve_positions)
-        else:selected_type=pipeline_type(Pi05Pipeline,'agent')
+        else:selected_type=pipeline_type(Pi05Pipeline,'agent',preserve_positions=preserve_positions)
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
                            pipeline_type=selected_type,exact_no_state=no_state,
                            stateless_capacity=no_state_prompt_capacity if no_state else None)

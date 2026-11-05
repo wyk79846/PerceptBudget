@@ -30,7 +30,7 @@ def load_costs(path, config):
     if not proxy and any(contract.get(k)!=v for k,v in expected.items()):
         raise ValueError('Fast cost input geometry/state mismatch')
     positions='original_camera_and_text_coordinates_v1' if config.get('m3_ordinary_fast_positions') else 'contiguous_v1'
-    if contract.get('position_policy','contiguous_v1')!=positions:
+    if not proxy and contract.get('position_policy','contiguous_v1')!=positions:
         raise ValueError('Fast cost position policy mismatch')
     for profile in ('baseline','gpu_emc'):
         cell=costs['cells'][profile]

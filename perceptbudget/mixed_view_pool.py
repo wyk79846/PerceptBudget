@@ -14,10 +14,38 @@ def visual_tokens(config):
     return 512//f**2 if view=='both' else 256+256//f**2
 
 
-def pipeline_type(base_type, pooled_view):
+def original_position_indices(pooled_view, factor, prompt_capacity):
+    """Represent each pooled block by its original top-left token position."""
+    small=[r*16+c for r in range(0,16,factor) for c in range(0,16,factor)]
+    visual=(small+list(range(256,512)) if pooled_view=='agent' else
+            list(range(256))+[256+i for i in small])
+    return visual+list(range(512,512+prompt_capacity))
+
+
+def pipeline_type(base_type, pooled_view, *, preserve_positions=False):
     if pooled_view not in ('agent','wrist'):
         raise ValueError('Choose one pooled camera')
     class MixedViewPipeline(base_type):
+        def _build_rope_table(self):
+            if not preserve_positions:return super()._build_rope_table()
+            import numpy as np
+            from flash_rt.core.cuda_buffer import CudaBuffer
+            reduced=self.encoder_seq_len
+            try:
+                self.encoder_seq_len=512+self.max_prompt_len
+                super()._build_rope_table()
+            finally:self.encoder_seq_len=reduced
+            positions=original_position_indices(pooled_view,self.vision_pool_factor,self.max_prompt_len)
+            self.bufs['encoder_rope_weights']=CudaBuffer.from_numpy(
+                np.ascontiguousarray(self._rope_table_np[positions]))
+            self._pb_original_visual_positions=True
+
+        def _set_decoder_rope_for_prompt(self,prompt_len):
+            if not preserve_positions:return super()._set_decoder_rope_for_prompt(prompt_len)
+            import numpy as np
+            self.bufs['decoder_rope_weights'].upload(np.ascontiguousarray(
+                self._rope_table_np[512+prompt_len:512+prompt_len+self.chunk_size]))
+
         def _allocate_buffers(self):
             if self.num_views!=2 or self.vision_pool_factor not in (2,4):
                 raise ValueError('Mixed pooling requires dual views and factor2/4')

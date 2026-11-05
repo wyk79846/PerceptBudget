@@ -86,12 +86,12 @@ def main():
     if args.ordinary_fast and (not args.three_frequency or args.acceptance_group!='m3' or args.full_frequency_pair or args.continue_overhead_pair):
         parser.error('--ordinary-fast requires the three-frequency M3 path, without other paired policies')
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
-    if args.fast_alternate and (not args.ordinary_fast or args.ordinary_fast_positions or args.ordinary_fast_costs is None):
-        parser.error('--fast-alternate requires --ordinary-fast and matching stateful costs without position overrides')
+    if args.fast_alternate and (not args.ordinary_fast or args.ordinary_fast_costs is None):
+        parser.error('--fast-alternate requires --ordinary-fast and a timing prior')
     if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view not in ('dual','pool2_agent')):
         parser.error('--fast-no-state requires alternating dual-view Fast')
-    if args.ordinary_fast_view=='pool2_agent' and (args.ordinary_fast_tokens!=320 or args.ordinary_fast_positions):
-        parser.error('External64 plus wrist256 uses320 tokens and native pooling positions')
+    if args.ordinary_fast_view=='pool2_agent' and args.ordinary_fast_tokens!=320:
+        parser.error('External64 plus wrist256 uses320 tokens')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
