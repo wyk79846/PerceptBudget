@@ -554,7 +554,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                                                    pooled_view=cfg.get('m2_pool_view','both'))
                 if dual_visual:
                     wrist_valid = adapter.prepare_wrist_context(prepared, task['instruction'])
-                    if not cfg.get('m2_fast_no_state',False) and visual_fast_mode in ('selective416','selective464','wrist'):
+                    if not cfg.get('m2_fast_no_state',False) and visual_fast_mode in ('selective416','selective464','selective320','pool2_agent','wrist'):
                         full_lengths=list(lengths)
                         from perceptbudget.rtc_visual_alternation import visual_geometry
                         offset=512-visual_geometry(visual_fast_mode)['visual_tokens']
@@ -655,6 +655,15 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         'full:gpu_emc':cfg['m3_low_full_initial_delay'],
                         **{visual_fast_mode+':'+p:math.ceil(percentile(c['modes']['Fast']['samples_seconds'])/calibration['median_seconds'])
                            for p,c in cfg['ordinary_fast_costs']['cells'].items()}}
+                    if not cfg.get('m2_fast_no_state',False) and cfg.get('m3_fast_alternation'):
+                        # State changes compute time: use the live Fast probe
+                        # for HIGH and a Full-profile ratio for the MID prior.
+                        # Both histories then update from actual requests.
+                        ratio=wrist_timing['median_ms']/timing['median_ms']
+                        cfg['rtc_initial_delays_by_compute'].update({
+                            visual_fast_mode+':baseline':math.ceil(max(wrist_timing['trials_ms'])/1000/calibration['median_seconds']),
+                            visual_fast_mode+':gpu_emc':math.ceil(ratio*percentile(cfg['ordinary_fast_costs']['cells']['gpu_emc']['modes']['Full']['samples_seconds'])/calibration['median_seconds'])})
+                        cfg['fast_initial_delay_source']='live HIGH calibration; MID initial Full-profile ratio; then actual history'
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)

@@ -26,7 +26,7 @@ def load_costs(path, config):
         state_enabled=not config.get('m2_fast_no_state',mode!='wrist'))
     proxy=(mode=='pool2_agent' and contract.get('visual_mode')=='selective320'
         and config.get('m3_fast_alternation') and contract.get('visual_tokens')==320
-        and contract.get('state_enabled') is False and expected['state_enabled'] is False)
+        and contract.get('state_enabled') is False)
     if not proxy and any(contract.get(k)!=v for k,v in expected.items()):
         raise ValueError('Fast cost input geometry/state mismatch')
     positions='original_camera_and_text_coordinates_v1' if config.get('m3_ordinary_fast_positions') else 'contiguous_v1'
@@ -40,7 +40,7 @@ def load_costs(path, config):
             if len(sample['samples_seconds'])<4 or any(not math.isfinite(v) or v<=0 for v in values):
                 raise ValueError('Missing positive measured Full/Fast costs')
     return dict(costs,source=str(path),cost_geometry_scope=(
-        '320-token stateless timing prior reused for direct alternation; not measured pool2_agent energy. Live request timing and whole-task energy are recorded separately.'
+        '320-token stateless prior reused for direct alternation, not measured pool2_agent energy. Stateful Fast initial delay uses live task calibration; actual request timing and whole-task energy are recorded separately.'
         if proxy else 'matching measured input contract'))
 
 

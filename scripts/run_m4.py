@@ -90,8 +90,8 @@ def main():
         parser.error('--fast-alternate requires --ordinary-fast and matching stateful costs without position overrides')
     if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view not in ('dual','pool2_agent')):
         parser.error('--fast-no-state requires alternating dual-view Fast')
-    if args.ordinary_fast_view=='pool2_agent' and (not args.fast_no_state or args.ordinary_fast_tokens!=320 or args.ordinary_fast_positions):
-        parser.error('External64 plus wrist256 uses320 tokens, --fast-no-state, and native pooling positions')
+    if args.ordinary_fast_view=='pool2_agent' and (args.ordinary_fast_tokens!=320 or args.ordinary_fast_positions):
+        parser.error('External64 plus wrist256 uses320 tokens and native pooling positions')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
