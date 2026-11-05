@@ -476,7 +476,12 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 cfg.update(rtc_suite=suite)
                 cfg['screen'].update(suites=[suite], task_ids=[tid])
                 if adapter is None:
-                    base._infer_actions(model, prepared, task['instruction'], 50, {})
+                    context_only=bool(cfg.get('m3_ordinary_fast_context'))
+                    if context_only:
+                        from perceptbudget.context_preparation import prepare_context_only
+                        record['full_context_preparation']=prepare_context_only(model,prepared,task['instruction'],torch)
+                    else:
+                        base._infer_actions(model, prepared, task['instruction'], 50, {})
                     expected_views = 2 if kind == 'full' else 1
                     if model._pipe.pipeline.num_views != expected_views or \
                        model._pipe.pipeline.vision_seq != 256*expected_views or \
@@ -492,7 +497,10 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         fast_prepared = select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full')
                         if cfg.get('m2_fast_no_state',False):
                             fast_prepared['state'] = None
-                        base._infer_actions(wrist_model, fast_prepared, task['instruction'], 50, {})
+                        if context_only:
+                            record['fast_context_preparation']=prepare_context_only(wrist_model,fast_prepared,task['instruction'],torch)
+                        else:
+                            base._infer_actions(wrist_model, fast_prepared, task['instruction'], 50, {})
                         if visual_fast_mode.startswith('pool2'):
                             from scripts.diagnose_pool_parity import pool_check
                             layout=pool_check(wrist_model._pipe.pipeline,torch,np,'agent' if visual_fast_mode=='pool2_agent' else 'both')
