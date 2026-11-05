@@ -63,66 +63,6 @@ extern "C" int selective_pool464(const void* x,void* scores,void* selected,void*
  pack_both_tokens<8><<<(464*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
  return (int)cudaGetLastError();
 }
-
-// Restore the original visual multiplicity before attention. These are exact
-// bit copies: RoPE is still applied by FlashRT's unchanged native split kernel.
-__global__ void expand_rows(const unsigned short* x,const int* selected,
- const int* mapping,unsigned short* y,int visual,int prompt,int columns){
- int row=blockIdx.x,per=visual/2;__shared__ int source;
- if(threadIdx.x==0){
-  if(row>=512)source=visual+row-512;
-  else{
-   int camera=row/256,i=row%256,r=i/16,c=i%16,b=camera*64+(r/2)*8+c/2;
-   int representative=selected[b]?((r/2)*2*16+(c/2)*2):i;
-   int lo=0,hi=per;
-   while(lo<hi){int mid=(lo+hi)/2;if(mapping[camera*per+mid]<representative)lo=mid+1;else hi=mid;}
-   source=camera*per+lo;
-  }
- }
- __syncthreads();
- for(int c=threadIdx.x;c<columns;c+=blockDim.x)y[row*columns+c]=x[source*columns+c];
-}
-__global__ void gather_rows(const unsigned short* x,const int* mapping,
- unsigned short* y,int visual,int columns){
- int row=blockIdx.x,per=visual/2;
- int source=row<visual?(row/per)*256+mapping[row]:512+row-visual;
- for(int c=threadIdx.x;c<columns;c+=blockDim.x)y[row*columns+c]=x[source*columns+c];
-}
-extern "C" int expand_selected_rows(const void* x,const void* selected,const void* mapping,
- void* y,int visual,int prompt,int columns,void* stream){
- if((visual!=320&&visual!=464&&visual!=512)||prompt<0||prompt>200||columns<=0)return (int)cudaErrorInvalidValue;
- expand_rows<<<512+prompt,256,0,(cudaStream_t)stream>>>((const unsigned short*)x,
-  (const int*)selected,(const int*)mapping,(unsigned short*)y,visual,prompt,columns);
- return (int)cudaGetLastError();
-}
-extern "C" int gather_selected_rows(const void* x,const void* mapping,void* y,
- int visual,int prompt,int columns,void* stream){
- if((visual!=320&&visual!=464&&visual!=512)||prompt<0||prompt>200||columns<=0)return (int)cudaErrorInvalidValue;
- gather_rows<<<visual+prompt,256,0,(cudaStream_t)stream>>>((const unsigned short*)x,
-  (const int*)mapping,(unsigned short*)y,visual,columns);
- return (int)cudaGetLastError();
-}
-__global__ void pool_rows(const __nv_bfloat16* x,const int* selected,const int* mapping,
- __nv_bfloat16* y,int visual,int columns){
- int row=blockIdx.x,per=visual/2;
- int source=row<visual?(row/per)*256+mapping[row]:512+row-visual;
- int local=source%256;
- bool merge=row<visual&&selected[(source/256)*64+(local/32)*8+(local%16)/2];
- for(int c=threadIdx.x;c<columns;c+=blockDim.x){
-  if(!merge){y[row*columns+c]=x[source*columns+c];continue;}
-  float value=__bfloat162float(x[source*columns+c])+__bfloat162float(x[(source+1)*columns+c]);
-  value+=__bfloat162float(x[(source+16)*columns+c]);
-  value+=__bfloat162float(x[(source+17)*columns+c]);
-  y[row*columns+c]=__float2bfloat16_rn(value*.25f);
- }
-}
-extern "C" int pool_selected_rows(const void* x,const void* selected,const void* mapping,void* y,
- int visual,int prompt,int columns,void* stream){
- if((visual!=320&&visual!=464&&visual!=512)||prompt<0||prompt>200||columns<=0)return (int)cudaErrorInvalidValue;
- pool_rows<<<visual+prompt,256,0,(cudaStream_t)stream>>>((const __nv_bfloat16*)x,
-  (const int*)selected,(const int*)mapping,(__nv_bfloat16*)y,visual,columns);
- return (int)cudaGetLastError();
-}
 // Keep original camera/text RoPE coordinates after removing redundant tokens.
 __global__ void gather_selective_rope(const __nv_bfloat16* original,const int* mapping,
  __nv_bfloat16* output,int visual,int sequence){

@@ -72,3 +72,21 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 证据：[开发复算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054640.548752Z-fast-phase-dev-r2-e5670d46/review.json>)；[原始父目录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054715.837417Z-acceptance-m3-a62be153/recording.json>)；[资源释放重放](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T054305.690913Z-reset-release-replay-0a2e1b01/summary.json>)。68相关CPU检查通过，FlashRT未修改。
 
 下一步冻结当前源与成本表后做seed17/init1全40。保留原Full+Continue的35/40和q30的33/40比较，所有失败与在途推理能量均计入；不按验收结果改阈值或筛任务。
+
+
+## 2026-11-05 验收未通过及后续排查
+
+前述5任务通过不代表全组稳定。no-state464/v3在seed17/init1完成34项，27项成功；同34任务的原Full基线30项成功。所有已完成项及在途推理计入后4120.082J/335.506s，对照3942.054J/317.144s。48次Fast、496个Fast在途控制步均无额外成像。原计划40项，6项因三个准备阶段RAM保护缺失，不能算任务失败或假称已完成40项；已有7个超时，即使补齐也达不到预设35/40。因此停止原样重启，不采用此候选。[封存复算](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T055540.565300Z-energy-fast-frozen-all40-2c782222/rejected_summary.json>)。
+
+内存排查确认旧模拟器数据/模型在重置后已释放，观测数组不持有原生数据。新增可选按需词嵌入读取：BF16词表保持在checkpoint文件映射，只上传当前token行；不改tokenizer、缩放或模型权重。全部257152×2048值与原GPU表逐值一致，Full RTC的50×32输出差0。提前安装后，无仿真固定输入流程GPU保留内存约5932MiB，原约7016MiB；已分配表减少1004.5MiB。长场景常驻仍需验证，不声称所有RAM峰值已解决。该方式只在ordinary Fast候选自动开启；原Full基线保持原配置。[逐值/输出验证](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T065923.567719Z-fast-fixed-input-8ef657ad/summary.json>)。
+
+保留state及重建完整注意力也做了固定输入原型，不能据单帧误差声称闭环成败。完整注意力原型每挡Full/Fast各6样本，结果如下；原作者采样体与本地图在相同KV上差0。
+
+|频率|Full ms|Fast ms|Full J|Fast J|补齐相同时间窗口后的净节能J/次|
+|---|---:|---:|---:|---:|---:|
+|高频|463.91|440.82|10.865|10.617|-0.0368|
+|中频|636.62|615.87|9.940|9.689|0.0708|
+
+快3.3%–5.0%，但净收益不足，不扩大闭环。原型源码保存在`archive/expanded-attention-probes-20261105`（686fd06），从当前代码删除其分支；数据和GPU行路由/动态图检查完整保留。[实测成本](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T082939.130085Z-dual-selective-fast-87af879c/common_window_review.json>)。
+
+继续目标：Fast成功率保持稳定并完成seed17全40验收，目前未达到。下一候选先验证只重算变化较大的一个摄像头的SigLIP特征、另一摄像头保留最近Full特征，再用完整VLM和最新state生成新KV；不复用整份旧KV，不连续Fast。尚未实现或验证，不计入已有成果；先用seed7固定输入及配对小测。
