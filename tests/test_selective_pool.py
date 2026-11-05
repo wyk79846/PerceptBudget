@@ -1,10 +1,11 @@
 import torch
+import pytest
 from perceptbudget.selective_pool import compact
 
 
 def test_counts_order_and_wrist_exact():
     v=torch.arange(2*16*16*5,dtype=torch.float32).reshape(2,16,16,5)
-    for count in [0,32,64]:
+    for count in [0,8,32,64]:
         result,mask=compact(v,count)
         assert result.shape==(512-3*count,5)
         assert torch.equal(result[-256:],v[1].reshape(256,5))
@@ -44,9 +45,10 @@ def test_both_cameras_preserve_distinct_details_and_camera_order():
     assert torch.equal(output[160:288],v[1,:8].reshape(128,4))
 
 
-def test_both_cameras_native_rounding_reference_and_stable_ties():
+@pytest.mark.parametrize('merged',[8,32])
+def test_both_cameras_native_rounding_reference_and_stable_ties(merged):
     from perceptbudget.selective_pool import compact_both
     v=torch.ones(2,16,16,4,dtype=torch.bfloat16)
-    output,mask=compact_both(v)
-    assert mask[:,:32].all() and not mask[:,32:].any()
-    assert torch.equal(output,torch.ones(320,4,dtype=torch.bfloat16))
+    output,mask=compact_both(v,merged)
+    assert mask[:,:merged].all() and not mask[:,merged:].any()
+    assert torch.equal(output,torch.ones(512-6*merged,4,dtype=torch.bfloat16))

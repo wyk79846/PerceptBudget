@@ -10,15 +10,16 @@ TASK_IDS = (0, 3, 6)
 GROUPS = ('q30', 'joint')
 
 
-def visual_prefixes(full_lengths, fast_valid, fast_capacity):
+def visual_prefixes(full_lengths, fast_valid, fast_capacity, *, fast_visual_tokens=320,fast_mode='pool2_agent'):
     """Task-local tokenizer bounds, not historical task0 prompt lengths."""
     if (not full_lengths or len(full_lengths)>17 or
             full_lengths!=list(range(min(full_lengths),max(full_lengths)+1)) or
             not 512<=min(full_lengths)<=max(full_lengths)<=712 or
-            type(fast_valid) is not int or not 320<fast_valid<=320+fast_capacity):
+            fast_visual_tokens not in (320,464) or
+            type(fast_valid) is not int or not fast_visual_tokens<fast_valid<=fast_visual_tokens+fast_capacity):
         raise ValueError('Invalid task-local Full/Fast prefix envelope')
     return full_lengths+[fast_valid], dict(kind='task_tokenizer_state_bounds_and_current_stateless_text',
-        full=full_lengths,fast=[fast_valid],fast_mode='pool2_agent',fast_state_enabled=False,
+        full=full_lengths,fast=[fast_valid],fast_mode=fast_mode,fast_state_enabled=False,
         fast_prompt_capacity=fast_capacity,source='current task h50_state_prefix_lengths; no historical task restriction',
         unseen_prefix='abort before expert; no slow fallback or runtime capture')
 
@@ -210,7 +211,7 @@ def resume_full(source, config):
           'm3_event_identity',
           'm3_ordinary_turn_policy','m3_max_refresh_interval',
           'm3_feedback_policy','m3_feedback_minimum_steps',
-          'm3_ordinary_fast','m3_ordinary_fast_context','m3_ordinary_fast_policy',
+          'm3_ordinary_fast','m3_ordinary_fast_context','m3_ordinary_fast_policy','m3_ordinary_fast_visual_mode',
           'm4_common_low_tail_seconds','m4_policy_revision','rtc_critical_wait_prefix_policy')
     if (group not in ('q30','m3') or original.get('m4_acceptance_manifest')!=fixed
             or any(original.get(k)!=config.get(k) for k in keys)):

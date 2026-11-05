@@ -31,13 +31,14 @@ class TuneOnce:
         return result
 
 
-def clock_costs(infer, records, torch, run, write):
+def clock_costs(infer, records, torch, run, write, *, visual_tokens=320):
     """Hot request/hold costs after clock acknowledgement; one resident model."""
     from perceptbudget.three_frequency import ThreeClocks
     from perceptbudget.power import PowerMonitor
     from perceptbudget.device_clock_screen import energy_window,frequency_check
     clock=ThreeClocks(run);monitor=PowerMonitor(.02,max_gap_seconds=.1)
     result=dict(status='running',cells={},rows=[],restored=False,
+        fast_input_contract=dict(visual_mode='selective'+str(visual_tokens),visual_tokens=visual_tokens,state_enabled=False),
         scope='Fixed-input request energy after frequency acknowledgement; shared entry cost cancels in the same-time same-frequency mode comparison')
     entered=False
     try:
@@ -91,11 +92,11 @@ def kernel_checks(torch,np):
     for tied in (False,True):
         features=(torch.ones(2,16,16,1152) if tied else torch.randn(2,16,16,1152,generator=generator)).to(torch.bfloat16)
         gpu=features.cuda()
-        for count,reference,cameras in ((416,lambda:compact(features,32),1),(320,lambda:compact_both(features),2)):
+        for count,reference,cameras in ((416,lambda:compact(features,32),1),(320,lambda:compact_both(features),2),(464,lambda:compact_both(features,8),2)):
             gpu.copy_(features)
             scores=torch.empty(64*cameras,device='cuda',dtype=torch.float32)
             mask=torch.empty(64*cameras,device='cuda',dtype=torch.int32)
-            mapping=torch.empty(160*cameras,device='cuda',dtype=torch.int32)
+            mapping=torch.empty(count if cameras==2 else 160,device='cuda',dtype=torch.int32)
             output=torch.empty(count,1152,device='cuda',dtype=torch.bfloat16)
             function=getattr(lib,'selective_pool'+str(count))
             def call():
@@ -110,7 +111,7 @@ def kernel_checks(torch,np):
             # Change the content after capture: graph must select fresh tokens.
             changed=features.flip(1).contiguous()
             gpu.copy_(changed);graph.replay();torch.cuda.synchronize()
-            check=compact(changed,32)[0] if count==416 else compact_both(changed)[0]
+            check=compact(changed,32)[0] if count==416 else compact_both(changed,8 if count==464 else 32)[0]
             replay_error=float((output.cpu().float()-check.float()).abs().max())
             row=dict(visual_tokens=count,tied=tied,max_abs=error,mask_equal=same_mask,replay_changed_input_max_abs=replay_error)
             rows.append(row)
@@ -202,6 +203,7 @@ def main():
     parser.add_argument('--rollout-tasks',nargs='+',help='Explicit suite:task pairs, e.g. libero_spatial:0 libero_object:0 libero_goal:3')
     parser.add_argument('--author-audit-only',action='store_true',help='Compare current RTC graph with author function on saved inputs; no power blocks or rollout')
     parser.add_argument('--clock-costs',action='store_true',help='Measure Full/DualFast at HIGH and MID for ordinary-stage substitution')
+    parser.add_argument('--visual-tokens',type=int,choices=(320,464),default=320,help='Dual-camera selective token budget')
     args=parser.parse_args()
     if not args.kernel_only and args.source_run is None:parser.error('--source-run is required')
     if not 4<=args.block_requests<=20:parser.error('Use4..20 requests per power block')
@@ -209,6 +211,7 @@ def main():
     if (args.rollout_only or args.rollout_tasks) and not args.rollout_pair:parser.error('Rollout options require --rollout-pair')
     if args.author_audit_only and (args.kernel_only or args.rollout_pair):parser.error('Author audit is a standalone fixed-input comparison')
     if args.clock_costs and (args.kernel_only or args.rollout_pair or args.author_audit_only):parser.error('Clock costs are a standalone measurement')
+    if args.visual_tokens!=320 and (args.rollout_pair or args.author_audit_only):parser.error('Use464 for fixed inputs and clock costs; rollout uses run_m4')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import load_config,create_run,_write_json_atomically as write
@@ -216,6 +219,7 @@ def main():
     cfg=load_config(repo_root=ROOT)
     if args.source_run:
         cfg.update(json.loads((args.source_run/'run.json').read_text())['config_snapshot'])
+    cfg.update(m2_visual_fast_mode='selective'+str(args.visual_tokens),m2_fast_no_state=True)
     with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         run=create_run(cfg,'M4','dual-selective-fast',repo_root=ROOT)
@@ -267,17 +271,20 @@ def main():
             model=base._load_and_check_model(cfg,torch);result['model_loads']=1
             if model._pipe.pipeline is not None:raise ValueError('Install probe tuning guard before first pipeline')
             tuning=TuneOnce(model._pipe.gemm);model._pipe.gemm=tuning
-            enable(model);base._infer_actions(model,records[0]['snapshot'],task['instruction'],cfg['H'],{})
+            from perceptbudget.context_preparation import prepare_context_only
+            enable(model)
+            result['full_context_preparation']=prepare_context_only(model,records[0]['snapshot'],task['instruction'],torch)
             models={'Full':model}
-            peers=[('DualFast','selective320')] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast','selective320')]
+            fast_kind='selective'+str(args.visual_tokens)
+            peers=[('DualFast',fast_kind)] if args.rollout_only or args.author_audit_only or args.clock_costs else [('OldFast','pool2_agent'),('DualFast',fast_kind)]
             for label,kind in peers:
-                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=20)
+                frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=True,no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity',20))
                 peer=VLAModel(frontend,'torch');enable(peer)
                 snap=dict(records[0]['snapshot'],state=None)
-                base._infer_actions(peer,snap,task['instruction'],cfg['H'],{})
+                result.setdefault('fast_context_preparation',{})[label]=prepare_context_only(peer,snap,task['instruction'],torch)
                 models[label]=peer;mem(label+'_ready')
             result['geometry']={label:dict(visual_tokens=m._pipe.pipeline.vision_seq_enc,state=label=='Full',views=m._pipe.pipeline.num_views,
-                camera_tokens=[256,256] if label=='Full' else [64,256] if label=='OldFast' else [160,160]) for label,m in models.items()}
+                camera_tokens=[256,256] if label=='Full' else [64,256] if label=='OldFast' else [args.visual_tokens//2]*2) for label,m in models.items()}
             for m in models.values():release_unused_native_expert(m,torch)
             mem('native_experts_released')
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
@@ -324,7 +331,7 @@ def main():
                 raw,_=graph.replay(record['noise'],record['previous'],s['delay'],s['executed'])
                 return raw.detach().cpu().numpy().copy()
             if args.clock_costs:
-                result['clock_costs']=clock_costs(infer,records,torch,run,write)
+                result['clock_costs']=clock_costs(infer,records,torch,run,write,visual_tokens=args.visual_tokens)
                 result.update(status='completed',clocks_changed=True,production_default_changed=False)
                 return 0
             if args.author_audit_only:
@@ -376,9 +383,9 @@ def main():
             from perceptbudget.selective_pool import compact_both
             pl=models['DualFast']._pipe.pipeline
             bits=np.empty(512*1152,np.uint16);pl.bufs['vision_x'].download(bits)
-            expected,_=compact_both(torch.from_numpy(bits).view(torch.bfloat16).reshape(2,16,16,1152))
-            packed=np.empty(320*1152,np.uint16);pl.bufs['vision_x_pooled'].download(packed)
-            if not torch.equal(expected,torch.from_numpy(packed).view(torch.bfloat16).reshape(320,1152)):
+            expected,_=compact_both(torch.from_numpy(bits).view(torch.bfloat16).reshape(2,16,16,1152),8 if args.visual_tokens==464 else 32)
+            packed=np.empty(args.visual_tokens*1152,np.uint16);pl.bufs['vision_x_pooled'].download(packed)
+            if not torch.equal(expected,torch.from_numpy(packed).view(torch.bfloat16).reshape(args.visual_tokens,1152)):
                 raise RuntimeError('Live selective packing differs from CPU reference')
             result['live_layout_exact']=True
             monitor=PowerMonitor(.02,max_gap_seconds=.1);monitor.start();time.sleep(.3)

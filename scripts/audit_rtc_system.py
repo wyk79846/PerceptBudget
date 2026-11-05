@@ -386,7 +386,7 @@ def audit(run):
                         check('ordinary_same_window_energy',proposal['mode']==mode and abs(proposal['service_energy_j']-cell['mean_energy_j'])<1e-8
                             and abs(proposal['continue_energy_j']-tail*c['hold_power_w'])<1e-8
                             and abs(proposal['comparable_window_energy_j']-total)<1e-8,pid)
-                    estimate=max(mode_histories['selective320:'+profile])
+                    estimate=max(mode_histories[cfg.get('m3_ordinary_fast_visual_mode','selective320')+':'+profile])
                     check('ordinary_fast_delay_history',f['fast_delay_steps']==estimate,pid)
                     allowed=(ordinary and prior!='Fast' and not decision['deadline_already_unreachable']
                         and estimate<=decision['rtc_delay_steps'] and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds'])
@@ -394,7 +394,7 @@ def audit(run):
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
-                expected_mode='selective320' if declared=='Fast' else 'full'
+                expected_mode=cfg.get('m3_ordinary_fast_visual_mode','selective320') if declared=='Fast' else 'full'
             if cfg.get('m3_fast_enabled'):
                 choice=request.get('m3_fast_choice',{})
                 declared=choice.get('mode')
@@ -508,6 +508,10 @@ def audit(run):
                 check('selective320_camera_counts',visual.get('pooled_view')=='both'
                     and visual.get('compression')=='redundancy_selected_32_of64_blocks_per_camera'
                     and visual.get('external_tokens')==160 and visual.get('wrist_tokens')==160,pid)
+            if expected_mode=='selective464':
+                check('selective464_camera_counts',visual.get('pooled_view')=='both'
+                    and visual.get('compression')=='redundancy_selected_8_of64_blocks_per_camera'
+                    and visual.get('external_tokens')==232 and visual.get('wrist_tokens')==232,pid)
             check('fresh_visual_no_stale_kv','kv_recompute' not in request,pid)
         if cfg.get('m2_expert_recompute'):
             k=request.get('kv_recompute',{})

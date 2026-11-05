@@ -8,7 +8,7 @@ def compact(vision, merged_blocks):
     """
     import torch
     if vision.ndim!=4 or vision.shape[:3]!=(2,16,16):raise ValueError('Require two16x16 feature grids')
-    if merged_blocks not in (0,32,64):raise ValueError('Use0,32,64 merged blocks')
+    if merged_blocks not in (0,8,32,64):raise ValueError('Use0,8,32,64 merged blocks')
     if merged_blocks==0:return vision.reshape(512,-1),None
     x=vision[0].float()
     blocks=x.reshape(8,2,8,2,-1).permute(0,2,1,3,4).reshape(64,4,-1)
@@ -31,13 +31,14 @@ def compact(vision, merged_blocks):
     return torch.cat((external,vision[1].reshape(256,-1))),selected
 
 
-def compact_both(vision):
+def compact_both(vision,merged_blocks=32):
     """Keep160 tokens per camera by merging32 redundant2x2 blocks in each.
 
     Scores describe local feature redundancy, not semantic task importance.
     Camera and spatial order are preserved; each view selects independently.
     """
     import torch
-    external, first = compact(vision, 32)
-    wrist, second = compact(vision.flip(0), 32)
-    return torch.cat((external[:160], wrist[:160])), torch.stack((first, second))
+    external, first = compact(vision, merged_blocks)
+    wrist, second = compact(vision.flip(0), merged_blocks)
+    per_camera=256-3*merged_blocks
+    return torch.cat((external[:per_camera], wrist[:per_camera])), torch.stack((first, second))

@@ -267,7 +267,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
 
     explicit_visual=bool(config.get('m4_enabled') or config.get('m3_fast_enabled') or config.get('m3_ordinary_fast_context'))
     dual_visual=visual_comparison or explicit_visual
-    if explicit_visual:visual_fast_mode='selective320' if config.get('m3_ordinary_fast_context') else 'selective416' if config.get('m3_fast_selective416') else 'pool2_agent'
+    if explicit_visual:visual_fast_mode=config.get('m3_ordinary_fast_visual_mode','selective320') if config.get('m3_ordinary_fast_context') else 'selective416' if config.get('m3_fast_selective416') else 'pool2_agent'
     if kind not in ('full', 'single'):
         raise ValueError('Unknown quality geometry')
     if record_only and (kind != 'full' or not task_plan or resume or recompute_comparison or visual_comparison
@@ -279,7 +279,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     if visual_comparison and (kind!='full' or not task_plan or resume or recompute_comparison
                              or split_delay_comparison or single_insertion or paired_split):
         raise ValueError('Fresh visual comparison requires an isolated Full-geometry task plan')
-    if visual_fast_mode not in ('wrist','pool2','pool2_agent','selective416','selective320'):
+    if visual_fast_mode not in ('wrist','pool2','pool2_agent','selective416','selective320','selective464'):
         raise ValueError('Unsupported visual Fast mode')
     if split_delay_comparison and not recompute_comparison:
         raise ValueError('Split-delay comparison requires expert recompute comparison')
@@ -543,7 +543,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         lengths=full_lengths+fast_lengths
                     elif cfg.get('m4_acceptance_group') in ('joint','m3_fast') or cfg.get('m3_ordinary_fast_context'):
                         from perceptbudget.m4_acceptance import visual_prefixes
-                        lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'])
+                        from perceptbudget.rtc_visual_alternation import visual_geometry
+                        lengths,coverage=visual_prefixes(lengths,wrist_valid,cfg['m4_fast_prompt_capacity'],
+                            fast_visual_tokens=visual_geometry(visual_fast_mode)['visual_tokens'],fast_mode=visual_fast_mode)
                     else:
                         from perceptbudget.shared_visual_context import historical_visual_prefixes
                         lengths, coverage = historical_visual_prefixes(cfg, suite, tid,
@@ -629,7 +631,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     cfg['rtc_initial_delays_by_compute']={
                         'full:baseline':cfg['rtc_initial_delay_steps'],
                         'full:gpu_emc':cfg['m3_low_full_initial_delay'],
-                        **{'selective320:'+p:math.ceil(percentile(c['modes']['Fast']['samples_seconds'])/calibration['median_seconds'])
+                        **{visual_fast_mode+':'+p:math.ceil(percentile(c['modes']['Fast']['samples_seconds'])/calibration['median_seconds'])
                            for p,c in cfg['ordinary_fast_costs']['cells'].items()}}
                 cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
                 for view in views:

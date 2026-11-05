@@ -15,6 +15,10 @@ def load_costs(path, config):
         raise ValueError('Ordinary Fast needs completed restored clock costs')
     for field in ('H','N','precision','checkpoint_provenance_revision','rtc_beta'):
         if recorded[field]!=config[field]:raise ValueError('Fast cost model mismatch: '+field)
+    contract=costs.get('fast_input_contract',dict(visual_mode='selective320',visual_tokens=320,state_enabled=False))
+    mode=config.get('m3_ordinary_fast_visual_mode','selective320')
+    if mode not in ('selective320','selective464') or contract!=dict(visual_mode=mode,visual_tokens=int(mode[9:]),state_enabled=False):
+        raise ValueError('Fast cost input geometry/state mismatch')
     for profile in ('baseline','gpu_emc'):
         cell=costs['cells'][profile]
         for mode in ('Full','Fast'):

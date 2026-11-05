@@ -2,7 +2,7 @@
 
 
 def pipeline_type(base_type, *, visual_tokens=416):
-    if visual_tokens not in (320,416):raise ValueError('Selective pooling supports320 or416 tokens')
+    if visual_tokens not in (320,416,464):raise ValueError('Selective pooling supports320,416 or464 tokens')
     class SelectivePipeline(base_type):
         def _allocate_buffers(self):
             if self.num_views!=2 or self.vision_pool_factor!=2:
@@ -17,10 +17,10 @@ def pipeline_type(base_type, *, visual_tokens=416):
             import torch
             from perceptbudget.selective_pool_cuda import load
             self._selector_lib=load()
-            cameras=2 if visual_tokens==320 else 1
+            cameras=1 if visual_tokens==416 else 2
             self._selector_scores=torch.empty(64*cameras,device='cuda',dtype=torch.float32)
             self._selector_mask=torch.empty(64*cameras,device='cuda',dtype=torch.int32)
-            self._selector_mapping=torch.empty(160*cameras,device='cuda',dtype=torch.int32)
+            self._selector_mapping=torch.empty(visual_tokens if cameras==2 else 160,device='cuda',dtype=torch.int32)
 
         def record_infer_graph(self,external_stream_int=None):
             self._prepare_selector()

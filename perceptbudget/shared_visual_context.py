@@ -72,22 +72,22 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
 
 
 def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None):
-    if no_state and fast_kind not in ('pool2_agent','selective320'):
+    if no_state and fast_kind not in ('pool2_agent','selective320','selective464'):
         raise ValueError('Stateless Fast experiment supports mixed pooling only')
-    if fast_kind not in ('wrist','pool2','pool2_agent','selective416','selective320'):
+    if fast_kind not in ('wrist','pool2','pool2_agent','selective416','selective320','selective464'):
         raise ValueError('Unknown shared visual geometry')
     if full.num_views != 2 or full._vision_pool_factor != 1:
         raise ValueError('Require unpooled dual-view source')
     if getattr(full, '_pb_context_only', False):
         raise ValueError('Prepare shared frontend before releasing native expert')
     clone = copy.copy(full)
-    if fast_kind in ('pool2_agent','selective416','selective320'):
+    if fast_kind in ('pool2_agent','selective416','selective320','selective464'):
         from perceptbudget.compact_state import frontend_type
         from perceptbudget.mixed_view_pool import pipeline_type
         from flash_rt.models.pi05.pipeline_rtx import Pi05Pipeline
-        if fast_kind in ('selective416','selective320'):
+        if fast_kind in ('selective416','selective320','selective464'):
             from perceptbudget.selective_pipeline import pipeline_type as selective_type
-            selected_type=selective_type(Pi05Pipeline,visual_tokens=320 if fast_kind=='selective320' else 416)
+            selected_type=selective_type(Pi05Pipeline,visual_tokens=int(fast_kind.removeprefix('selective')))
         else:selected_type=pipeline_type(Pi05Pipeline,'agent')
         kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
                            pipeline_type=selected_type,exact_no_state=no_state,

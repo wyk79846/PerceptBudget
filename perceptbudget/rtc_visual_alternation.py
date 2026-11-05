@@ -5,11 +5,11 @@ from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
 
 
 def visual_geometry(mode):
-    if mode not in ('full','wrist','pool2','pool2_agent','selective416','selective320'):
+    if mode not in ('full','wrist','pool2','pool2_agent','selective416','selective320','selective464'):
         raise ValueError('Unknown visual context mode')
     return dict(num_views=1 if mode=='wrist' else 2,
-                visual_tokens=416 if mode=='selective416' else 320 if mode in ('pool2_agent','selective320') else 128 if mode=='pool2' else 256 if mode=='wrist' else 512,
-                vision_pool_factor=2 if mode.startswith('pool2') or mode in ('selective416','selective320') else 1)
+                visual_tokens=464 if mode=='selective464' else 416 if mode=='selective416' else 320 if mode in ('pool2_agent','selective320') else 128 if mode=='pool2' else 256 if mode=='wrist' else 512,
+                vision_pool_factor=2 if mode.startswith('pool2') or mode in ('selective416','selective320','selective464') else 1)
 
 
 def configure_explicit_inputs(config):
@@ -56,11 +56,11 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         """Two bounded geometry banks, not one enlarged global limit."""
         lengths = sorted(set(lengths))
         fast_tokens = visual_geometry(self.fast_mode())['visual_tokens']
-        if self.fast_mode()=='selective416':
+        if self.fast_mode() in ('selective416','selective464'):
             coverage=self.config['m2_visual_prefix_coverage']
             full=coverage['full'];wrist=coverage['fast']
             if set(full)&set(wrist) or set(full+wrist)!=set(lengths):
-                raise ValueError('Selective416 prefix families overlap or differ from prepared lengths')
+                raise ValueError('Selective prefix families overlap or differ from prepared lengths')
         else:
             wrist = [n for n in lengths if type(n) is int and fast_tokens <= n <= fast_tokens+200]
             full = [n for n in lengths if type(n) is int and 512 <= n <= 712]
@@ -156,7 +156,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             camera_indices=[1] if mode == 'wrist' else [0, 1],
             num_views=self.pipeline.num_views, visual_tokens=self.pipeline.vision_seq_enc,
             vision_pool_factor=getattr(self.pipeline,'vision_pool_factor',1),
-            pooled_view='agent' if mode in ('pool2_agent','selective416') else 'both' if mode in ('pool2','selective320') else None,
+            pooled_view='agent' if mode in ('pool2_agent','selective416') else 'both' if mode in ('pool2','selective320','selective464') else None,
             source_observation_step=request.get('observation_step', 0),
             source_prediction_id=request.get('prediction_id'),
             image_input_sha256=[hashlib.sha256(x.tobytes()).hexdigest() for x in inputs['images']],
@@ -165,6 +165,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             request['context_refresh'].update(compression='redundancy_selected_32_of64_blocks',external_tokens=160,wrist_tokens=256)
         if mode=='selective320':
             request['context_refresh'].update(compression='redundancy_selected_32_of64_blocks_per_camera',external_tokens=160,wrist_tokens=160)
+        if mode=='selective464':
+            request['context_refresh'].update(compression='redundancy_selected_8_of64_blocks_per_camera',external_tokens=232,wrist_tokens=232)
         if guided:
             self._guided_requests += 1
         return actions

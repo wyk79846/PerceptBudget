@@ -19,15 +19,16 @@ __global__ void score_blocks(const __nv_bfloat16* x,float* scores){
  for(int n=128;n;n/=2){if(t<n)sums[0][t]+=sums[0][t+n];__syncthreads();}
  if(t==0)scores[camera*64+b]=sums[0][0];
 }
-__global__ void choose_blocks(const float* score,int* selected,int* mapping){
+template<int MERGED> __global__ void choose_blocks(const float* score,int* selected,int* mapping){
  if(threadIdx.x)return;
- score+=blockIdx.x*64;selected+=blockIdx.x*64;mapping+=blockIdx.x*160;
- for(int i=0;i<64;i++){int rank=0;for(int j=0;j<64;j++)if(score[j]<score[i]||(score[j]==score[i]&&j<i))rank++;selected[i]=(rank<32);}
+ score+=blockIdx.x*64;selected+=blockIdx.x*64;mapping+=blockIdx.x*(256-3*MERGED);
+ for(int i=0;i<64;i++){int rank=0;for(int j=0;j<64;j++)if(score[j]<score[i]||(score[j]==score[i]&&j<i))rank++;selected[i]=(rank<MERGED);}
  int k=0;for(int i=0;i<256;i++){int r=i/16,c=i%16,b=(r/2)*8+c/2;if(!selected[b]||(!(r%2)&&!(c%2)))mapping[k++]=i;}
 }
-__global__ void pack_both_tokens(const __nv_bfloat16* x,const int* selected,const int* mapping,__nv_bfloat16* y){
- int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=320*1152)return;
- int token=j/1152,d=j%1152,camera=token/160,i=mapping[token];
+template<int MERGED> __global__ void pack_both_tokens(const __nv_bfloat16* x,const int* selected,const int* mapping,__nv_bfloat16* y){
+ const int per_camera=256-3*MERGED;
+ int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=2*per_camera*1152)return;
+ int token=j/1152,d=j%1152,camera=token/per_camera,i=mapping[token];
  int r=i/16,c=i%16,b=camera*64+(r/2)*8+c/2;x+=camera*256*1152;
  if(!selected[b]){y[j]=x[i*1152+d];return;}
  float v=__bfloat162float(x[i*1152+d])+__bfloat162float(x[(i+1)*1152+d]);
@@ -44,14 +45,21 @@ __global__ void pack_tokens(const __nv_bfloat16* x,const int* selected,const int
 extern "C" int selective_pool416(const void* x,void* scores,void* selected,void* mapping,void* y,void* stream){
  cudaStream_t s=(cudaStream_t)stream;
  score_blocks<<<64,256,0,s>>>((const __nv_bfloat16*)x,(float*)scores);
- choose_blocks<<<1,1,0,s>>>((float*)scores,(int*)selected,(int*)mapping);
+ choose_blocks<32><<<1,1,0,s>>>((float*)scores,(int*)selected,(int*)mapping);
  pack_tokens<<<(416*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
  return (int)cudaGetLastError();
 }
 extern "C" int selective_pool320(const void* x,void* scores,void* selected,void* mapping,void* y,void* stream){
  cudaStream_t s=(cudaStream_t)stream;
  score_blocks<<<128,256,0,s>>>((const __nv_bfloat16*)x,(float*)scores);
- choose_blocks<<<2,1,0,s>>>((float*)scores,(int*)selected,(int*)mapping);
- pack_both_tokens<<<(320*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
+ choose_blocks<32><<<2,1,0,s>>>((float*)scores,(int*)selected,(int*)mapping);
+ pack_both_tokens<32><<<(320*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
+ return (int)cudaGetLastError();
+}
+extern "C" int selective_pool464(const void* x,void* scores,void* selected,void* mapping,void* y,void* stream){
+ cudaStream_t s=(cudaStream_t)stream;
+ score_blocks<<<128,256,0,s>>>((const __nv_bfloat16*)x,(float*)scores);
+ choose_blocks<8><<<2,1,0,s>>>((float*)scores,(int*)selected,(int*)mapping);
+ pack_both_tokens<8><<<(464*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
  return (int)cudaGetLastError();
 }

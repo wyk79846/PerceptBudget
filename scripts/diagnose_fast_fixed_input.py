@@ -31,6 +31,7 @@ def main():
     selective=parser.add_mutually_exclusive_group()
     selective.add_argument('--selective416',action='store_true',help='Test production selective416 frontend with state')
     selective.add_argument('--selective320',action='store_true',help='Separate state and dual selective320 effects on identical recorded inputs')
+    selective.add_argument('--selective464',action='store_true',help='Mild dual-view pooling,8 of64 blocks per camera')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     args=parser.parse_args()
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
@@ -63,8 +64,8 @@ def main():
             torch,_=base._check_cuda_and_native(cfg);torch.use_deterministic_algorithms(True)
             saved_summary=json.loads((args.source_run/'summary.json').read_text())
             frame_index=recorded_frame_index(saved_summary,args.observation_step)
-            with np.load(args.source_run/'rtc/q5_frames.npz') as frames:
-                frame=frames['frames'][frame_index]
+            from perceptbudget.trace_frames import read_recorded_frame
+            frame=read_recorded_frame(args.source_run/'rtc/q5_frames_spool.npy',frame_index)
             raw=np.asarray(r['observation_raw_state'],np.float32)
             stats=load_libero_norm_stats(cfg['norm_stats_path'])
             snapshot=dict(images=[image_input(frame[:,:256]),image_input(frame[:,256:])],raw_state=raw,state=normalize_state(raw,stats))
@@ -85,7 +86,8 @@ def main():
             # valid prefix tokens attend; no padding token enters the expert.
             # Avoid the legacy state=None exact-length pipeline reconstruction.
             import types
-            frontend=wrist_frontend(model._pipe,torch,fast_kind='selective416' if args.selective416 else 'selective320' if args.selective320 else 'pool2_agent',no_state=False)
+            kind='selective464' if args.selective464 else 'selective416' if args.selective416 else 'selective320' if args.selective320 else 'pool2_agent'
+            frontend=wrist_frontend(model._pipe,torch,fast_kind=kind,no_state=False)
             def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
             frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
             model._pipe._set_prompt_per_length=types.MethodType(fixed_prompt,model._pipe)
@@ -111,19 +113,19 @@ def main():
                 data=dict(snapshot,state=snapshot['state'] if state else None)
                 valid=adapter._prepare_context(data,task['instruction'],{},guided=True)
                 pl=frontend._pipe.pipeline
-                expected=(512 if name.startswith('Full') else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
+                expected=(512 if name.startswith('Full') else 464 if args.selective464 else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
-                    if args.selective416 or args.selective320:
+                    if args.selective416 or args.selective320 or args.selective464:
                         from perceptbudget.selective_pool import compact,compact_both
                         bits=np.empty(512*1152,dtype=np.uint16);pl.bufs['vision_x'].download(bits)
                         features=torch.from_numpy(bits).view(torch.bfloat16).reshape(2,16,16,1152)
-                        count=416 if args.selective416 else 320
-                        expected_tokens,_=compact(features,32) if args.selective416 else compact_both(features)
+                        count=464 if args.selective464 else 416 if args.selective416 else 320
+                        expected_tokens,_=compact(features,32) if args.selective416 else compact_both(features,8 if args.selective464 else 32)
                         bits=np.empty(count*1152,dtype=np.uint16);pl.bufs['vision_x_pooled'].download(bits)
                         actual=torch.from_numpy(bits).view(torch.bfloat16).reshape(count,1152)
-                        layout=dict(max_abs=float((actual.float()-expected_tokens.float()).abs().max()),mismatched_elements=int((actual!=expected_tokens).sum()),camera_token_counts=[160,256] if args.selective416 else [160,160])
+                        layout=dict(max_abs=float((actual.float()-expected_tokens.float()).abs().max()),mismatched_elements=int((actual!=expected_tokens).sum()),camera_token_counts=[160,256] if args.selective416 else [232,232] if args.selective464 else [160,160])
                     else:layout=pool_check(pl,torch,np,'agent')
                     result.setdefault('pooling_checks',{})[name]=layout
                     if layout['mismatched_elements']:raise ValueError('Native pooling differs from CPU reference')

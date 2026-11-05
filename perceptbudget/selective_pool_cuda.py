@@ -18,7 +18,7 @@ def load():
     directory.mkdir(parents=True,exist_ok=True);library=directory/'selective_pool.so'
     if not library.exists():subprocess.run(['/usr/local/cuda/bin/nvcc',*flags,str(source),'-o',str(library)],check=True)
     lib=ctypes.CDLL(str(library))
-    for name in ('selective_pool416','selective_pool320'):
+    for name in ('selective_pool416','selective_pool320','selective_pool464'):
         function=getattr(lib,name)
         function.argtypes=[ctypes.c_void_p]*6
         function.restype=ctypes.c_int

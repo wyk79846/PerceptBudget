@@ -60,3 +60,40 @@ def test_fast_capture_cannot_silently_revert_to_unused_inference_images(monkeypa
     monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--ordinary-fast',
         '--low-full','--three-frequency','--full-capture','--dry-run'])
     with pytest.raises(SystemExit):run_m4.main()
+
+
+def test_mild_fast_uses_shorter_real_encoder_and_exact_geometry_bank(monkeypatch):
+    from types import SimpleNamespace
+    from perceptbudget.rtc_visual_alternation import visual_geometry,FreshViewRTCAdapter
+    from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
+    from perceptbudget.selective_pipeline import pipeline_type
+    from perceptbudget.m4_acceptance import visual_prefixes
+    assert visual_geometry('selective464')['visual_tokens']==464
+    class Base:
+        def _allocate_buffers(self):return self.encoder_seq_len,self.total_kv
+    pipeline=pipeline_type(Base,visual_tokens=464)()
+    pipeline.num_views=2;pipeline.vision_pool_factor=2;pipeline.max_prompt_len=32;pipeline.chunk_size=50
+    assert pipeline._allocate_buffers()==(496,546)
+    lengths,coverage=visual_prefixes(list(range(646,663)),477,32,
+        fast_visual_tokens=464,fast_mode='selective464')
+    prepared=[]
+    def prepare(self,family,progress=None):
+        prepared.append(family)
+        self.step_bank=SimpleNamespace(entries={n:(n,n) for n in family})
+        return dict(prepare_seconds=0.)
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
+    adapter=object.__new__(FreshViewRTCAdapter)
+    adapter.config=dict(m2_visual_fast_mode='selective464',m2_visual_prefix_coverage=coverage,
+        source_prefix_coverage_rule='h50_state8_tokenizer_bounds_v1')
+    adapter.torch=SimpleNamespace(cuda=SimpleNamespace(graph_pool_handle=object))
+    adapter.prepare_step_bank(lengths)
+    assert prepared==[list(range(646,663)),[477]]
+
+
+def test_mild_fast_rejects_320_costs_before_any_model_load(tmp_path):
+    from perceptbudget.ordinary_fast import load_costs
+    config=dict(H=50,N=5,precision='bfloat16',checkpoint_provenance_revision='frozen',rtc_beta=5.,
+        m3_ordinary_fast_visual_mode='selective464')
+    (tmp_path/'run.json').write_text(json.dumps(dict(config_snapshot=config)))
+    path=tmp_path/'costs.json';path.write_text(json.dumps(dict(status='completed',restored=True)))
+    with pytest.raises(ValueError,match='geometry/state mismatch'):load_costs(path,config)
