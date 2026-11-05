@@ -13,11 +13,24 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 
+def recorded_frame_index(summary, observation_step):
+    """Request-only capture uses a compact frame array, not control-step indices."""
+    capture=summary['episode'].get('continue_capture')
+    if capture and capture.get('frame_sampling')=='request observations only':
+        steps=capture['frame_steps']
+        if steps.count(observation_step)!=1:
+            raise ValueError('Require one saved request frame at selected observation step')
+        return steps.index(observation_step)
+    return observation_step
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-run',type=Path,required=True)
     parser.add_argument('--observation-step',type=int,default=64)
-    parser.add_argument('--selective416',action='store_true',help='Test production selective416 frontend with state')
+    selective=parser.add_mutually_exclusive_group()
+    selective.add_argument('--selective416',action='store_true',help='Test production selective416 frontend with state')
+    selective.add_argument('--selective320',action='store_true',help='Separate state and dual selective320 effects on identical recorded inputs')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     args=parser.parse_args()
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
@@ -48,7 +61,10 @@ def main():
         with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             torch,_=base._check_cuda_and_native(cfg);torch.use_deterministic_algorithms(True)
-            frame=np.load(args.source_run/'rtc/q5_frames.npz')['frames'][args.observation_step]
+            saved_summary=json.loads((args.source_run/'summary.json').read_text())
+            frame_index=recorded_frame_index(saved_summary,args.observation_step)
+            with np.load(args.source_run/'rtc/q5_frames.npz') as frames:
+                frame=frames['frames'][frame_index]
             raw=np.asarray(r['observation_raw_state'],np.float32)
             stats=load_libero_norm_stats(cfg['norm_stats_path'])
             snapshot=dict(images=[image_input(frame[:,:256]),image_input(frame[:,256:])],raw_state=raw,state=normalize_state(raw,stats))
@@ -57,22 +73,25 @@ def main():
             import hashlib
             hashes=[hashlib.sha256(x.tobytes()).hexdigest() for x in snapshot['images']]
             if hashes!=r['context_refresh']['image_input_sha256']:raise ValueError('Recorded image preprocessing differs')
-            result['input_checks']=dict(images_exact=True,state_exact=True)
+            result['input_checks']=dict(images_exact=True,state_exact=True,frame_index=frame_index)
             task=base._load_tasks([source['screen']['task_ids'][0]],[source['screen']['suites'][0]])[0]
             model=base._load_and_check_model(cfg,torch);result['model_loads']=1
             from flash_rt.subgraphs.pi05.context_action import enable
             from flash_rt.api import VLAModel
-            enable(model);base._infer_actions(model,snapshot,task['instruction'],cfg['H'],{})
+            from perceptbudget.context_preparation import prepare_context_only
+            enable(model)
+            result['full_context_preparation']=prepare_context_only(model,snapshot,task['instruction'],torch)
             # Both conditions share one fixed-capacity context. Only actual
             # valid prefix tokens attend; no padding token enters the expert.
             # Avoid the legacy state=None exact-length pipeline reconstruction.
             import types
-            frontend=wrist_frontend(model._pipe,torch,fast_kind='selective416' if args.selective416 else 'pool2_agent',no_state=False)
+            frontend=wrist_frontend(model._pipe,torch,fast_kind='selective416' if args.selective416 else 'selective320' if args.selective320 else 'pool2_agent',no_state=False)
             def fixed_prompt(self,state,prompt_len):self._set_prompt_fixed(prompt_len)
             frontend._set_prompt_per_length=types.MethodType(fixed_prompt,frontend)
             model._pipe._set_prompt_per_length=types.MethodType(fixed_prompt,model._pipe)
             pooled=VLAModel(frontend,'torch')
-            enable(pooled);base._infer_actions(pooled,snapshot,task['instruction'],cfg['H'],{})
+            enable(pooled)
+            result['fast_context_preparation']=prepare_context_only(pooled,snapshot,task['instruction'],torch)
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
             # Initialize the frozen expert attention/norm implementation via normal adapter.
@@ -96,14 +115,15 @@ def main():
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
-                    if args.selective416:
-                        from perceptbudget.selective_pool import compact
+                    if args.selective416 or args.selective320:
+                        from perceptbudget.selective_pool import compact,compact_both
                         bits=np.empty(512*1152,dtype=np.uint16);pl.bufs['vision_x'].download(bits)
                         features=torch.from_numpy(bits).view(torch.bfloat16).reshape(2,16,16,1152)
-                        expected_tokens,_=compact(features,32)
-                        bits=np.empty(416*1152,dtype=np.uint16);pl.bufs['vision_x_pooled'].download(bits)
-                        actual=torch.from_numpy(bits).view(torch.bfloat16).reshape(416,1152)
-                        layout=dict(max_abs=float((actual.float()-expected_tokens.float()).abs().max()),mismatched_elements=int((actual!=expected_tokens).sum()),camera_token_counts=[160,256])
+                        count=416 if args.selective416 else 320
+                        expected_tokens,_=compact(features,32) if args.selective416 else compact_both(features)
+                        bits=np.empty(count*1152,dtype=np.uint16);pl.bufs['vision_x_pooled'].download(bits)
+                        actual=torch.from_numpy(bits).view(torch.bfloat16).reshape(count,1152)
+                        layout=dict(max_abs=float((actual.float()-expected_tokens.float()).abs().max()),mismatched_elements=int((actual!=expected_tokens).sum()),camera_token_counts=[160,256] if args.selective416 else [160,160])
                     else:layout=pool_check(pl,torch,np,'agent')
                     result.setdefault('pooling_checks',{})[name]=layout
                     if layout['mismatched_elements']:raise ValueError('Native pooling differs from CPU reference')
