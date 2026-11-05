@@ -93,6 +93,7 @@ def main():
             result['input_checks']=dict(images_exact=True,state_exact=True,frame_index=frame_index)
             task=base._load_tasks([source['screen']['task_ids'][0]],[source['screen']['suites'][0]])[0]
             model=base._load_and_check_model(cfg,torch);result['model_loads']=1
+            result['mapped_embedding_initial']=getattr(model._pipe,'_pb_mapped_embedding_record',None)
             from flash_rt.subgraphs.pi05.context_action import enable
             from flash_rt.api import VLAModel
             from perceptbudget.context_preparation import prepare_context_only
@@ -113,6 +114,8 @@ def main():
             result['fast_context_preparation']=prepare_context_only(pooled,snapshot,task['instruction'],torch)
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
+            from perceptbudget.rtc_memory import memory_record
+            result['expert_ready_memory']=memory_record(torch,'expert_ready')
             active_geometry=dict(fast=False)
             if args.expanded_kv:
                 result['position_policy']=dict(policy='full_visual_multiplicity_and_coordinates_v1',
