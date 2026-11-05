@@ -32,10 +32,11 @@ def compact(vision, merged_blocks):
 
 
 def compact_both(vision,merged_blocks=32):
-    """Keep160 tokens per camera by merging32 redundant2x2 blocks in each.
+    """Merge redundant2x2 blocks independently in each camera.
 
     Scores describe local feature redundancy, not semantic task importance.
     Camera and spatial order are preserved; each view selects independently.
+    The default32 blocks keeps160 tokens;8 blocks keeps232 per camera.
     """
     import torch
     external, first = compact(vision, merged_blocks)

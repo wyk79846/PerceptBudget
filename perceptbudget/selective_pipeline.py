@@ -1,4 +1,4 @@
-"""Project-side320/416-token pipeline with GPU redundancy selection."""
+"""Project-side selective token pipeline with GPU redundancy selection."""
 
 
 def pipeline_type(base_type, *, visual_tokens=416):
@@ -29,7 +29,7 @@ def pipeline_type(base_type, *, visual_tokens=416):
         def vision_encoder(self,stream=0):
             self._prepare_selector()
             # Native uniform pooling is overwritten; selector reads full,
-            # fresh27-layer SigLIP features.416 preserves wrist;320 selects both.
+            # fresh27-layer SigLIP features.416 preserves wrist;320/464 select both.
             super().vision_encoder(stream=stream)
             function=getattr(self._selector_lib,'selective_pool'+str(visual_tokens))
             code=function(self.bufs['vision_x'].ptr.value,

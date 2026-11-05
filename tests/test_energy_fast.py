@@ -40,10 +40,11 @@ def test_idle_threshold_does_not_override_fast_pair_labels():
     assert frequency_pair_views(c,1)==('ordinary_fast','ordinary_full')
 
 
-def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(monkeypatch,capsys):
+@pytest.mark.parametrize('tokens',[320,464])
+def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(monkeypatch,capsys,tokens):
     from scripts import run_m4
     args=['run_m4.py','--acceptance-group','m3','--task-indices','0','--energy-refresh',
-        '--ordinary-fast','--ordinary-fast-pair','--low-full','--three-frequency',
+        '--ordinary-fast','--ordinary-fast-tokens',str(tokens),'--ordinary-fast-pair','--low-full','--three-frequency',
         '--idle-min-ms','50','--start-floor-ms','25','--dry-run']
     monkeypatch.setattr(sys,'argv',args)
     assert run_m4.main()==0
@@ -51,7 +52,7 @@ def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(
     assert r['request_only_images'] and r['lean_continue'] and r['ordinary_fast']
     assert r['feedback_policy']=='overlap_pacing_v2' and r['feedback_minimum_steps']==20
     assert r['H']==50 and r['N']==5 and r['max_refresh_interval']==50
-    assert r['episodes']==2 and r['Fast']=='selective320_no_state'
+    assert r['episodes']==2 and r['Fast']=='selective'+str(tokens)+'_no_state'
     assert r['idle_min_ms']==50 and r['three_frequency']
 
 
@@ -79,7 +80,7 @@ def test_mild_fast_uses_shorter_real_encoder_and_exact_geometry_bank(monkeypatch
     prepared=[]
     def prepare(self,family,progress=None):
         prepared.append(family)
-        self.step_bank=SimpleNamespace(entries={n:(n,n) for n in family})
+        self.step_bank=SimpleNamespace(entries={n:(n,n) for n in family},fallback='frozen')
         return dict(prepare_seconds=0.)
     monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
     adapter=object.__new__(FreshViewRTCAdapter)
