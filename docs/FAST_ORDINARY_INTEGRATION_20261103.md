@@ -135,3 +135,18 @@ Object0首次替换在29步，当时当前预测没有未覆盖的关键事件�
 本例两种交替均能完成，能量分别增加9.77%和4.12%，尚未证明整任务节能。两对初始物理、双图、state、噪声及原始动作精确，系统/频率/恢复审核均通过，零断供。两种Fast分别9/19个在途控制步全部跳过成像。原腕部父记录因审查器仍检查旧普通阶段准入诊断而标invalid，原始状态与错误不修改；显式交替不依赖该诊断，已修正审查器并重查两个真实回合，独立序列Full/Fast/Full/Fast/Full、state与原RTC索引通过，无需重跑。
 
 [腕部原始数据与更正审查](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T113431.307509Z-acceptance-m3-ca08474a/corrected_auditor_review/review.json>) · [池化原始配对](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T114451.857403Z-acceptance-m3-bd1c396b/full_frequency_pairs.json>)。以上只是一任务可行性，不作为总体成功率或长场景内存通过。
+
+
+## 2026-11-05 双图320token、Fast不带state，直接交替
+
+按用户要求直接闭环小测，Full保留state，Fast双图各160token、不带state，首次Full后严格交替。seed7/init0，三个任务6回合一模型完成，无报错、RAM保护或欠载。
+
+|任务|全Full|Full/Fast交替|全Full J|交替J|
+|---|---|---|---:|---:|
+|Spatial0|成功76步|成功79步|67.438|65.895|
+|Object0|成功136步|超时280步|101.796|204.789|
+|Long0|成功247步|超时520步|191.852|371.983|
+
+Full3/3、交替1/3；Fast中频481.3ms、高频352.7ms，相应Full654.5/487.8ms。所有尝试的任务与在途推理能量合计361.086/642.667J；Spatial共同成功省2.29%，不能掩盖另两项超时。实测22次Fast，确认实际state关闭、320token；Full保持state及512token。本批说明速度提升，但质量尚不稳定。未使用或保留前轮新增的packed注意力原型，未修改FlashRT。
+
+[原始配对表](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T122153.255435Z-acceptance-m3-d5fcb279/full_frequency_pairs.json>)。代码7814eb6。
