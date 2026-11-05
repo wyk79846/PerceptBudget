@@ -40,12 +40,13 @@ def test_idle_threshold_does_not_override_fast_pair_labels():
     assert frequency_pair_views(c,1)==('ordinary_fast','ordinary_full')
 
 
-@pytest.mark.parametrize('tokens',[320,464])
-def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(monkeypatch,capsys,tokens):
+@pytest.mark.parametrize('tokens,positions',[(320,False),(464,False),(464,True)])
+def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(monkeypatch,capsys,tokens,positions):
     from scripts import run_m4
     args=['run_m4.py','--acceptance-group','m3','--task-indices','0','--energy-refresh',
         '--ordinary-fast','--ordinary-fast-tokens',str(tokens),'--ordinary-fast-pair','--low-full','--three-frequency',
         '--idle-min-ms','50','--start-floor-ms','25','--dry-run']
+    if positions:args.append('--ordinary-fast-positions')
     monkeypatch.setattr(sys,'argv',args)
     assert run_m4.main()==0
     r=json.loads(capsys.readouterr().out)
@@ -54,6 +55,7 @@ def test_energy_fast_cli_forces_request_only_images_and_keeps_frozen_controller(
     assert r['H']==50 and r['N']==5 and r['max_refresh_interval']==50
     assert r['episodes']==2 and r['Fast']=='selective'+str(tokens)+'_no_state'
     assert r['idle_min_ms']==50 and r['three_frequency']
+    assert r['ordinary_fast_positions'] is positions
 
 
 def test_fast_capture_cannot_silently_revert_to_unused_inference_images(monkeypatch):

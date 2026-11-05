@@ -38,5 +38,6 @@
   "directional_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261029T051938.446649Z-m4-directional-transitions-ba4c1014/m4_transitions.json",
   "ordinary_fast_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T073037.005184Z-dual-selective-fast-b4a3c6ec/ordinary_fast_costs.json",
   "ordinary_fast_464_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261105T035141.998350Z-dual-selective-fast-3cffacf3/ordinary_fast_costs.json",
+  "ordinary_fast_position_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261105T043720.584209Z-dual-selective-fast-7bed5f25/ordinary_fast_costs.json",
   "full_energy_cost_source": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261103T081752.553801Z-lean-cost-refresh-c7546b12/cost_table.json"
 }
