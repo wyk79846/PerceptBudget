@@ -67,22 +67,30 @@ def pipeline_type(base_type, *, visual_tokens=416,preserve_positions=False):
     return SelectivePipeline
 
 
-def align_expert_positions(expert,visual_tokens,fast_prompt_capacity):
+def align_expert_positions(expert,visual_tokens,fast_prompt_capacity,*,active_fast=None):
     """Use matching action positions with the original-coordinate prefix KV.
 
     The author denoising/VJP sampler and frozen modules remain intact. Only
     Fast's position_ids input is offset; Full forwards its exact original input.
-    Stateless Fast must stay below512 tokens so geometry is unambiguous.
+    Stateless Fast may use disjoint prefix lengths. Stateful Fast supplies an
+    explicit geometry callback because its lengths can overlap Full's.
     """
-    if visual_tokens not in (320,464) or not 0<fast_prompt_capacity<512-visual_tokens:
-        raise ValueError('Need a disjoint stateless visual prefix family')
+    if visual_tokens not in (320,464) or not 0<fast_prompt_capacity<=200:
+        raise ValueError('Need a supported visual and prompt capacity')
+    if active_fast is None and fast_prompt_capacity>=512-visual_tokens:
+        raise ValueError('Need a disjoint stateless visual prefix family or explicit geometry')
+    if active_fast is not None and not callable(active_fast):raise ValueError('Geometry selector must be callable')
     bridge=expert.suffix.paligemma_with_expert
     if hasattr(bridge,'_pb_original_coordinate_forward'):
         raise ValueError('Expert position policy already installed')
     original=bridge.forward;offset=512-visual_tokens
     def forward(*args,**kwargs):
         prefix=kwargs['attention_mask'].shape[-1]-kwargs['inputs_embeds'][1].shape[1]
-        if visual_tokens<prefix<=visual_tokens+fast_prompt_capacity:
+        compact=(bool(active_fast()) if active_fast is not None else
+                 visual_tokens<prefix<=visual_tokens+fast_prompt_capacity)
+        if compact:
+            if not visual_tokens<prefix<=visual_tokens+fast_prompt_capacity:
+                raise ValueError('Selected Fast prefix exceeds its actual geometry')
             kwargs=dict(kwargs,position_ids=kwargs['position_ids']+offset)
         elif prefix<512:
             raise ValueError('Unknown compact geometry in original-position expert')
@@ -91,4 +99,4 @@ def align_expert_positions(expert,visual_tokens,fast_prompt_capacity):
     bridge.forward=forward
     return dict(policy='original_camera_and_text_coordinates_v1',visual_tokens=visual_tokens,
         action_position_offset=offset,fast_prompt_capacity=fast_prompt_capacity,
-        full_position_offset=0,rtc_sampler_changed=False)
+        full_position_offset=0,rtc_sampler_changed=False,explicit_geometry=active_fast is not None)

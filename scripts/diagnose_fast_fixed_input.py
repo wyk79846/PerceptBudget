@@ -34,14 +34,14 @@ def main():
     selective.add_argument('--selective320',action='store_true',help='Separate state and dual selective320 effects on identical recorded inputs')
     selective.add_argument('--selective464',action='store_true',help='Mild dual-view pooling,8 of64 blocks per camera')
     parser.add_argument('--preserve-positions',action='store_true',help='Probe original image/text/action coordinates with stateless selective320/464')
-    parser.add_argument('--stateful-positions',action='store_true',help='Also test full state with original-position320; live prompt must stay below192 tokens')
+    parser.add_argument('--stateful-positions',action='store_true',help='Also test complete state with original-position320/464 and explicit expert geometry')
     parser.add_argument('--resident-check',action='store_true',help='Compare resident712-capacity source-step graph with reference on actual inputs')
     parser.add_argument('--mapped-embeddings',action='store_true',help='Before Full_repeat, map frozen vocabulary rows and check all BF16 table values')
     args=parser.parse_args()
     if args.preserve_positions and (not (args.selective320 or args.selective464) or args.resident_check):
         parser.error('Original-position input probe requires selective320/464 without resident-check')
-    if args.stateful_positions and not (args.selective320 and args.preserve_positions):
-        parser.error('Stateful position probe requires selective320 and --preserve-positions')
+    if args.stateful_positions and not ((args.selective320 or args.selective464) and args.preserve_positions):
+        parser.error('Stateful position probe requires selective320/464 and --preserve-positions')
     os.environ.update(CUBLAS_WORKSPACE_CONFIG=':4096:8',MUJOCO_GL='egl',PYOPENGL_PLATFORM='egl')
     import numpy as np
     from perceptbudget.experiment import create_run,_write_json_atomically
@@ -55,6 +55,7 @@ def main():
     source=json.loads((args.source_run/'run.json').read_text())['config_snapshot']
     cfg=dict(source)
     cfg.update(rtc_audit_inputs=False,rtc_audit_attention_same_input=False,rtc_audit_fused_norm=False)
+    if args.mapped_embeddings:cfg['mapped_prompt_embedding']=False  # Native control before Full_repeat.
     requests=json.loads((args.source_run/'rtc/q5_requests.json').read_text())
     matches=[r for r in requests if r['observation_step']==args.observation_step]
     if len(matches)!=1:raise ValueError('Require exactly one recorded request at selected step')
@@ -109,10 +110,12 @@ def main():
             result['fast_context_preparation']=prepare_context_only(pooled,snapshot,task['instruction'],torch)
             release_unused_native_expert(model,torch);release_unused_native_expert(pooled,torch)
             adapter=OriginalOpenPiRTCAdapter(model,torch,cfg)
+            active_geometry=dict(fast=False)
             if args.preserve_positions:
                 from perceptbudget.selective_pipeline import align_expert_positions
                 result['position_policy']=align_expert_positions(adapter.expert,
-                    464 if args.selective464 else 320,191 if args.stateful_positions else 32)
+                    464 if args.selective464 else 320,200 if args.stateful_positions else 32,
+                    active_fast=(lambda:active_geometry['fast']) if args.stateful_positions else None)
             # Initialize the frozen expert attention/norm implementation via normal adapter.
             adapter.bootstrap(snapshot,task['instruction'],{})
             noise=torch.tensor(solver['noise'],device='cuda',dtype=torch.float32)
@@ -127,6 +130,7 @@ def main():
             conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.resident_check else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
             if args.preserve_positions and not args.stateful_positions:conditions=[c for c in conditions if c[0]!='Fast_state']
             for name,frontend,state in conditions:
+                active_geometry['fast']=not name.startswith('Full')
                 if name=='Full_repeat' and args.mapped_embeddings:
                     from perceptbudget.mapped_embedding import install_mapped_prompt_embeddings
                     from perceptbudget.rtc_memory import memory_record
@@ -141,8 +145,6 @@ def main():
                 pl=frontend._pipe.pipeline
                 expected=(512 if name.startswith('Full') else 464 if args.selective464 else 416 if args.selective416 else 320)+frontend._pipe.current_prompt_len
                 if valid!=expected:raise ValueError('Live valid prefix differs from actual tokens')
-                if args.stateful_positions and not name.startswith('Full') and frontend._pipe.current_prompt_len>191:
-                    raise ValueError('Stateful diagnostic prompt overlaps Full visual prefix geometry')
                 if not name.startswith('Full'):
                     from scripts.diagnose_pool_parity import pool_check
                     if args.selective416 or args.selective320 or args.selective464:

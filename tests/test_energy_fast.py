@@ -146,6 +146,23 @@ def test_original_position_table_does_not_restore_full_encoder_compute():
     assert p._pb_original_visual_positions is True
 
 
+def test_stateful_original_positions_use_explicit_geometry_for_overlapping_lengths():
+    import torch
+    from types import SimpleNamespace
+    from perceptbudget.selective_pipeline import align_expert_positions
+    bridge=SimpleNamespace(forward=lambda **kw:kw['position_ids'])
+    expert=SimpleNamespace(suffix=SimpleNamespace(paligemma_with_expert=bridge))
+    active=dict(fast=False)
+    align_expert_positions(expert,464,200,active_fast=lambda:active['fast'])
+    args=dict(attention_mask=torch.zeros(1,1,50,656+50),inputs_embeds=[None,torch.zeros(1,50,1)],
+              position_ids=torch.arange(656,706)[None])
+    assert bridge.forward(**args) is args['position_ids']
+    active['fast']=True
+    assert torch.equal(bridge.forward(**args),args['position_ids']+48)
+    active['fast']=False
+    assert bridge.forward(**args) is args['position_ids']
+
+
 def test_positioned_fast_rejects_unpositioned_cost_table(tmp_path):
     from perceptbudget.ordinary_fast import load_costs
     cfg=dict(H=50,N=5,precision='bfloat16',checkpoint_provenance_revision='frozen',rtc_beta=5.,
