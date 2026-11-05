@@ -98,3 +98,22 @@ def test_mild_fast_rejects_320_costs_before_any_model_load(tmp_path):
     (tmp_path/'run.json').write_text(json.dumps(dict(config_snapshot=config)))
     path=tmp_path/'costs.json';path.write_text(json.dumps(dict(status='completed',restored=True)))
     with pytest.raises(ValueError,match='geometry/state mismatch'):load_costs(path,config)
+
+
+def test_original_coordinates_shift_fast_actions_and_leave_full_inputs_exact():
+    import torch
+    from types import SimpleNamespace
+    from perceptbudget.selective_pipeline import align_expert_positions
+    bridge=SimpleNamespace(forward=lambda **kw:kw['position_ids'])
+    expert=SimpleNamespace(suffix=SimpleNamespace(paligemma_with_expert=bridge))
+    policy=align_expert_positions(expert,464,32)
+    def arguments(prefix):
+        return dict(attention_mask=torch.zeros(1,1,50,prefix+50),
+            inputs_embeds=[None,torch.zeros(1,50,1)],
+            position_ids=torch.arange(prefix,prefix+50)[None])
+    full=arguments(656);fast=arguments(477)
+    assert bridge.forward(**full) is full['position_ids']
+    assert torch.equal(bridge.forward(**fast),fast['position_ids']+48)
+    assert bridge.forward(**full) is full['position_ids']
+    assert policy['full_position_offset']==0 and policy['rtc_sampler_changed'] is False
+    with pytest.raises(ValueError):bridge.forward(**arguments(400))

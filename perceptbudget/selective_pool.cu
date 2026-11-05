@@ -63,3 +63,18 @@ extern "C" int selective_pool464(const void* x,void* scores,void* selected,void*
  pack_both_tokens<8><<<(464*1152+255)/256,256,0,s>>>((const __nv_bfloat16*)x,(int*)selected,(int*)mapping,(__nv_bfloat16*)y);
  return (int)cudaGetLastError();
 }
+// Keep original camera/text RoPE coordinates after removing redundant tokens.
+__global__ void gather_selective_rope(const __nv_bfloat16* original,const int* mapping,
+ __nv_bfloat16* output,int visual,int sequence){
+ int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=sequence*256)return;
+ int token=j/256,d=j%256,per_camera=visual/2;
+ int position=token<visual?mapping[token]+(token/per_camera)*256:512+token-visual;
+ output[j]=original[position*256+d];
+}
+extern "C" int selective_rope(const void* original,const void* mapping,void* output,
+ int visual,int sequence,void* stream){
+ if((visual!=320&&visual!=464)||sequence<visual)return (int)cudaErrorInvalidValue;
+ gather_selective_rope<<<(sequence*256+255)/256,256,0,(cudaStream_t)stream>>>(
+  (const __nv_bfloat16*)original,(const int*)mapping,(__nv_bfloat16*)output,visual,sequence);
+ return (int)cudaGetLastError();
+}

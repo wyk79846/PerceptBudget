@@ -22,4 +22,6 @@ def load():
         function=getattr(lib,name)
         function.argtypes=[ctypes.c_void_p]*6
         function.restype=ctypes.c_int
+    lib.selective_rope.argtypes=[ctypes.c_void_p]*3+[ctypes.c_int]*2+[ctypes.c_void_p]
+    lib.selective_rope.restype=ctypes.c_int
     _LIB=lib;return lib

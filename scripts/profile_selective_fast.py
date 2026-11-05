@@ -98,24 +98,45 @@ def kernel_checks(torch,np):
             mask=torch.empty(64*cameras,device='cuda',dtype=torch.int32)
             mapping=torch.empty(count if cameras==2 else 160,device='cuda',dtype=torch.int32)
             output=torch.empty(count,1152,device='cuda',dtype=torch.bfloat16)
+            rope=None
+            if cameras==2:
+                canonical=torch.arange(768,device='cuda',dtype=torch.int16)[:,None].expand(768,256).contiguous()
+                rope=torch.empty(count+32,256,device='cuda',dtype=torch.bfloat16)
+            def positions_exact(selected):
+                if rope is None:return True
+                positions=[]
+                for camera in range(2):
+                    for index in range(256):
+                        r,c=divmod(index,16)
+                        if not selected[camera,(r//2)*8+c//2] or (r%2==0 and c%2==0):
+                            positions.append(camera*256+index)
+                positions+=list(range(512,544))
+                expected_positions=torch.tensor(positions,dtype=torch.int16)[:,None].expand(-1,256)
+                return torch.equal(rope.cpu().view(torch.int16),expected_positions)
             function=getattr(lib,'selective_pool'+str(count))
             def call():
                 code=function(gpu.data_ptr(),scores.data_ptr(),mask.data_ptr(),mapping.data_ptr(),output.data_ptr(),torch.cuda.current_stream().cuda_stream)
                 if code:raise RuntimeError('Selector launch failed:'+str(code))
+                if rope is not None:
+                    code=lib.selective_rope(canonical.data_ptr(),mapping.data_ptr(),rope.data_ptr(),count,count+32,torch.cuda.current_stream().cuda_stream)
+                    if code:raise RuntimeError('Original-position gather launch failed:'+str(code))
             call();torch.cuda.synchronize()
             expected,selected=reference()
             error=float((output.cpu().float()-expected.float()).abs().max())
             same_mask=torch.equal(mask.cpu().bool().reshape(selected.shape),selected)
+            initial_positions=positions_exact(selected)
             graph=torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph):call()
             # Change the content after capture: graph must select fresh tokens.
             changed=features.flip(1).contiguous()
             gpu.copy_(changed);graph.replay();torch.cuda.synchronize()
-            check=compact(changed,32)[0] if count==416 else compact_both(changed,8 if count==464 else 32)[0]
+            check,changed_selected=compact(changed,32) if count==416 else compact_both(changed,8 if count==464 else 32)
             replay_error=float((output.cpu().float()-check.float()).abs().max())
-            row=dict(visual_tokens=count,tied=tied,max_abs=error,mask_equal=same_mask,replay_changed_input_max_abs=replay_error)
+            row=dict(visual_tokens=count,tied=tied,max_abs=error,mask_equal=same_mask,replay_changed_input_max_abs=replay_error,
+                original_positions_exact=initial_positions,graph_fresh_positions_exact=positions_exact(changed_selected))
             rows.append(row)
-            if error or replay_error or not same_mask:raise RuntimeError('Native selector parity failed: '+str(row))
+            if error or replay_error or not same_mask or not initial_positions or not row['graph_fresh_positions_exact']:
+                raise RuntimeError('Native selector/position parity failed: '+str(row))
     return rows
 
 
