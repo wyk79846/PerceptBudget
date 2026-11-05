@@ -181,3 +181,11 @@ seed7/init0，保留state、外部64＋腕部256、Full/Fast交替：之前连�
 seed7/init0，四套各task0/3/6，同一320token（外部64＋腕部256）、state开启、原位置及动作偏移192、Full/Fast直接交替。12项全部有有效结果，9成功：Spatial3/3、Object3/3、Goal1/3、Long2/3；失败Goal0/6、Long0均超时。Long6补测成功213步；既有Object0成功154步，其余已完成项均未重跑。两次准备阶段内存中断不计作任务失败，五次加载含最早Object0单例，全部原始记录保留。未修改算法或阈值、未重启用户已停止的seed17测试。
 
 [完整12项报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T134834.166051Z-acceptance-m3-a0c9c3f7/expanded12_results.md>)。本批为开发样本，不将不同任务组的历史成功率或能量直接当同期对照。
+
+## 2026-11-05 原位置Fast：seed17全40任务
+
+沿用原位置320token（外部64＋腕部256）、state开启、动作位置补偿192及Full/Fast直接交替，seed17/init1，四套各task0–9、每任务一次。全40项完成，33/40成功（82.5%）：Spatial6/10、Object7/10、Goal10/10、Long10/10。超时为Spatial0/1/4/6、Object3/5/6；未剔除失败、未针对该批调整参数。一模型连续完成，零内存保护中断、零断供；166次Full、142次Fast，全部回合已有检查通过，Fast实测请求的state、320token与动作位置偏移均符合配置。
+
+全部尝试包含超时，任务与在途推理总能量5116.780 J，任务执行420.262 s，不含加载和任务准备。非初次推理中位数：高频Full470.9/Fast433.2 ms，中频Full651.2/Fast610.4 ms。该候选在Goal和长任务取得10/10，但Spatial/Object仍有7项超时，暂不替换Full＋Continue基线；不能把本轮与不同成像设置的历史数据直接解释为池化的独立收益。
+
+[全40项结果及逐任务表](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142840.502775Z-fast-positions-seed17-all40-6f18caf8/results.md>) · [JSON](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142840.502775Z-fast-positions-seed17-all40-6f18caf8/results.json>) · [原始父记录](</home/wyk/workspace/任务产出/perceptbudget/M4/20261105T142852.290479Z-acceptance-m3-0e288582/recording.json>)。
