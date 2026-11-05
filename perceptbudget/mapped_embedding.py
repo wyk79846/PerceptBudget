@@ -4,6 +4,7 @@ The public lookup still returns CUDA BF16 rows. FlashRT's tokenizer, embedding
 scale, context kernels and RTC remain unchanged; only table storage changes.
 """
 import gc
+import ctypes
 from pathlib import Path
 
 
@@ -64,5 +65,5 @@ def install_mapped_prompt_embeddings(frontends, checkpoint_path, *, checkpoint_p
         p.embedding_weight=p._ckpt_bf16['embedding_weight']=mapped
         p._pb_mapped_embedding_record=record
     del old
-    gc.collect();torch.cuda.empty_cache()
+    gc.collect();torch.cuda.empty_cache();ctypes.CDLL(None).malloc_trim(0)
     return record

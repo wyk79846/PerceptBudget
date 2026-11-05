@@ -438,6 +438,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             mem('before_model_load')
             model = base._load_and_check_model(cfg, torch)
             record['model_loads'] += 1
+            record['mapped_prompt_embedding']=getattr(model._pipe,'_pb_mapped_embedding_record',None)
             from flash_rt.subgraphs.pi05.context_action import enable
             enable(model)
             _, env_class = base._libero_api()

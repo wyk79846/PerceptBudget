@@ -63,7 +63,7 @@ def load_model(config):
     if not pipe._force_bf16 or any((pipe._fp8_weights, pipe._int8_weights,
                                   pipe._use_int8_encoder, pipe._use_int8_vision)):
         raise RuntimeError("Requested full BF16 path did not take effect")
-    if config.get('mapped_prompt_embedding',False):
+    if config.get('mapped_prompt_embedding',bool(config.get('m3_ordinary_fast_context'))):
         from perceptbudget.mapped_embedding import install_mapped_prompt_embeddings
         install_mapped_prompt_embeddings([pipe],config['model_path'],
             checkpoint_prefix=config.get('checkpoint_key_prefix',''))
