@@ -105,7 +105,7 @@ def main():
                 try:adapter.prepare_step_bank([full_valid,full_valid-96])
                 finally:adapter._dual_bank_preparing=False
             outputs={}
-            conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.selective416 else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
+            conditions=[('Full',model,True),('Fast_state',pooled,True),('Full_repeat',model,True)] if args.resident_check else [('Full',model,True),('Fast',pooled,False),('Fast_state',pooled,True),('Full_no_state',model,False),('Full_repeat',model,True)]
             for name,frontend,state in conditions:
                 adapter.model=frontend;adapter.pipe=frontend._pipe;adapter.pipeline=frontend._pipe.pipeline
                 data=dict(snapshot,state=snapshot['state'] if state else None)
@@ -149,7 +149,7 @@ def main():
                     if result['cases'][name]['resident_vs_reference_max_abs']>1e-4:raise ValueError('Resident graph differs from reference on real input')
                 save();print(name+'='+json.dumps(result['cases'][name]),flush=True)
             result['factorial_pairs']={}
-            for a,b in ([('Full','Fast_state')] if args.selective416 else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]):
+            for a,b in ([('Full','Fast_state')] if args.resident_check else [('Full','Full_no_state'),('Full','Fast_state'),('Full_no_state','Fast'),('Fast_state','Fast')]):
                 delta=outputs[a][:,:7]-outputs[b][:,:7]
                 result['factorial_pairs'][a+'_vs_'+b]=dict(all_action7_rmse=float(np.sqrt(np.mean(delta**2))),next10_executable_action7_rmse=float(np.sqrt(np.mean(delta[solver['delay']:solver['delay']+10]**2))))
             np.savez(run/'actions.npz',**outputs)
