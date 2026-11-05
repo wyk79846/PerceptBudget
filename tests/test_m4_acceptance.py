@@ -294,6 +294,22 @@ def test_q30_has_no_joint_scheduler_or_fast():
                                   'm2_visual_fast_enabled','m2_split_delay'))
 
 
+@pytest.mark.parametrize('q',(10,20))
+def test_fixed_baseline_interval_is_configured_and_keeps_static_high_policy(q,monkeypatch,capsys):
+    cfg=dict(m4_fixed_q=q,m4_enabled=True,m3_scheduler_mode='deadline_dvfs',
+             m3_action_events_enabled=True,m3_dvac_enabled=True,m2_visual_fast_enabled=True)
+    assert configure_baseline(cfg)==q
+    assert cfg['candidate_q']==[q] and cfg['m3_scheduler_mode']=='record_only'
+    assert cfg['m3_hold_high_clocks'] and not cfg['m4_enabled'] and not cfg['m2_visual_fast_enabled']
+    from scripts import run_m4
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','q30','--fixed-q',str(q),
+        '--all-tasks','--reuse-prefix-graphs','--request-only-images','--dry-run'])
+    assert run_m4.main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['fixed_q']==q and result['episodes']==40 and result['Fast']=='disabled'
+    assert result['request_only_images'] and result['N']==5 and result['H']==50
+
+
 def test_task_local_prefixes_do_not_depend_on_task0_history():
     from perceptbudget.m4_acceptance import visual_prefixes
     full=list(range(653,670))

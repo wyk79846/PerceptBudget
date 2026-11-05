@@ -132,10 +132,11 @@ def copy_precompiled_environment_cache(source, destination, tasks, config):
 
 def configure_baseline(config):
     from perceptbudget.closed_loop import configure_fixed_baseline
-    configure_fixed_baseline(config, 30)
+    q=config.get('m4_fixed_q',30)
+    configure_fixed_baseline(config, q)
     config.update(m4_enabled=False, m3_fast_enabled=False, m3_hold_high_clocks=True,
                   m2_visual_fast_enabled=False, m2_split_delay=False)
-    return 30
+    return q
 
 
 def configure_m3(config, settings):
@@ -203,7 +204,7 @@ def resume_full(source, config):
     original=json.loads((source/'run.json').read_text())['config_snapshot']
     fixed=manifest(config,all_tasks=bool(config.get('m4_all_tasks')))
     group=config.get('m4_acceptance_group')
-    keys=('m4_acceptance_group','m4_all_tasks','m4_lean_continue','m4_request_only_images',
+    keys=('m4_acceptance_group','m4_fixed_q','m4_all_tasks','m4_lean_continue','m4_request_only_images',
           'm4_resident_prefix_graphs','m3_low_full','m3_three_frequency','m3_start_floor_ms',
           'm3_idle_min_ms','m3_idle_reference_ms','m3_critical_wait','m3_critical_wait_phases',
           'm3_phase_refresh','m3_first_refresh_step','m3_replay_eta_ms','m3_full_energy',
