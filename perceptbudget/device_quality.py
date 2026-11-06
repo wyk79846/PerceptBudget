@@ -488,7 +488,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     # overlapping its peak with otherwise reusable old graphs.
                     # This runs before task setup; inference still uses the
                     # same exact graphs, rechecked by the normal source gate.
-                    if dual_visual and memory_record(torch,'before_next_task')['available_mib']<2048:
+                    if dual_visual and memory_record(torch,'before_next_task')['available_mib']<1600:
                         evicted=adapter.evict_step_banks()
                         record.setdefault('resident_graph_evictions',[]).append(dict(
                             before_suite=suite,before_task_id=tid,**evicted))
