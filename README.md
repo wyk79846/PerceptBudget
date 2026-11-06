@@ -25,7 +25,7 @@ M4已有动作前瞻、时限与设备准备、Fast闭环实现及实验。按Wo
 
 实验约束：禁止针对seed17的具体失败或任务编号调参、加例外。通用参数在开发任务上校准并冻结，再按授权范围评测；策略不读取seed或task ID。
 
-新增显式参数`--full-approach-delta 0.1`：张开夹爪的预测运动转向明显下探时，保留该转向信号，通过普通弯道与反馈窗口过滤，并在其截止时间选择Full。只使用已有动作预测，不新增模型或图像采集。原33/40配置与默认值保留；当前用户要求不运行或针对seed17/init1调参。
+新增显式参数`--full-approach-delta 0.1`：张开夹爪的预测运动转向明显下探时，保留该转向信号，通过普通弯道与反馈窗口过滤，并在其截止时间选择Full。只使用已有动作预测，不新增模型或图像采集。原33/40配置与默认值保留；用户现已授权冻结参数后重测seed17/init1全40，禁止针对该组调参。
 
 开发seed27/init1同5任务成功2/5→5/5：Object0/5/7为143/118/130步，Goal3/5为182/136步。Object0、5的闭合次数从4/3次降为各1次；33次刷新中仍有13次Fast，零断供，一次模型加载，79项相关CPU检查及回合/频率/输入记录检查通过。这个开发结果不替换原40任务成功率。[运行计划与参数](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/plan.json) · [逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/results.md)。实现Git`7e0127b`，模型/RTC/FlashRT沿用原配置。
 
@@ -202,3 +202,9 @@ SSH断开后继续M4测试：先`tmux new -s pb-m4-v2`，在会话内运行`bash
 M3同12任务对照：在tmux中执行`bash scripts/run_m4_ssh.sh --candidate m3 --baseline-run <已完成q30组>`。复用验收与SSH入口，实际关闭m4_enabled、调用原DeadlineRuntime及D_joint规则，只使用Full/Continue，Full计算高频、Continue可低频；机制一原阈值、H50/N5/state200/RTC不变，余量采用M3阶段报告已选定25ms。12回合/一次加载，结果以m3标签与q30比较，产物集中在M4验收目录以便同任务对照；不改归档的M3报告、m3.json默认50ms或FlashRT。
 
 M3先看前三个任务：上述SSH命令追加`--first-tasks 3`，只预检/执行Spatial task0/3/6，复用q30同三任务并生成配对表；不重测q30，不自动扩为12。
+
+## 冻结参数重测seed17全40（2026-11-06，运行中）
+
+按用户授权，仅新增既定Full下探修正（增量0.1），其余沿用33/40版；Spatial/Object/Goal/LIBERO-10各10任务，每任务一次，seed17/init1。优先模型常驻，记录实时成功率，全部成败保留，评测中不调参。
+
+[冻结计划](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T054757.215511Z-full-approach-seed17-all40-b3dae820/plan.json) · [实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T054757.215511Z-full-approach-seed17-all40-b3dae820/progress.md) · [运行日志](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T054757.215511Z-full-approach-seed17-all40-b3dae820/service.log)
