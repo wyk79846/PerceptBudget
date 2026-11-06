@@ -280,3 +280,26 @@ seed7/init0，Spatial0/Object0/Long0，各两种顺序一次，共6回合一模�
 不采用该候选，实验逻辑已从当前代码撤回，Git保留可复现提交；seed17/init1的33/40及默认运行规则不变，FlashRT未改。62项相关CPU检查通过。
 
 [原seed27复测](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T044518.262044Z-fast-failed5-seed27-25c69195/results.md) · [候选逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T045725.533806Z-full-gripper5-seed27-d278386c/results.md) · [完整对照与触发位置](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T045725.533806Z-full-gripper5-seed27-d278386c/comparison.json)
+
+
+## 2026-11-06：首次抓取与重复抓松排查
+
+只分析/复测开发seed27/init1，原seed17/init1的33/40工作锚点不变。本轮没有修改推理代码、RTC、夹爪参数或FlashRT。
+
+- Object0在53步闭合，物体短暂抬升约4.1cm，86步张开前已落回桌面；双侧接触仅59–64步。Object5在52步闭合，随后最高只比闭合前升约4mm，79步张开时同样已落回；首次没有双侧夹持。
+- 成功Object7在48步闭合，52–127步保持双侧接触，物体升高约20cm。失败案例后续抓松更符合抓取失败后的重试；不是已成功夹持后被执行器莫名松开。
+- 三个Object任务执行动作与保存预测逐步完全一致，最大差0；开合接近满幅正负值、间隔几十步，未发现符号映射反转或事件阈值附近抖动。两例首次闭合均来自Full，仍不能排除之前Fast与RTC承诺前缀造成的轨迹影响。
+- 前次窄窗在失败Object0/5首次介入101/93步，晚于首次闭合53/52步，没有保护第一次接近与抓取。
+- Goal5实际是推盘子任务，张开夹爪符合任务动作，须与抓取失败分开分析。
+
+追加纯Full对照：相同seed27/init1、模型/H50/N5/BF16/state/RTC/刷新与三频规则，显式保留请求时采集及相同映射词表，只关闭Fast。一次加载，3回合，零断供，记录检查通过。
+
+|任务|原Full/Fast|纯Full|
+|---|---|---|
+|Object0|超时280步|成功145步|
+|Object5|超时280步|超时280步|
+|Goal5|超时300步|超时300步|
+
+Object0提示早期Fast或交接时机值得检查；Object5/Goal5纯Full仍失败，不能统一归因Fast准入阈值。初始物理state、模型state与噪声相同，bootstrap动作最大差约0.0069/0.0119/0.0068；关闭Fast也改变服务时间，因此上述结果不作为严格单因素因果证明。下一步优先验证首次接近/下探阶段的Full选择，不先改夹爪物理参数或叠加后续抓取的Full次数。
+
+[完整排查与接触数据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051604.761483Z-grasp-trace-review-38b34d86/review.md) · [抓取高度与开合时间线](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051604.761483Z-grasp-trace-review-38b34d86/grasp_timeline.png) · [纯Full原始对照](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051743.196349Z-full-control-failed3-seed27-b6201858/results.md)
