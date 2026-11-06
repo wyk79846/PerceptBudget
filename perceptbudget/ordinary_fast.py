@@ -97,8 +97,12 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
         # Scheduling and clock selection still use the complete Full plan.
         if full_per_fast not in (1,2):raise ValueError('Use one or two Full requests per Fast')
         selected='Fast' if streak>=full_per_fast else 'Full'
+    approach=(decision.get('reason')=='action_event'
+              and decision.get('critical_step') in decision.get('full_approach_target_steps',[]))
+    if approach:selected='Full'
     return dict(policy=policy,mode=selected,
-        reason='alternating_refresh' if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY) else 'ordinary_cheaper_fast' if selected=='Fast' else
+        reason='full_downward_approach' if approach else
+               'alternating_refresh' if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY) else 'ordinary_cheaper_fast' if selected=='Fast' else
                'full_after_fast' if previous_mode=='Fast' else
                'full_key_stage' if not ordinary else 'full_cost_or_timing',
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,

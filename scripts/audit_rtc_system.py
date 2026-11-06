@@ -60,7 +60,7 @@ def turn_identity_from_record(event,phases,by_id,config):
         same_event=same,reason='direction_unavailable' if angle is None else 'same_turn_direction' if same else 'new_turn_direction')
 
 
-def ordinary_turn_from_record(event,source,proof,controls,config,phases):
+def ordinary_turn_from_record(event,source,proof,controls,config,phases,approach_delta=None):
     """Reconstruct local command evidence independently from saved records."""
     at=event['target_step'];n=config.get('confirm_steps',2);begin=proof['source_step']
     def vector(first):
@@ -81,12 +81,24 @@ def ordinary_turn_from_record(event,source,proof,controls,config,phases):
     cues=proof['result']['events'];gap=config.get('match_steps',5)
     grip=min((abs(e['target_step']-at) for e in cues if e['kind'].startswith('gripper_')),default=None)
     slow=min((abs(e['target_step']-at) for e in cues if e['kind']=='slowdown'),default=None)
-    reason=('protected_motion_phase' if intervals else 'near_gripper' if grip is not None and grip<=gap else
+    approach=None
+    if approach_delta is not None:
+        down_before=-a[2]/math.sqrt(sum(v*v for v in a)) if a else None
+        down_after=-b[2]/math.sqrt(sum(v*v for v in b)) if b else None
+        index=at-source['observation_step'];window=source['actions'][index:index+n] if index>=0 else []
+        opened=len(window)==n and all(x[6]<=-config.get('gripper_threshold',.2) for x in window)
+        required=bool(opened and down_before is not None and down_after is not None
+            and down_after>=.5 and down_after-down_before+1e-9>=approach_delta)
+        approach=dict(minimum_increase=approach_delta,down_before=down_before,down_after=down_after,
+                      gripper_open=opened,requires_full=required)
+    reason=('downward_approach' if approach and approach['requires_full'] else
+        'protected_motion_phase' if intervals else 'near_gripper' if grip is not None and grip<=gap else
         'near_slowdown' if slow is not None and slow<=gap else 'direction_unavailable' if angle is None else
         'abrupt_turn' if angle+1e-9>=config.get('turn_degrees',60.) else 'ordinary_bend')
     return dict(kind='turn',prediction_id=event['prediction_id'],target_step=at,source_step=begin,
         before_direction=a,after_direction=b,local_angle_degrees=angle,protected_intervals=intervals,
-        nearest_gripper_steps=grip,nearest_slowdown_steps=slow,ordinary=reason=='ordinary_bend',reason=reason)
+        nearest_gripper_steps=grip,nearest_slowdown_steps=slow,ordinary=reason=='ordinary_bend',reason=reason,
+        **({'full_approach':approach} if approach is not None else {}))
 
 
 def decode_raw(raw,stats,profile=None):
@@ -413,6 +425,9 @@ def audit(run):
                         expected='Fast' if streak>=ratio else 'Full'
                         check('alternating_cadence',ratio in (1,2) and f.get('full_per_fast',1)==ratio
                             and f.get('full_streak',streak)==streak,pid)
+                    if (cfg.get('m3_full_approach_delta') is not None and decision.get('reason')=='action_event'
+                            and decision.get('critical_step') in decision.get('full_approach_target_steps',[])):
+                        expected='Full'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
@@ -719,7 +734,10 @@ def audit(run):
                                 origin=old['observation_step'],source_step=at,period=proof['source_period_seconds'],
                                 response_seconds=report['response_seconds'],margin_seconds=t['margin_seconds'],
                                 minimum_steps=cfg['m3_feedback_minimum_steps'],actions=old['actions'],
-                                reference=reference,config=ec,policy=cfg['m3_feedback_policy'])
+                                reference=reference,config=ec,policy=cfg['m3_feedback_policy'],
+                                full_approach_steps=([r['target_step'] for r in d.get('ordinary_turn_review',[])
+                                    if r.get('full_approach',{}).get('requires_full')]
+                                    if cfg.get('m3_full_approach_delta') is not None else None))
                             suppressed=d.get('feedback_suppressed',[])
                             allowed={(e['kind'],e['target_step']) for e in expected['events'] if e['suppress']}
                             check('feedback_window_fixed_and_replayed',
@@ -755,12 +773,16 @@ def audit(run):
                                 and t.get('refresh_phase_response')==expected_response,pid)
                             if cfg.get('m3_ordinary_turn_policy'):
                                 expected_reviews=[ordinary_turn_from_record(dict(e,prediction_id=old['prediction_id']),
-                                    old,proof,by_step,cfg['m3_events'],shared)
+                                    old,proof,by_step,cfg['m3_events'],shared,approach_delta=cfg.get('m3_full_approach_delta'))
                                     for e in replay['events'] if e['kind']=='turn']
                                 check('ordinary_turn_evidence_replay',
                                     cfg['m3_ordinary_turn_policy']==d.get('ordinary_turn_policy')=='context_v1'
                                     and cfg.get('m3_event_identity')=='turn_direction_v1'
                                     and d.get('ordinary_turn_review')==expected_reviews,pid)
+                                if cfg.get('m3_full_approach_delta') is not None:
+                                    check('full_approach_targets',d.get('full_approach_target_steps')==[
+                                        r['target_step'] for r in expected_reviews
+                                        if r.get('full_approach',{}).get('requires_full')],pid)
                                 restored={(r['prediction_id'],r['target_step'])
                                     for r in d.get('refresh_phase_identity_review',[]) if not r['same_event']}
                                 suppressed=d.get('ordinary_turn_suppressed',[])

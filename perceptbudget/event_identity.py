@@ -37,7 +37,8 @@ def review_turn(event, phases, chunks, config):
         reason='direction_unavailable' if angle is None else 'same_turn_direction' if same else 'new_turn_direction')
 
 
-def review_ordinary_turn(event, *, actions, origin, source_step, history, phases, events, config):
+def review_ordinary_turn(event, *, actions, origin, source_step, history, phases, events, config,
+                         approach_delta=None):
     """A smooth isolated bend need not be an early-refresh deadline.
 
     Keep low-amplitude phases, gripper/slowdown neighbours and abrupt direction
@@ -61,7 +62,20 @@ def review_ordinary_turn(event, *, actions, origin, source_step, history, phases
     overlaps=[[p['start_step'],p['stop_step']] for p in phases if p['start_step']<=at<p['stop_step']]
     grip=min((abs(e['target_step']-at) for e in events if e['kind'].startswith('gripper_')),default=None)
     slow=min((abs(e['target_step']-at) for e in events if e['kind']=='slowdown'),default=None)
-    reason=('protected_motion_phase' if overlaps else
+    approach=None
+    if approach_delta is not None:
+        if not math.isfinite(approach_delta) or not 0<approach_delta<1:
+            raise ValueError('Full approach increase must be between0 and1')
+        down_before=-before[2]/math.sqrt(sum(v*v for v in before)) if before else None
+        down_after=-after[2]/math.sqrt(sum(v*v for v in after)) if after else None
+        index=at-origin;window=actions[index:index+n] if index>=0 else []
+        opened=len(window)==n and all(a[6]<=-config.gripper_threshold for a in window)
+        required=bool(opened and down_before is not None and down_after is not None
+            and down_after>=.5 and down_after-down_before+1e-9>=approach_delta)
+        approach=dict(minimum_increase=approach_delta,down_before=down_before,down_after=down_after,
+                      gripper_open=opened,requires_full=required)
+    reason=('downward_approach' if approach and approach['requires_full'] else
+        'protected_motion_phase' if overlaps else
         'near_gripper' if grip is not None and grip<=config.match_steps else
         'near_slowdown' if slow is not None and slow<=config.match_steps else
         'direction_unavailable' if angle is None else
@@ -69,4 +83,5 @@ def review_ordinary_turn(event, *, actions, origin, source_step, history, phases
     return dict(kind='turn',prediction_id=event['prediction_id'],target_step=at,source_step=source_step,
         before_direction=before,after_direction=after,local_angle_degrees=angle,
         protected_intervals=overlaps,nearest_gripper_steps=grip,nearest_slowdown_steps=slow,
-        ordinary=reason=='ordinary_bend',reason=reason)
+        ordinary=reason=='ordinary_bend',reason=reason,
+        **({'full_approach':approach} if approach is not None else {}))

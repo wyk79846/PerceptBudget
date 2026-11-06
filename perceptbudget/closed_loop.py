@@ -294,6 +294,10 @@ class DeadlineRuntime:
             raise ValueError('Ordinary turns require directional event identity')
         self.feedback_policy=config.get('m3_feedback_policy')
         self.feedback_minimum=config.get('m3_feedback_minimum_steps',20)
+        self.full_approach_delta=config.get('m3_full_approach_delta')
+        if self.full_approach_delta is not None and (self.ordinary_turn_policy!='context_v1'
+                or not math.isfinite(self.full_approach_delta) or not 0<self.full_approach_delta<1):
+            raise ValueError('Full approach requires simplified turns and an increase between0 and1')
         if self.feedback_policy not in (None,'overlap_pacing_v1','overlap_pacing_v2'):
             raise ValueError('Unknown feedback refresh policy')
         if self.feedback_policy and (self.ordinary_turn_policy!='context_v1'
@@ -447,7 +451,7 @@ class DeadlineRuntime:
                     current['ordinary_turn_review']=[review_ordinary_turn(dict(e,prediction_id=item[1]),
                         actions=current['phase_actions'],origin=current['origin'],source_step=step,
                         history={r['step']:r['action'] for r in past},phases=current['refresh_phases'],
-                        events=result['events'],config=self.events_config)
+                        events=result['events'],config=self.events_config,approach_delta=self.full_approach_delta)
                         for e in result['events'] if e['kind']=='turn']
             # Targets stay fixed while this predicted chunk is active. Moving
             # the history window each tick would slide gradual-motion targets.
@@ -504,7 +508,9 @@ class DeadlineRuntime:
                     prediction_id=item[1],origin=current['origin'],source_step=forecast_proof['source_step'],
                     period=forecast_proof['source_period_seconds'],response_seconds=response,
                     margin_seconds=self.margin.seconds,minimum_steps=self.feedback_minimum,
-                    actions=current['phase_actions'],reference=reference,config=self.events_config,policy=self.feedback_policy)
+                    actions=current['phase_actions'],reference=reference,config=self.events_config,policy=self.feedback_policy,
+                    full_approach_steps=([r['target_step'] for r in current['ordinary_turn_review']
+                        if r.get('full_approach',{}).get('requires_full')] if self.full_approach_delta is not None else None))
             ignored={(e['kind'],e['target_step']) for e in current['feedback_review']['events'] if e['suppress']}
             feedback_suppressed=[dict(e) for e in candidates if (e['kind'],e['target_step']) in ignored]
             candidates=[e for e in candidates if e not in feedback_suppressed]
@@ -581,6 +587,9 @@ class DeadlineRuntime:
             self.plan.update(ordinary_turn_policy=self.ordinary_turn_policy,
                 ordinary_turn_review=current['ordinary_turn_review'],
                 ordinary_turn_suppressed=ordinary_suppressed)
+            if self.full_approach_delta is not None:
+                self.plan['full_approach_target_steps']=[r['target_step'] for r in current['ordinary_turn_review']
+                    if r.get('full_approach',{}).get('requires_full')]
         if self.feedback_policy and current is not None:
             self.plan.update(feedback_review=current['feedback_review'],feedback_suppressed=feedback_suppressed)
         if self.phase_refresh:

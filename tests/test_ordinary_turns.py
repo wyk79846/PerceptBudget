@@ -27,6 +27,22 @@ def test_smooth_isolated_bend_does_not_require_its_own_early_refresh():
     assert r['local_angle_degrees']==pytest.approx(30.)
 
 
+def test_open_gripper_descent_is_retained_and_replayed_without_task_information():
+    actions=[[.8,0.,-.3,0.,0.,0.,-1.]]*4+[[.5,0.,-.5,0.,0.,0.,-1.]]*4
+    event=dict(kind='turn',prediction_id=7,target_step=4)
+    kwargs=dict(actions=actions,origin=0,source_step=0,history={},phases=[],events=[event],config=EventConfig())
+    assert review_ordinary_turn(event,**kwargs)['ordinary']
+    r=review_ordinary_turn(event,**kwargs,approach_delta=.1)
+    assert not r['ordinary'] and r['reason']=='downward_approach'
+    assert r['full_approach']['requires_full']
+    proof=dict(source_step=0,result=dict(events=[event]))
+    assert r==ordinary_turn_from_record(event,dict(observation_step=0,actions=actions),proof,{}, {},[],approach_delta=.1)
+    for unchanged in ([actions[4]]*8,[[.8,0.,.3,0.,0.,0.,-1.]]*4+[[.5,0.,.5,0.,0.,0.,-1.]]*4,
+                       [a[:6]+[1.] for a in actions]):
+        candidate=review_ordinary_turn(event,**dict(kwargs,actions=unchanged),approach_delta=.1)
+        assert not candidate['full_approach']['requires_full']
+
+
 @pytest.mark.parametrize('kind,reason',[('gripper_close','near_gripper'),('slowdown','near_slowdown')])
 def test_nearby_critical_cues_keep_the_turn(kind,reason):
     r,*_=review(extra=[dict(kind=kind,target_step=6)])

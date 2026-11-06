@@ -4,7 +4,7 @@ import math
 
 def review_cues(events, *, prediction_id, origin, source_step, period,
                 response_seconds, margin_seconds, minimum_steps, actions,
-                reference, config, policy='overlap_pacing_v1'):
+                reference, config, policy='overlap_pacing_v1', full_approach_steps=None):
     """Freeze one feedback window per chunk, anchored to its observation.
 
     Ordinary cues inside the first useful request time plus a complete Full
@@ -48,7 +48,8 @@ def review_cues(events, *, prediction_id, origin, source_step, period,
         new_gripper=kind.startswith('gripper_') and covered and matched is None
         keep_gripper=policy=='overlap_pacing_v2' and kind.startswith('gripper_')
         first_contact=policy=='overlap_pacing_v2' and prediction_id==0 and kind=='slowdown' and target==first_slowdown
-        reason=('gripper_feedback' if keep_gripper else 'initial_slowdown_feedback' if first_contact
+        approach=kind=='turn' and full_approach_steps is not None and target in full_approach_steps
+        reason=('approach_feedback' if approach else 'gripper_feedback' if keep_gripper else 'initial_slowdown_feedback' if first_contact
                 else 'consistent_forecast' if consistent else 'new_gripper_transition' if new_gripper
                 else 'fresh_plan_window' if target<end else 'new_feedback_deadline')
         reviews.append(dict(kind=kind,prediction_id=prediction_id,target_step=target,
@@ -59,4 +60,5 @@ def review_cues(events, *, prediction_id, origin, source_step, period,
         source_step=source_step,period_seconds=period,response_seconds=response_seconds,
         margin_seconds=margin_seconds,minimum_request_steps=minimum_steps,
         earliest_ordinary_request_step=earliest,fresh_plan_end_step=end,
-        reference_prediction_id=reference['prediction_id'] if reference else None,events=reviews)
+        reference_prediction_id=reference['prediction_id'] if reference else None,events=reviews,
+        **({'full_approach_steps':list(full_approach_steps)} if full_approach_steps is not None else {}))

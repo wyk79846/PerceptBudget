@@ -61,6 +61,8 @@ def main():
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--simplified-refresh',action='store_true',help='Combine active phase memory, turn-direction identity and smooth-bend filtering; allow the H50 window instead of a20/30-step cap')
     parser.add_argument('--energy-refresh',action='store_true',help='Simplified Full plus prediction-consistency filtering and a20-step ordinary feedback window; no30-step cap')
+    parser.add_argument('--full-approach-delta',type=float,
+        help='Retain open-gripper turns into a downward-dominant approach; minimum increase in normalized downward command component')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
     parser.add_argument('--fast-key-phases',action='store_true',help='Experimental320 key-phase protection and one Full response')
@@ -71,6 +73,9 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.full_approach_delta is not None and (args.acceptance_group!='m3' or not args.energy_refresh
+            or not 0<args.full_approach_delta<1):
+        parser.error('--full-approach-delta requires M3 energy refresh and a value between0 and1')
     if args.full_per_fast!=1 and not args.fast_alternate:parser.error('--full-per-fast requires --fast-alternate')
     if args.fast_cadence_pair:
         if not args.fast_alternate:parser.error('--fast-cadence-pair requires --fast-alternate')
@@ -177,6 +182,7 @@ def main():
             m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=50)
     if args.energy_refresh:
         cfg.update(m3_feedback_policy='overlap_pacing_v2',m3_feedback_minimum_steps=20)
+    if args.full_approach_delta is not None:cfg['m3_full_approach_delta']=args.full_approach_delta
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
     if args.critical_wait:
@@ -278,7 +284,7 @@ def main():
             fast_alternate=args.fast_alternate,
             all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
             simplified_refresh=args.simplified_refresh,phase_coverage_memory=cfg.get('m3_phase_coverage_memory'),
-            event_identity=cfg.get('m3_event_identity'),ordinary_turn_policy=cfg.get('m3_ordinary_turn_policy'),
+            event_identity=cfg.get('m3_event_identity'),ordinary_turn_policy=cfg.get('m3_ordinary_turn_policy'),full_approach_delta=args.full_approach_delta,
             max_refresh_interval=cfg.get('m3_max_refresh_interval'),
             feedback_policy=cfg.get('m3_feedback_policy'),feedback_minimum_steps=cfg.get('m3_feedback_minimum_steps'),
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
@@ -372,6 +378,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.simplified_refresh:command.append('--simplified-refresh')
             if args.energy_refresh:command.append('--energy-refresh')
+            if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
             if args.full_energy:command.append('--full-energy')

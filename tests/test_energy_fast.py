@@ -65,6 +65,17 @@ def test_simple_alternation_keeps_order_even_at_key_phases():
     assert d==before
 
 
+def test_downward_approach_uses_full_at_existing_deadline_then_resumes_fast():
+    from perceptbudget.ordinary_fast import ALTERNATING_NO_STATE_POLICY
+    args=dict(step=15,previous_mode='Full',phases=[],events=[],costs=ordinary_costs(),
+        fast_delay=5,policy=ALTERNATING_NO_STATE_POLICY)
+    d=dict(decision(),reason='action_event',critical_step=30,full_approach_target_steps=[30])
+    r=choose(d,**args)
+    assert r['mode']=='Full' and r['reason']=='full_downward_approach'
+    ordinary=choose(dict(d,reason='buffer'),**args)
+    assert ordinary['mode']=='Fast' and r['full_schedule']==ordinary['full_schedule']
+
+
 @pytest.mark.parametrize('ratio,expected',[(1,['Full','Fast']*4),(2,['Full','Full','Fast']*3)])
 def test_strict_cadence_includes_bootstrap_and_only_advances_on_commit(monkeypatch,ratio,expected):
     from perceptbudget.three_frequency import ThreeFullRuntime

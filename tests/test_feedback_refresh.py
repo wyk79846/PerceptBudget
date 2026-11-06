@@ -66,6 +66,30 @@ def test_buffer_limit_still_starts_a_request_even_when_every_cue_is_suppressed()
     assert d['reason']=='buffer' and d['start_now']
 
 
+def test_full_approach_survives_both_ordinary_and_feedback_filters():
+    import math
+    r=runtime(50);r.feedback_policy='overlap_pacing_v2';r.feedback_minimum=20;r.full_approach_delta=.1
+    actions=[[math.cos(math.radians(a)),0.,-math.sin(math.radians(a)),0.,0.,0.,-1.]
+        for a in [0,15,30,45,60,75]+[80]*44]
+    r.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=actions),
+        dict(commit_step=0,commit_monotonic=0.))
+    d=r.decide(now=0.,step=0,queue={i:(a,0,0,i) for i,a in enumerate(actions)},rows=[],inflight=False,rtc_delay_steps=5)
+    assert d['critical_step']==4 and 4 in d['full_approach_target_steps']
+    assert not any(e['target_step']==4 for e in d['ordinary_turn_suppressed']+d['feedback_suppressed'])
+    assert next(e for e in d['feedback_review']['events'] if e['target_step']==4)['reason']=='approach_feedback'
+
+
+def test_full_approach_cli_is_explicit_and_keeps_model_settings(monkeypatch,capsys):
+    from scripts import run_m4
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--energy-refresh',
+        '--full-approach-delta','0.1','--dry-run'])
+    assert run_m4.main()==0
+    plan=json.loads(capsys.readouterr().out)
+    assert plan['full_approach_delta']==.1 and plan['H']==50 and plan['N']==5
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--full-approach-delta','0.1','--dry-run'])
+    with pytest.raises(SystemExit):run_m4.main()
+
+
 def test_cli_combines_energy_policy_without_changing_the_model_or_adding_a30_cap(monkeypatch,capsys):
     from scripts import run_m4
     monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--task-indices','0',

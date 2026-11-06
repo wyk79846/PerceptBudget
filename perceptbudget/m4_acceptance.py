@@ -210,7 +210,7 @@ def resume_full(source, config):
           'm3_phase_refresh','m3_first_refresh_step','m3_replay_eta_ms','m3_full_energy',
           'm3_critical_forecast','m3_phase_event_source','m3_phase_coverage_memory',
           'm3_event_identity',
-          'm3_ordinary_turn_policy','m3_max_refresh_interval',
+          'm3_ordinary_turn_policy','m3_max_refresh_interval','m3_full_approach_delta',
           'm3_feedback_policy','m3_feedback_minimum_steps',
           'm3_ordinary_fast','m3_ordinary_fast_context','m3_ordinary_fast_policy','m3_ordinary_fast_visual_mode','m3_ordinary_fast_positions',
           'm3_fast_alternation','m2_fast_no_state','m3_fast_full_per_fast','m3_fast_cadence_pair',
