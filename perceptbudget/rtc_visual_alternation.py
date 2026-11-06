@@ -104,10 +104,26 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             prepare_seconds=sum(r['prepare_seconds'] for r in reports),
             limitation='Two independently bounded banks; no runtime graph capture')
 
+    def evict_step_banks(self):
+        """Drop cached captures between tasks; retain weights and expert patches."""
+        self.torch.cuda.synchronize()
+        banks=getattr(self,'_dual_resident_banks',())
+        lengths=[sorted(bank.entries) if bank is not None else [] for bank in banks]
+        self.step_bank=None
+        for bank in banks:
+            if bank is not None:bank.release()
+        self._dual_resident_banks=(None,None)
+        self._resident_step_bank=None
+        self._shared_step_bank_pool=None
+        import gc
+        gc.collect()
+        self.torch.cuda.empty_cache()
+        return dict(evicted_prefixes=lengths,weights_retained=True,scope='Between-task graph cache only')
+
     def release_graph(self):
         self.torch.cuda.synchronize()
         for bank in getattr(self,'_dual_resident_banks',()):
-            bank.release()
+            if bank is not None:bank.release()
         self._dual_resident_banks=()
         self._shared_step_bank_pool=None
         return super().release_graph()

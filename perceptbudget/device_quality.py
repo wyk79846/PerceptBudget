@@ -483,7 +483,17 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     torch.cuda.synchronize()
                     adapter.step_bank = None
                     adapter.expert = root_expert
-                    mem('resident_banks_retained' if dual_visual else 'old_bank_released')
+                    cache_dropped=False
+                    # Keep the next environment/capture preparation from
+                    # overlapping its peak with otherwise reusable old graphs.
+                    # This runs before task setup; inference still uses the
+                    # same exact graphs, rechecked by the normal source gate.
+                    if dual_visual and memory_record(torch,'before_next_task')['available_mib']<2048:
+                        evicted=adapter.evict_step_banks()
+                        record.setdefault('resident_graph_evictions',[]).append(dict(
+                            before_suite=suite,before_task_id=tid,**evicted))
+                        cache_dropped=True
+                    mem('resident_banks_evicted' if cache_dropped else 'resident_banks_retained' if dual_visual else 'old_bank_released')
                 base._seed_process(7, np, torch)
                 task = base._load_tasks([tid], [suite])[0]
                 env = base._make_env(env_class, task)

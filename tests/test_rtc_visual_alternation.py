@@ -40,6 +40,32 @@ def test_dual_geometry_builds_two_bounded_banks_and_dispatches_without_fallback(
         adapter.prepare_step_bank(list(range(650,668))+wrist)
 
 
+def test_between_task_eviction_releases_both_old_banks_before_recapture_and_keeps_expert(monkeypatch):
+    calls=[]
+    class Bank:
+        fallback='root'
+        def __init__(self,lengths):self.entries={n:('expert','graph') for n in lengths}
+        def release(self):calls.append(('release',sorted(self.entries)));self.entries.clear()
+        def select(self,n):return self.entries.get(n,(self.fallback,None))
+    def prepare(self,lengths,*,progress=None):
+        assert self._resident_step_bank is None
+        calls.append(('prepare',list(lengths)));self.step_bank=Bank(lengths)
+        return dict(passed=True,prepare_seconds=1.)
+    monkeypatch.setattr(OriginalOpenPiRTCAdapter,'prepare_step_bank',prepare)
+    adapter=FreshViewRTCAdapter.__new__(FreshViewRTCAdapter)
+    adapter.torch=SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda:None,empty_cache=lambda:None,graph_pool_handle=object))
+    adapter.config={'source_prefix_coverage_rule':'h50_state8_tokenizer_bounds_v1'}
+    adapter.position_policy=None;adapter._step_bank_stream=object();adapter.expert=object()
+    weights=adapter.expert;adapter._shared_step_bank_pool=object();adapter._dual_resident_banks=(Bank([650]),Bank([400]))
+    report=adapter.evict_step_banks()
+    assert report['evicted_prefixes']==[[650],[400]] and adapter.expert is weights
+    assert adapter.step_bank is None and adapter._shared_step_bank_pool is None
+    assert adapter._dual_resident_banks==(None,None)
+    adapter.prepare_step_bank([651,401])
+    assert calls==[('release',[650]),('release',[400]),('prepare',[651]),('prepare',[401])]
+    assert adapter.expert is weights and adapter.step_bank.select(401)==('expert','graph')
+
+
 @pytest.mark.parametrize('fast_mode',['wrist','pool2','pool2_agent','selective320'])
 @pytest.mark.parametrize('fast_no_state',[False,True])
 def test_fresh_visual_alternation_encodes_selected_current_image_and_state(monkeypatch,fast_mode,fast_no_state):
