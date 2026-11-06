@@ -23,6 +23,8 @@ M4已有动作前瞻、时限与设备准备、Fast闭环实现及实验。按Wo
 
 ## Full判定修复（开发seed27，2026-11-06）
 
+实验约束：禁止针对seed17的具体失败或任务编号调参、加例外。通用参数在开发任务上校准并冻结，再按授权范围评测；策略不读取seed或task ID。
+
 新增显式参数`--full-approach-delta 0.1`：张开夹爪的预测运动转向明显下探时，保留该转向信号，通过普通弯道与反馈窗口过滤，并在其截止时间选择Full。只使用已有动作预测，不新增模型或图像采集。原33/40配置与默认值保留；当前用户要求不运行或针对seed17/init1调参。
 
 开发seed27/init1同5任务成功2/5→5/5：Object0/5/7为143/118/130步，Goal3/5为182/136步。Object0、5的闭合次数从4/3次降为各1次；33次刷新中仍有13次Fast，零断供，一次模型加载，79项相关CPU检查及回合/频率/输入记录检查通过。这个开发结果不替换原40任务成功率。[运行计划与参数](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/plan.json) · [逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/results.md)。实现Git`7e0127b`，模型/RTC/FlashRT沿用原配置。
