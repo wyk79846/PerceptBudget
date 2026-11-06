@@ -45,8 +45,7 @@ def load_costs(path, config):
 
 
 def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
-           policy=POLICY, match_steps=5, full_per_fast=1, full_streak=None,
-           gripper_full_margin_steps=None):
+           policy=POLICY, match_steps=5, full_per_fast=1, full_streak=None):
     """The same clock preparation and initial waiting cancel between candidates.
 
     Compare absolute request energy plus the remaining hold on the SAME window.
@@ -94,28 +93,12 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
     streak=int(previous_mode=='Full') if full_streak is None else full_streak
     if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY):
         # Strict cadence counts completed Full requests, including bootstrap.
-        # The optional post-service gripper window below is the only override.
+        # No phase, quality, energy or timing admission gate changes the order.
         # Scheduling and clock selection still use the complete Full plan.
         if full_per_fast not in (1,2):raise ValueError('Use one or two Full requests per Fast')
         selected='Fast' if streak>=full_per_fast else 'Full'
-    gripper_guard=None
-    if gripper_full_margin_steps is not None:
-        if (policy not in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY)
-                or not isinstance(gripper_full_margin_steps,int)
-                or not 0<=gripper_full_margin_steps<=10):
-            raise ValueError('Gripper Full margin requires alternation and0..10 steps')
-        arrival=step+math.ceil((decision['service_seconds']+decision['margin_seconds'])/period-1e-9)
-        forecast=decision.get('critical_forecast',{}).get('result',{}).get('events',[])
-        protected_events=[e for e in forecast if e['kind'].startswith('gripper_')
-                   and arrival<=e['target_step']<=arrival+gripper_full_margin_steps]
-        override=selected=='Fast' and bool(protected_events)
-        gripper_guard=dict(policy='post_service_gripper_window_v1',margin_steps=gripper_full_margin_steps,
-            arrival_step=arrival,stop_step=arrival+gripper_full_margin_steps,
-            events=protected_events,overrode_fast=override)
-        if override:selected='Full'
     return dict(policy=policy,mode=selected,
-        reason='full_gripper_service_window' if gripper_guard and gripper_guard['overrode_fast'] else
-               'alternating_refresh' if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY) else 'ordinary_cheaper_fast' if selected=='Fast' else
+        reason='alternating_refresh' if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY) else 'ordinary_cheaper_fast' if selected=='Fast' else
                'full_after_fast' if previous_mode=='Fast' else
                'full_key_stage' if not ordinary else 'full_cost_or_timing',
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,
@@ -124,7 +107,6 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
         profile=profile,window_seconds=window,candidates=rows,
         gripper_margin_steps=match_steps if policy in (FEEDBACK_POLICY_V2,FEEDBACK_POLICY) else None,
         protected_gripper_phases=protected,
-        **({'gripper_full_guard':gripper_guard} if gripper_guard is not None else {}),
         estimated_saving_j=saving,cost_source=costs.get('source'),
         shared_preparation='Same start and selected frequency; common preparation energy cancels',
         hold_scope='Measured fixed-input hold power; ranking prior, task energy measured separately',

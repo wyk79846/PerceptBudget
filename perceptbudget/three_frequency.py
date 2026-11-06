@@ -118,7 +118,6 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_previous='Full'
         self.ordinary_full_streak=1
         self.ordinary_full_per_fast=config.get('m3_fast_full_per_fast',1)
-        self.ordinary_gripper_full_margin_steps=config.get('m3_fast_gripper_full_margin_steps')
         self.fast_delays={}
         self.full_energy=bool(config.get('m3_full_energy'))
         self.energy_costs=config.get('m3_full_energy_costs')
@@ -221,8 +220,7 @@ class ThreeFullRuntime(LowFullRuntime):
                 phases=self.chunks[item[1]].get('low_full_phases',[]),events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']],
                 policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
-                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak,
-                gripper_full_margin_steps=self.ordinary_gripper_full_margin_steps)
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
         self.plan=d
         return d
 
@@ -252,8 +250,7 @@ class ThreeFullRuntime(LowFullRuntime):
                 previous_mode=self.ordinary_previous,phases=self.ordinary_phases,events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']],
                 policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
-                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak,
-                gripper_full_margin_steps=self.ordinary_gripper_full_margin_steps)
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
             self.plan=decision
         return decision
 
