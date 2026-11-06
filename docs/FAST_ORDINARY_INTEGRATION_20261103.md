@@ -253,3 +253,30 @@ seed7/init0，Spatial0/Object0/Long0，各两种顺序一次，共6回合一模�
 相比纯Full＋Continue35/40，本轮总能量增加1.03%、时间增加5.03%；共同成功30项省2.99%，但成功数仍少3项。相比q30历史33/40，全40省8.60%、慢10.56%；共同成功27项省8.96%、慢9.16%。各历史组为独立进程评测，保留全部结果与交叉成功明细。继续保留原基线，1:2只作显式候选，不自动替换。结束频率已恢复1173/3199/1497.6MHz。
 
 [本轮40任务完整报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.md>) · [JSON与全部逐请求顺序](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.json>) · [CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.csv>)。
+
+
+## 2026-11-06：Full夹爪窄保护窗开发小测（不采用）
+
+33/40工作锚点继续保留。以下只使用开发seed27/init1，未运行或调整seed17。
+
+先对seed17原失败的Object0/5/7、Goal3/5独立复测，参数不变，2/5成功：Object7为143步、Goal3为180步，其余仍超时。这是选定失败案例的诊断，不能当作两类任务总体成功率。
+
+随后只增加一个通用Full选择参数：若预测夹爪切换落在“Full完整服务预算＋余量完成后”的5步内，本次原定Fast改用Full。已经承诺的前缀及普通转向不进入该窄窗；刷新启动公式、RTC、模型、输入与频率配置保持。开关--full-gripper-margin-steps 5，候选实现Git695ff92；默认未启用。
+
+| 同seed27/init1开发任务 | 原Full/Fast | 加5步保护窗 |
+|---|---:|---:|
+| Object0 | 超时280步 | 超时280步 |
+| Object5 | 超时280步 | 超时280步 |
+| Object7 | 成功143步 | 成功146步 |
+| Goal3 | 成功180步 | 成功189步 |
+| Goal5 | 超时300步 | 超时300步 |
+| 成功 | 2/5 | 2/5 |
+| 全部尝试能量（任务＋在途，J） | 822.572 | 856.674 |
+| 全部任务实耗（s） | 68.911 | 70.825 |
+| Full/Fast请求 | 28/25 | 34/20 |
+
+候选一模型完成5回合，零断供，回合/频率/输入记录检查通过。Full保护实际触发11次；能量增加4.15%、耗时增加2.78%，没有改善成败。Object0/5在多次Full替换后仍失败；Goal5未出现预测夹爪切换，这条规则未覆盖它。不能据此认定失败均由Full次数不足造成。
+
+不采用该候选，实验逻辑已从当前代码撤回，Git保留可复现提交；seed17/init1的33/40及默认运行规则不变，FlashRT未改。62项相关CPU检查通过。
+
+[原seed27复测](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T044518.262044Z-fast-failed5-seed27-25c69195/results.md) · [候选逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T045725.533806Z-full-gripper5-seed27-d278386c/results.md) · [完整对照与触发位置](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T045725.533806Z-full-gripper5-seed27-d278386c/comparison.json)
