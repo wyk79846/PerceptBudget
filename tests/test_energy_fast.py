@@ -65,6 +65,49 @@ def test_simple_alternation_keeps_order_even_at_key_phases():
     assert d==before
 
 
+def test_gripper_full_window_covers_reachable_grasp_and_preserves_schedule():
+    from perceptbudget.ordinary_fast import ALTERNATING_NO_STATE_POLICY
+    d=decision()
+    d['critical_forecast']=dict(result=dict(events=[dict(kind='gripper_close',target_step=45)]))
+    args=dict(step=30,previous_mode='Full',phases=[],events=[],costs=ordinary_costs(),
+        fast_delay=5,policy=ALTERNATING_NO_STATE_POLICY)
+    original=choose(d,**args)
+    guarded=choose(d,**args,gripper_full_margin_steps=5)
+    assert original['mode']=='Fast' and 'gripper_full_guard' not in original
+    assert guarded['mode']=='Full' and guarded['reason']=='full_gripper_service_window'
+    assert guarded['full_schedule']==original['full_schedule']
+    assert guarded['gripper_full_guard']['arrival_step']==41
+    assert guarded['protected_gripper_phases']==[]
+    assert choose(d,**dict(args,previous_mode='Fast'),gripper_full_margin_steps=5)['mode']=='Full'
+
+
+@pytest.mark.parametrize('kind,target',[
+    ('gripper_close',29),('gripper_close',40),('gripper_close',47),('turn',43),('slowdown',43)])
+def test_gripper_full_window_does_not_expand_to_committed_prefix_or_other_motion(kind,target):
+    from perceptbudget.ordinary_fast import ALTERNATING_NO_STATE_POLICY
+    d=decision();d['critical_forecast']=dict(result=dict(events=[dict(kind=kind,target_step=target)]))
+    r=choose(d,step=30,previous_mode='Full',phases=[],events=[],costs=ordinary_costs(),
+        fast_delay=5,policy=ALTERNATING_NO_STATE_POLICY,gripper_full_margin_steps=5)
+    assert r['mode']=='Fast' and not r['gripper_full_guard']['overrode_fast']
+
+
+def test_gripper_full_margin_cli_is_explicit_and_keeps_the_controller(monkeypatch,capsys):
+    from scripts import run_m4
+    from perceptbudget import ordinary_fast
+    monkeypatch.setattr(ordinary_fast,'load_costs',lambda *args:ordinary_costs())
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--task-indices','0',
+        '--ordinary-fast','--fast-alternate','--fast-no-state','--ordinary-fast-view','pool2_agent',
+        '--ordinary-fast-costs','/tmp/measured.json','--energy-refresh','--ordinary-fast-positions',
+        '--low-full','--three-frequency','--idle-min-ms','50','--start-floor-ms','25',
+        '--full-gripper-margin-steps','5','--dry-run'])
+    assert run_m4.main()==0
+    r=json.loads(capsys.readouterr().out)
+    assert r['full_gripper_margin_steps']==5 and r['full_per_fast']==1
+    assert r['feedback_minimum_steps']==20 and r['H']==50 and r['N']==5
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--full-gripper-margin-steps','5','--dry-run'])
+    with pytest.raises(SystemExit):run_m4.main()
+
+
 @pytest.mark.parametrize('ratio,expected',[(1,['Full','Fast']*4),(2,['Full','Full','Fast']*3)])
 def test_strict_cadence_includes_bootstrap_and_only_advances_on_commit(monkeypatch,ratio,expected):
     from perceptbudget.three_frequency import ThreeFullRuntime

@@ -413,6 +413,19 @@ def audit(run):
                         expected='Fast' if streak>=ratio else 'Full'
                         check('alternating_cadence',ratio in (1,2) and f.get('full_per_fast',1)==ratio
                             and f.get('full_streak',streak)==streak,pid)
+                        margin=cfg.get('m3_fast_gripper_full_margin_steps')
+                        if margin is not None:
+                            arrival=origin+math.ceil((decision['service_seconds']+decision['margin_seconds'])/
+                                decision['estimated_control_period_seconds']-1e-9)
+                            forecast=decision.get('critical_forecast',{}).get('result',{}).get('events',[])
+                            protected=[e for e in forecast if e['kind'].startswith('gripper_')
+                                and arrival<=e['target_step']<=arrival+margin]
+                            override=expected=='Fast' and bool(protected)
+                            check('gripper_full_window',isinstance(margin,int) and 0<=margin<=10
+                                and f.get('gripper_full_guard')==dict(policy='post_service_gripper_window_v1',
+                                    margin_steps=margin,arrival_step=arrival,stop_step=arrival+margin,
+                                    events=protected,overrode_fast=override),pid)
+                            if override:expected='Full'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
