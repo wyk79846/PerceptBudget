@@ -213,7 +213,7 @@ def resume_full(source, config):
           'm3_ordinary_turn_policy','m3_max_refresh_interval',
           'm3_feedback_policy','m3_feedback_minimum_steps',
           'm3_ordinary_fast','m3_ordinary_fast_context','m3_ordinary_fast_policy','m3_ordinary_fast_visual_mode','m3_ordinary_fast_positions',
-          'm3_fast_alternation','m2_fast_no_state',
+          'm3_fast_alternation','m2_fast_no_state','m3_fast_full_per_fast','m3_fast_cadence_pair',
           'm4_common_low_tail_seconds','m4_policy_revision','rtc_critical_wait_prefix_policy')
     if (group not in ('q30','m3') or original.get('m4_acceptance_manifest')!=fixed
             or any(original.get(k)!=config.get(k) for k in keys)):

@@ -116,6 +116,8 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_costs=config.get('ordinary_fast_costs')
         self.ordinary_policy=config.get('m3_ordinary_fast_policy','ordinary_fast_same_full_schedule_v1')
         self.ordinary_previous='Full'
+        self.ordinary_full_streak=1
+        self.ordinary_full_per_fast=config.get('m3_fast_full_per_fast',1)
         self.fast_delays={}
         self.full_energy=bool(config.get('m3_full_energy'))
         self.energy_costs=config.get('m3_full_energy_costs')
@@ -217,7 +219,8 @@ class ThreeFullRuntime(LowFullRuntime):
             d['m3_fast_formula']=choose(d,step=step,previous_mode=self.ordinary_previous,
                 phases=self.chunks[item[1]].get('low_full_phases',[]),events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']],
-                policy=self.ordinary_policy,match_steps=self.events_config.match_steps)
+                policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
         self.plan=d
         return d
 
@@ -234,6 +237,7 @@ class ThreeFullRuntime(LowFullRuntime):
             self.times.recovery_samples.clear();self.times.recovery_samples.extend(recovery)
             for k,v in low.items():self.low_histories[k].clear();self.low_histories[k].extend(v)
         self.ordinary_previous=request.get('m3_fast_choice',{}).get('mode','Full')
+        self.ordinary_full_streak=(0 if fast else 1 if request['prediction_id']==0 else self.ordinary_full_streak+1)
         self.last_ready=request.get('ready_monotonic',commit['commit_monotonic'])
 
     def control_clocks(self,decision,*,inflight):
@@ -245,7 +249,8 @@ class ThreeFullRuntime(LowFullRuntime):
             decision['m3_fast_formula']=choose(decision,step=self.ordinary_step,
                 previous_mode=self.ordinary_previous,phases=self.ordinary_phases,events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']],
-                policy=self.ordinary_policy,match_steps=self.events_config.match_steps)
+                policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
             self.plan=decision
         return decision
 

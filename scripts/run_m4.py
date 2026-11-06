@@ -39,6 +39,8 @@ def main():
     parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
     parser.add_argument('--fast-alternate',action='store_true',help='Simple Full/Fast alternation with state in both; retain Full refresh and clock rules')
+    parser.add_argument('--full-per-fast',type=int,choices=(1,2),default=1,help='Full requests per Fast in a strict repeating cadence, counting bootstrap Full')
+    parser.add_argument('--fast-cadence-pair',action='store_true',help='Resident paired comparison of Full/Fast versus Full/Full/Fast')
     parser.add_argument('--fast-no-state',action='store_true',help='Keep state for Full, omit state only for alternating dual-view Fast')
     capture_options=parser.add_mutually_exclusive_group()
     capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
@@ -69,6 +71,10 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.full_per_fast!=1 and not args.fast_alternate:parser.error('--full-per-fast requires --fast-alternate')
+    if args.fast_cadence_pair:
+        if not args.fast_alternate:parser.error('--fast-cadence-pair requires --fast-alternate')
+        args.ordinary_fast_pair=True
     if args.fixed_q!=30 and args.acceptance_group!='q30':
         parser.error('--fixed-q requires the fixed baseline group')
     args.simplified_refresh=args.simplified_refresh or args.energy_refresh
@@ -234,6 +240,8 @@ def main():
             cfg.update(m3_ordinary_fast_visual_mode='pool2_agent')
         if args.fast_alternate:
             cfg.update(m3_fast_alternation=True,m3_fast_no_state=args.fast_no_state,m2_fast_no_state=args.fast_no_state)
+            if args.full_per_fast!=1:cfg['m3_fast_full_per_fast']=args.full_per_fast
+            if args.fast_cadence_pair:cfg['m3_fast_cadence_pair']=True
         cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
         if args.ordinary_fast_costs is None and cost_key not in m4:parser.error('Measure the selected Fast costs before closed-loop use: '+cost_key)
         cfg['ordinary_fast_costs']=fast_costs(args.ordinary_fast_costs or m4[cost_key],cfg)
@@ -266,7 +274,7 @@ def main():
             eta_ms=None if args.acceptance_group=='q30' else args.m3_eta_ms if args.acceptance_group in ('m3','m3_fast') else 25,H=50,N=5,cover_close_slowdown=args.cover_close_slowdown,
             fixed_q=args.fixed_q if args.acceptance_group=='q30' else None,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
-            ordinary_fast_positions=args.ordinary_fast_positions,
+            ordinary_fast_positions=args.ordinary_fast_positions,full_per_fast=args.full_per_fast,fast_cadence_pair=args.fast_cadence_pair,
             fast_alternate=args.fast_alternate,
             all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
             simplified_refresh=args.simplified_refresh,phase_coverage_memory=cfg.get('m3_phase_coverage_memory'),
@@ -314,7 +322,7 @@ def main():
         if args.full_frequency_pair or args.ordinary_fast_pair:
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['full_frequency_pairs']=summarize_pairs(result['episodes'],args.run_dir,
-                groups=('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else (f'full_idle{args.idle_reference_ms}','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('full_three_strict','full_three_start25') if args.start_floor_ms else
+                groups=('cadence_1full','cadence_2full') if args.fast_cadence_pair else ('ordinary_full','ordinary_fast') if args.ordinary_fast_pair else (f'full_idle{args.idle_reference_ms}','full_idle_candidate') if args.idle_min_ms is not None else ('full_three_medium','full_three_energy') if args.full_energy else ('full_three_strict','full_three_start25') if args.start_floor_ms else
                        ('full_two','full_three') if args.three_frequency else ('full_high','full_low'))
             if args.frequency_reference_run:
                 combined=args.run_dir/'combined_frequency_pairs'
@@ -375,6 +383,8 @@ def main():
             if args.ordinary_fast_positions:command.append('--ordinary-fast-positions')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if args.fast_alternate:command.append('--fast-alternate')
+            if args.full_per_fast!=1:command.extend(['--full-per-fast',str(args.full_per_fast)])
+            if args.fast_cadence_pair:command.append('--fast-cadence-pair')
             if args.fast_no_state:command.append('--fast-no-state')
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')

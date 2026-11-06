@@ -45,7 +45,7 @@ def load_costs(path, config):
 
 
 def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
-           policy=POLICY, match_steps=5):
+           policy=POLICY, match_steps=5, full_per_fast=1, full_streak=None):
     """The same clock preparation and initial waiting cancel between candidates.
 
     Compare absolute request energy plus the remaining hold on the SAME window.
@@ -90,16 +90,19 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
              rows[1]['service_mean_seconds']<=rows[0]['service_mean_seconds'])
     saving=rows[0]['comparable_window_energy_j']-rows[1]['comparable_window_energy_j']
     selected='Fast' if allowed and saving>0 else 'Full'
+    streak=int(previous_mode=='Full') if full_streak is None else full_streak
     if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY):
-        # Diagnostic requested by the user: every other refresh uses Fast.
+        # Strict cadence counts completed Full requests, including bootstrap.
         # No phase, quality, energy or timing admission gate changes the order.
         # Scheduling and clock selection still use the complete Full plan.
-        selected='Fast' if previous_mode=='Full' else 'Full'
+        if full_per_fast not in (1,2):raise ValueError('Use one or two Full requests per Fast')
+        selected='Fast' if streak>=full_per_fast else 'Full'
     return dict(policy=policy,mode=selected,
         reason='alternating_refresh' if policy in (ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY) else 'ordinary_cheaper_fast' if selected=='Fast' else
                'full_after_fast' if previous_mode=='Fast' else
                'full_key_stage' if not ordinary else 'full_cost_or_timing',
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,
+        full_per_fast=full_per_fast,full_streak=streak,
         active_phases=active,near_events=near,fast_delay_steps=fast_delay,
         profile=profile,window_seconds=window,candidates=rows,
         gripper_margin_steps=match_steps if policy in (FEEDBACK_POLICY_V2,FEEDBACK_POLICY) else None,

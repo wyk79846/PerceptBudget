@@ -65,6 +65,57 @@ def test_simple_alternation_keeps_order_even_at_key_phases():
     assert d==before
 
 
+@pytest.mark.parametrize('ratio,expected',[(1,['Full','Fast']*4),(2,['Full','Full','Fast']*3)])
+def test_strict_cadence_includes_bootstrap_and_only_advances_on_commit(monkeypatch,ratio,expected):
+    from perceptbudget.three_frequency import ThreeFullRuntime
+    from perceptbudget.m3_low_full import LowFullRuntime
+    from perceptbudget.ordinary_fast import ALTERNATING_NO_STATE_POLICY
+    from tests.test_three_frequency import config
+    monkeypatch.setattr(LowFullRuntime,'committed',lambda *args:None)
+    runtime=ThreeFullRuntime(dict(config(),m3_ordinary_fast=True,ordinary_fast_costs=ordinary_costs(),
+        m3_ordinary_fast_policy=ALTERNATING_NO_STATE_POLICY,m3_fast_full_per_fast=ratio))
+    observed=[]
+    for pid in range(len(expected)):
+        if pid==0:
+            mode='Full'
+        else:
+            kwargs=dict(step=pid,previous_mode=runtime.ordinary_previous,phases=[],events=[],
+                costs=ordinary_costs(),fast_delay=5,policy=ALTERNATING_NO_STATE_POLICY,
+                full_per_fast=runtime.ordinary_full_per_fast,full_streak=runtime.ordinary_full_streak)
+            first=choose(decision(),**kwargs);second=choose(decision(),**kwargs)
+            assert first['mode']==second['mode']
+            mode=first['mode']
+        observed.append(mode)
+        request=dict(prediction_id=pid,m3_fast_choice=dict(mode=mode))
+        runtime.committed(request,dict(commit_monotonic=float(pid)))
+        if pid==0:
+            runtime.committed(request,dict(commit_monotonic=0.))
+            assert runtime.ordinary_full_streak==1
+    assert observed==expected
+
+
+def test_cadence_pair_rotates_order_and_keeps_both_fast_pipelines(monkeypatch,capsys):
+    from perceptbudget.device_quality import frequency_pair_views,configure_frequency_variant,camera_view_for_condition
+    from perceptbudget import ordinary_fast
+    from scripts import run_m4
+    cfg=dict(m3_fast_cadence_pair=True,m3_ordinary_fast_pair=True)
+    assert frequency_pair_views(cfg,0)==('cadence_1full','cadence_2full')
+    assert frequency_pair_views(cfg,1)==('cadence_2full','cadence_1full')
+    for label,ratio in [('cadence_1full',1),('cadence_2full',2)]:
+        child=dict(cfg);configure_frequency_variant(child,label)
+        assert child['m3_ordinary_fast'] and child['m3_fast_full_per_fast']==ratio
+        assert camera_view_for_condition(label)=='full'
+    monkeypatch.setattr(ordinary_fast,'load_costs',lambda *args:ordinary_costs())
+    monkeypatch.setattr(sys,'argv',['run_m4.py','--acceptance-group','m3','--all-tasks',
+        '--task-indices','0','10','30','--ordinary-fast','--fast-alternate','--fast-no-state',
+        '--ordinary-fast-view','pool2_agent','--ordinary-fast-costs','/tmp/measured.json',
+        '--energy-refresh','--ordinary-fast-positions','--low-full','--three-frequency',
+        '--fast-cadence-pair','--dry-run'])
+    assert run_m4.main()==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['episodes']==6 and result['fast_cadence_pair'] and result['Fast']=='pool2_agent_no_state'
+
+
 def test_alternating_pool_retains_current_state_in_real_context_inputs():
     from perceptbudget.rtc_visual_alternation import configure_explicit_inputs,FreshViewRTCAdapter
     cfg=dict(m3_ordinary_fast_context=True,m3_fast_alternation=True,

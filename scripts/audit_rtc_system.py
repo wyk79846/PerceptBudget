@@ -404,7 +404,15 @@ def audit(run):
                     allowed=(ordinary and prior!='Fast' and not decision['deadline_already_unreachable']
                         and estimate<=decision['rtc_delay_steps'] and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds'])
                     expected='Fast' if allowed and energy[1]<energy[0] else 'Full'
-                    if alternating:expected='Fast' if prior=='Full' else 'Full'
+                    if alternating:
+                        ratio=cfg.get('m3_fast_full_per_fast',1)
+                        streak=0
+                        for earlier in range(pid-1,-1,-1):
+                            if by_id[earlier].get('m3_fast_choice',{}).get('mode','Full')!='Full':break
+                            streak+=1
+                        expected='Fast' if streak>=ratio else 'Full'
+                        check('alternating_cadence',ratio in (1,2) and f.get('full_per_fast',1)==ratio
+                            and f.get('full_streak',streak)==streak,pid)
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)

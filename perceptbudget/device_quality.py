@@ -19,6 +19,7 @@ def camera_view_for_condition(condition):
         return 'full'
     return 'full' if condition in ('full_capture', 'lean_continue', 'inflight_images', 'request_images', 'full_high', 'full_low', 'full_two', 'full_three',
                                   'full_three_strict','full_three_start25','ordinary_full','ordinary_fast',
+                                  'cadence_1full','cadence_2full',
                                   'full_three_medium','full_three_energy','full_idle100','full_idle200','full_idle_candidate') else condition
 
 
@@ -27,7 +28,8 @@ def frequency_pair_views(config, task_index):
     if config.get('m4_request_capture_pair'):
         labels=('inflight_images','request_images')
         return labels if task_index%2==0 else labels[::-1]
-    labels=(('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
+    labels=(('cadence_1full','cadence_2full') if config.get('m3_fast_cadence_pair') else
+            ('ordinary_full','ordinary_fast') if config.get('m3_ordinary_fast_pair') else
             (f"full_idle{config.get('m3_idle_reference_ms',200)}",'full_idle_candidate') if config.get('m3_idle_min_ms') is not None else
             ('full_three_medium','full_three_energy') if config.get('m3_full_energy') else
             ('full_capture','lean_continue') if config.get('m4_continue_overhead_pair') else
@@ -51,6 +53,9 @@ def configure_frequency_variant(config, view):
         if not config.get('m3_full_energy'):raise ValueError('Full energy pair requires its opt-in')
         config['m3_full_energy']=view=='full_three_energy'
         if view=='full_three_medium':config['m4_policy_revision']='not_applicable_original_m3'
+    elif view in ('cadence_1full','cadence_2full'):
+        if not config.get('m3_fast_cadence_pair'):raise ValueError('Cadence pair is not enabled')
+        config.update(m3_ordinary_fast=True,m3_fast_full_per_fast=1 if view=='cadence_1full' else 2)
     elif view in ('ordinary_full','ordinary_fast'):
         if not config.get('m3_ordinary_fast_pair'):raise ValueError('Ordinary Fast pair is not enabled')
         config['m3_ordinary_fast']=view=='ordinary_fast'
