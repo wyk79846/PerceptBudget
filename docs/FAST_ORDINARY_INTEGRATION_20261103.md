@@ -303,3 +303,26 @@ seed7/init0，Spatial0/Object0/Long0，各两种顺序一次，共6回合一模�
 Object0提示早期Fast或交接时机值得检查；Object5/Goal5纯Full仍失败，不能统一归因Fast准入阈值。初始物理state、模型state与噪声相同，bootstrap动作最大差约0.0069/0.0119/0.0068；关闭Fast也改变服务时间，因此上述结果不作为严格单因素因果证明。下一步优先验证首次接近/下探阶段的Full选择，不先改夹爪物理参数或叠加后续抓取的Full次数。
 
 [完整排查与接触数据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051604.761483Z-grasp-trace-review-38b34d86/review.md) · [抓取高度与开合时间线](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051604.761483Z-grasp-trace-review-38b34d86/grasp_timeline.png) · [纯Full原始对照](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T051743.196349Z-full-control-failed3-seed27-b6201858/results.md)
+
+
+## 2026-11-06：接近下探阶段Full漏判修正
+
+沿上节排查实现修正，源码Git7e0127b；只在开发seed27/init1校准，不运行或针对seed17/init1调参。旧33/40锚点配置不变。此前5步夹爪保护仍已撤回。
+
+原普通弯道过滤会忽略平滑的接近下探转向，反馈窗口还会再次忽略它；因此即使夹爪切换前启动Full，也可能继承早期偏差。本轮复用现有turn事件及其前后两步平均XYZ指令：预测夹爪张开，向下分量占XYZ模长至少0.5，且前后增长至少0.1，就标为下探，需要Full。对应事件通过普通/反馈过滤，仍按完整服务预算与25ms余量求最晚启动；原RTC、时钟准备、阶段去重和供给检查保留。只用已有动作，无额外感知或训练。
+
+显式参数--full-approach-delta 0.1，默认未启用，旧入口可原样复现；配置与续测校验均记录该值，独立审查重新计算方向证据及Full选择。79项相关CPU检查通过。
+
+| 开发seed27/init1任务 | 原Full/Fast | 修正后 | 首次Full启动步：原→新 |
+|---|---|---|---|
+| Object0 | 超时280步 | 成功143步 | 43→13 |
+| Object5 | 超时280步 | 成功118步 | 34→20 |
+| Object7 | 成功143步 | 成功130步 | 31→19 |
+| Goal3 | 成功180步 | 成功182步 | 66→5 |
+| Goal5 | 超时300步 | 成功136步 | 67→8 |
+
+同5任务由2/5提高到5/5，原两个成功保留。Object0/5的闭合次数由4/3次降为各1次，重复抓松消失。一次模型加载、零断供；33次刷新含20Full、13Fast，仍使用Fast及三频Continue；回合、频率/恢复及输入记录检查全部通过。模型权重、H50/N5、精度、RTC、token位置与FlashRT未改。
+
+全部5次尝试能量822.572→506.258J，任务时间68.911→41.448s；变化包括三个超时被修复的收益，不作为总体能效提升比例。该结果仅是开发5例验证，不替换seed17的33/40，也不称为新的40任务成功率。
+
+[固定计划与执行命令](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/plan.json) · [逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/results.md) · [介入时机和抓松次数对照](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/comparison.json)
