@@ -241,3 +241,15 @@ seed7/init0，Spatial0/Object0/Long0，各两种顺序一次，共6回合一模�
 任务＋在途推理总能量390.620→347.579J，下降11.02%；总任务实耗33.564→28.741s，减少14.37%。请求24→22，Fast次数12→7。主要收益来自Object0完成步数减少，Spatial步数相同但能量增加。仅为三任务开发小测，保留显式候选，未替换40任务基线。结束已恢复1173/3199/1497.6MHz。
 
 [同模型三任务配对报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T021500.290570Z-fast-cadence-pair-dev3-2a275826/review.md>) · [逐请求顺序与数据](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T021500.290570Z-fast-cadence-pair-dev3-2a275826/review.json>)。
+
+## 2026-11-06 两Full一次Fast全40扩测：未保持三任务优势
+
+按用户授权冻结Full→Full→Fast顺序，seed17/init1、四套各task0–9，每任务一次，沿用原位置、外部64＋腕部256、Fast无state/Full带state、H50/N5/BF16、原RTC与动态刷新/调频。一次模型连续完成40项，无RAM中断、零断供；全部既有回合检查通过，实际顺序、state与位置记录问题0项，未调参或重跑失败。结果32/40：Spatial7/10、Object8/10、Goal9/10、Long8/10；超时Sp6/7/9、Object1/5、Goal3、Long0/6。
+
+全部尝试任务＋在途推理5307.143J、441.770s，330次请求（Full237、Fast93），平均24.00步刷新。Fast高/中频中位341.8/482.3ms，Full465.9/653.0ms。
+
+相比之前简单交替33/40、5064.752J、430.566s，本轮少成功1项，总能量增加4.79%、时间增加2.60%；共同成功28项，能量省1.27%、时间减少2.91%。Object0/7、Goal5、Long8恢复，但Sp7/9、Object1、Long0/6退步。三任务开发批11.02%的节能没有在全40保持，不将小测替代扩测结论。
+
+相比纯Full＋Continue35/40，本轮总能量增加1.03%、时间增加5.03%；共同成功30项省2.99%，但成功数仍少3项。相比q30历史33/40，全40省8.60%、慢10.56%；共同成功27项省8.96%、慢9.16%。各历史组为独立进程评测，保留全部结果与交叉成功明细。继续保留原基线，1:2只作显式候选，不自动替换。结束频率已恢复1173/3199/1497.6MHz。
+
+[本轮40任务完整报告](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.md>) · [JSON与全部逐请求顺序](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.json>) · [CSV](</home/wyk/workspace/任务产出/perceptbudget/M4/20261106T022454.327486Z-fast-2full-seed17-all40-a2e4643e/results.csv>)。
