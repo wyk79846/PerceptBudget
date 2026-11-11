@@ -1,8 +1,7 @@
 """Sparse wrist-image feedback, independent of the VLA and simulator labels.
 
-First establish visible texture that moves with a closed hand. Then report a
-persistent disappearance of that texture. This deliberately cannot diagnose an
-empty grasp that never established a visible carried object.
+Track carried texture and optionally check a nearly empty closed hand lifting
+while the visible texture near its tips fails to move with it.
 """
 import time
 
@@ -17,11 +16,18 @@ def detector_name(value):
 
 
 class WristSlipMonitor:
-    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75, detector='fixed_reference'):
+    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75, detector='fixed_reference',grasp_check=False):
         import cv2
         cv2.setNumThreads(1)
         self.cv = cv2
         self.detector=detector_name(detector)
+        if grasp_check and self.detector!='updated_reference':
+            raise ValueError('Grasp check requires updated reference monitoring')
+        self.grasp_check=grasp_check
+        self.open_width=0.
+        self.close=None
+        self.control_history=[]
+        self.last_control=None
         self.interval = interval
         self.confirmation = confirmation
         self.loss_fraction = loss_fraction
@@ -42,11 +48,72 @@ class WristSlipMonitor:
         self.bad = 0
         if reset_alarm:self.alarmed = False
 
-    def on_control(self, action):
+    def on_control(self, action, state=None, *, step=None):
         """Observe commanded release every tick, including between image samples."""
+        g=float(action[6])
+        if g<=-.2:self.close=None
+        if self.grasp_check and state is not None:
+            width=abs(float(state[6]-state[7]))
+            if g<=-.2:
+                self.open_width=max(self.open_width,width)
+                self.close=None
+            elif g>=.2 and self.close is None:
+                self.close=dict(step=step,z=self.last_control['z'] if self.last_control else float(state[2]),checks=0)
+            current=dict(step=step,z=float(state[2]),width=width,g=g)
+            if self.last_control is None or step!=self.last_control['step']:
+                self.control_history.append(current)
+                self.control_history=self.control_history[-5:]
+            self.last_control=current
         if float(action[6]) <= -.2:
             self.reset_grasp()
             self.previous = None
+
+    def empty_lift_candidate(self):
+        if not self.grasp_check or self.close is None or self.open_width<=0 or len(self.control_history)<2:
+            return None
+        recent=self.control_history[-2:];current=recent[-1]
+        lift=current['z']-self.close['z']
+        if (all(r['g']>=.2 for r in recent) and current['width']<=.05*self.open_width
+                and lift>=.02 and current['z']>=recent[0]['z']-.003):
+            return dict(close_step=self.close['step'],open_width_m=self.open_width,
+                width_m=current['width'],width_fraction=current['width']/self.open_width,
+                eef_lift_m=lift,control_step=current['step'])
+        return None
+
+    def grasp_check_due(self):
+        return (not self.alarmed and self.empty_lift_candidate() is not None
+                and self.close['checks']<2)
+
+    def note_grasp_sample(self):
+        if self.empty_lift_candidate() is not None:self.close['checks']+=1
+
+    def grasp_motion(self, gray, state, candidate, step):
+        """Image motion supplies positive evidence; missing features are unknown."""
+        import numpy as np
+        result=dict(state_candidate=candidate,available=False,confirmed=False)
+        old=self.previous
+        if old is None or step-self.last_step>self.interval:return result
+        rise=float(state[2]-old['state'][2])
+        result['image_pair_rise_m']=rise
+        if rise<.008:return result
+        cv=self.cv;mask=np.zeros_like(gray);mask[64:112,88:168]=255
+        points=cv.goodFeaturesToTrack(old['gray'],maxCorners=24,qualityLevel=.04,
+            minDistance=6,mask=mask,blockSize=5)
+        if points is None:return result
+        now,valid,_=cv.calcOpticalFlowPyrLK(old['gray'],gray,points,None,winSize=(21,21),maxLevel=3)
+        if now is None:return result
+        back,back_valid,_=cv.calcOpticalFlowPyrLK(gray,old['gray'],now,None,winSize=(21,21),maxLevel=3)
+        if back is None:return result
+        good=(valid[:,0].astype(bool)&back_valid[:,0].astype(bool)
+              &(np.linalg.norm(back[:,0]-points[:,0],axis=1)<=1.25))
+        flow=np.linalg.norm(now[:,0]-points[:,0],axis=1)[good]
+        result['tracked_points']=len(flow)
+        if len(flow)<4:return result
+        moving=float(np.mean(flow>=2.));static=int(sum(flow<=1.25))
+        result.update(available=True,moving_fraction=moving,static_points=static,
+            median_motion_px=float(np.median(flow)),
+            confirmed=moving>=self.loss_fraction and static<4)
+        return result
 
     def texture_loss(self, gray, reference):
         scores = []
@@ -97,10 +164,18 @@ class WristSlipMonitor:
                 self.reset_grasp(reset_alarm=False)
                 self.previous=None
                 row.update(reference_reacquired=True,reason='observation_gap_reacquire')
+        candidate=self.empty_lift_candidate()
+        if candidate is not None:
+            evidence=self.grasp_motion(gray,state,candidate,step)
+            row['grasp_check']=evidence
+            self.note_grasp_sample()
+            if evidence['confirmed'] and eligible and not self.alarmed:
+                row.update(alarm=True,reason='empty_closed_grip_visual_motion')
+                self.alarmed=True
         if not closed:
             self.reset_grasp()
             row['reason'] = 'gripper_open'
-        elif self.previous is not None:
+        elif self.previous is not None and not row['alarm']:
             old = self.previous
             aperture_change = abs(width-old['width'])
             travel = float(np.linalg.norm(state[:3]-old['state'][:3]))

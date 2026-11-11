@@ -303,8 +303,29 @@ def audit(run):
         control=by_step.get(sample['step']-1,{})
         decision=decisions.get(sample.get('decision_step'),{})
         acquired=sample.get('acquisition',{})
+        period=cfg.get('visual_monitor',{}).get('interval',5)
+        scheduled=sample['step']%period==0
+        if not scheduled:
+            at=sample['step']-1
+            preceding=[by_step[i] for i in sorted(by_step) if i<=at]
+            opened_at=max((r['step'] for r in preceding if r['action'][6]<=-.2),default=-1)
+            close=next((r for r in preceding if r['step']>opened_at and r['action'][6]>=.2),None)
+            recent_closed=len(preceding)>=2 and all(r['action'][6]>=.2 for r in preceding[-2:])
+            opened=[abs(r['after']['raw_state'][6]-r['after']['raw_state'][7])
+                for r in preceding if close and r['step']<close['step'] and r['action'][6]<=-.2]
+            width=abs(control['after']['raw_state'][6]-control['after']['raw_state'][7])
+            proof=sample.get('grasp_check',{}).get('state_candidate') or {}
+            scheduled=(cfg.get('visual_monitor',{}).get('grasp_check') is True and recent_closed
+                and bool(opened) and width<=.05*max(opened)
+                and control['after']['raw_state'][2]-close['before']['raw_state'][2]>=.02
+                and proof.get('close_step')==close['step']+1
+                and sample.get('sampling_trigger')=='grasp_check')
+            forced_count=sum(e.get('event')=='visual_monitor' and e.get('sampling_trigger')=='grasp_check'
+                and (e.get('grasp_check',{}).get('state_candidate') or {}).get('close_step')==proof.get('close_step')
+                for e in events)
+            check('visual_grasp_extra_camera_budget',forced_count<=2,sample.get('sample_id'))
         check('visual_sample_real_continue',bool(cfg.get('visual_monitor'))
-            and sample['step']%cfg.get('visual_monitor',{}).get('interval',5)==0
+            and scheduled
             and sample['eligible'] and not control.get('inference_active_at_action',True)
             and control.get('action',[0]*7)[6]>=.2 and not decision.get('start_now',True)
             and decision.get('wait_seconds',0)>0,sample.get('sample_id'))

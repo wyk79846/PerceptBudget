@@ -324,7 +324,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         settings=config['visual_monitor']
         visual_monitor=WristSlipMonitor(interval=settings['interval'],
             confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'],
-            detector=settings.get('detector','original_v1'))
+            detector=settings.get('detector','original_v1'),grasp_check=settings.get('grasp_check',False))
     future = None
     previous_request_step = 0
     previous_commit_step = 0
@@ -853,15 +853,18 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             base._trace(stream, 'control_step', task_id=task['task_id'], q=q, **row)
             if visual_monitor is not None:
                 from perceptbudget.visual_monitor import continuation_eligible,fresh_wrist_image
-                visual_monitor.on_control(action)
+                visual_monitor.on_control(action,after['raw_state'],step=step+1)
                 eligible=continuation_eligible(decision,inflight=inference_active_at_action or future is not None)
-                if (not terminal and eligible and action[6]>=.2 and visual_monitor.due(step+1)):
+                periodic=visual_monitor.due(step+1)
+                grasp_due=visual_monitor.grasp_check_due()
+                if (not terminal and eligible and action[6]>=.2 and (periodic or grasp_due)):
                     image,acquisition=fresh_wrist_image(env)
                     sample=visual_monitor.observe(image,after['raw_state'],action,
                         step=step+1,eligible=True)
                     sample.update(sample_id=len(visual_monitor.samples)-1,acquisition=acquisition,
                         source_prediction_id=source['prediction_id'] if source else None,
-                        decision_step=step,inference_active=False)
+                        decision_step=step,inference_active=False,
+                        sampling_trigger='periodic' if periodic else 'grasp_check')
                     visual_images.append(visual_monitor.cv.cvtColor(image,visual_monitor.cv.COLOR_RGB2GRAY))
                     base._trace(stream,'visual_monitor',**sample)
                     scheduler.arm_visual_alarm(sample)
@@ -1025,6 +1028,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             acquisition_seconds=sum(s['acquisition']['stop_monotonic']-s['acquisition']['start_monotonic'] for s in samples),
             detector_seconds=sum(s['detector_seconds'] for s in samples),
             stopped_seconds=sum(r.get('visual_monitor_wait_seconds',0.) for r in rows),
+            forced_grasp_samples=sum(s.get('sampling_trigger')=='grasp_check' for s in samples),
+            grasp_check_alarms=sum(s['reason']=='empty_closed_grip_visual_motion' for s in samples),
             cost_scope='Included in whole-task wall time and board energy; request images remain separate')
     if env_audit is not None:
         result['env_forward_optimization'] = env_audit

@@ -91,6 +91,8 @@ def main():
     from perceptbudget.visual_monitor import detector_name
     parser.add_argument('--visual-detector',type=detector_name,choices=('fixed_reference','updated_reference'),default='fixed_reference',
         help='Opt-in reference refresh and time-gap reset; original monitor remains available')
+    parser.add_argument('--visual-grasp-check',action='store_true',
+        help='Check a near-empty closed hand lifting; at most2 extra wrist samples per closing cycle')
     parser.add_argument('--visual-monitor-pair',action='store_true',
         help='Compare visual monitoring off/on with one resident model')
     parser.add_argument('--full-approach-delta',type=float,
@@ -108,6 +110,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.visual_grasp_check and (not args.visual_monitor or args.visual_detector!='updated_reference'):
+        parser.error('--visual-grasp-check requires --visual-monitor and --visual-detector updated_reference')
     if args.visual_monitor_pair and not args.visual_monitor:
         parser.error('--visual-monitor-pair requires --visual-monitor observe or refresh')
     if args.visual_monitor and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh):
@@ -232,6 +236,7 @@ def main():
         cfg['visual_monitor']=dict(version='wrist_slip_v1',mode=args.visual_monitor,
             interval=5,confirmation=2,loss_fraction=.75,response=args.visual_response)
         cfg['visual_monitor_method']=args.visual_detector
+        if args.visual_grasp_check:cfg['visual_monitor']['grasp_check']=True
         if args.visual_detector=='updated_reference':
             # Keep the recorded config contract resumable; user-facing method
             # names are semantic, while old serialized identifiers remain valid.
@@ -497,6 +502,7 @@ def main():
             if args.action_signals:command.extend(['--action-signals',str(args.action_signals.resolve())])
             if args.safe_failure_probe:command.extend(['--safe-failure-probe',str(args.safe_failure_probe.resolve()),'--safe-probe-mode',args.safe_probe_mode])
             if args.visual_monitor:command.extend(['--visual-monitor',args.visual_monitor,'--visual-response',args.visual_response,'--visual-detector',args.visual_detector])
+            if args.visual_grasp_check:command.append('--visual-grasp-check')
             if args.visual_monitor_pair:command.append('--visual-monitor-pair')
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')

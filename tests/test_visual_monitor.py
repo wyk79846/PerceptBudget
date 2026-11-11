@@ -188,3 +188,54 @@ def test_reference_can_follow_small_registration_drift_but_not_learn_absence():
     assert any(r['alarm'] for r in original_rows[:14])
     assert not any(r['alarm'] for r in updated_rows[:14])
     assert updated_rows[15]['alarm']
+
+
+def grasp_candidate(monitor):
+    opened=[0.,0.,0.,0.,0.,0.,-1.]
+    closed=[0.,0.,.1,0.,0.,0.,1.]
+    monitor.on_control(opened,[0.,0.,.1,0.,0.,0.,.04,-.04],step=0)
+    monitor.on_control(closed,[0.,0.,.1,0.,0.,0.,.03,-.03],step=1)
+    state=[0.,0.,.125,0.,0.,0.,.004,-.004]
+    monitor.on_control(closed,state,step=5)
+    return closed,state
+
+
+def test_empty_aperture_lift_requires_visible_motion_not_only_small_width():
+    monitor=WristSlipMonitor(detector='updated_reference',grasp_check=True)
+    action,state=grasp_candidate(monitor)
+    rng=np.random.default_rng(39)
+    image=rng.integers(0,256,(256,256),dtype=np.uint8)
+    monitor.observe(image,state,action,step=5)
+    state=[0.,0.,.15,0.,0.,0.,.001,-.001]
+    monitor.on_control(action,state,step=7)
+    assert monitor.grasp_check_due()
+    result=monitor.observe(np.roll(image,4,axis=0),state,action,step=7)
+    assert result['alarm'] and result['reason']=='empty_closed_grip_visual_motion'
+    assert result['grasp_check']['tracked_points']>=4
+
+
+def test_thin_held_object_with_stable_image_is_not_empty_grasp():
+    monitor=WristSlipMonitor(detector='updated_reference',grasp_check=True)
+    action,state=grasp_candidate(monitor)
+    pictures=list(image_sequence())
+    image=pictures[0][0]
+    monitor.observe(image,state,action,step=5)
+    state=[0.,0.,.15,0.,0.,0.,.001,-.001]
+    monitor.on_control(action,state,step=7)
+    result=monitor.observe(pictures[1][0],state,action,step=7)
+    assert not result['alarm']
+    assert result['grasp_check']['static_points']>=4
+
+
+def test_textureless_image_is_unknown_and_extra_checks_have_a_budget():
+    monitor=WristSlipMonitor(detector='updated_reference',grasp_check=True)
+    action,state=grasp_candidate(monitor)
+    image=np.zeros((256,256),dtype=np.uint8)
+    monitor.observe(image,state,action,step=5)
+    for step in (7,8):
+        state=[0.,0.,.15+(step-7)*.01,0.,0.,0.,.001,-.001]
+        monitor.on_control(action,state,step=step)
+        assert monitor.grasp_check_due()
+        result=monitor.observe(image,state,action,step=step)
+        assert not result['alarm'] and not result['grasp_check']['available']
+    assert not monitor.grasp_check_due()
