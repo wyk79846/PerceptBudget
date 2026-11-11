@@ -239,3 +239,25 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 后台服务`perceptbudget-safe-fail30m-20261111t053337`已启动，当前尚无补采训练结果。4项针对性CPU检查通过；没有新增仿真回合或额外模型校准。
 
 [实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/progress.md) · [采集量与分项](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/collection_plan.json) · [样本清单](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/manifest.json)
+
+本批已完成，一次常驻加载，新增采集1464.8秒（24.4分钟）、训练21.0秒。按验证集选出均值特征、学习率0.001、975轮模型：训练AUC0.999、验证0.934、合并测试0.822；合并测试31个失败识别17个，31个成功均未误报。但同一原40回合测试AUC从0.688降至0.613，9个失败只识别2个（原1个）；合并测试仅看推理次数的基线AUC为0.834。当前没有稳定泛化收益，不接入正式刷新。
+
+另有采集一致性问题待核对：candidate37新增993条重放原始动作误差全为0；q10新增1806条中132条误差大于0.1、47条大于1，最大17.77（内部原始动作单位，不是物理位移）。因此本轮不能将差结果完全归因于MLP或训练样本不足，应先核对q10保存输入与重放路径。此次仅核查结果，未启动新训练、未改正式v4。
+
+[本批训练报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/training_results.md) · [采集一致性分项](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/extraction_quality.json)
+
+## 12 排除q10的缓存特征重训
+
+用户要求先丢掉q10部分试一次。将q10从训练、验证、测试同时排除，复用原200加candidate37新增62个失败回合，共262回合、2520条特征；这批新增993条均已确认原始动作重放误差为0。没有加载主模型、重新采集或运行仿真。
+
+网络、四组候选、任务划分和按验证集选模型的方法不变。训练20.4秒，选中均值特征、学习率0.001、第750轮，验证阈值0.3292。训练160回合/53失败，验证52/18，测试50/19。合并测试AUC0.832、失败识别14/19、成功误报8/31；只统计推理次数的基线AUC0.744。新增测试的10个candidate37失败识别9个。
+
+|同一原40回合测试集|AUC|识别失败|成功回合误报|
+|---|---:|---:|---:|
+|原200训练|0.688|1/9|0/31|
+|补失败，包含q10|0.613|2/9|0/31|
+|补失败，排除q10|0.706|5/9|8/31|
+
+排除q10后失败识别增加，但误报25.8%，跨任务泛化仍弱。训练集AUC1.0不代表线上可用。保留独立实验结果，正式v4不变；q10重放不一致的根因尚未定位，不将其直接归因为此前所有退化的唯一原因，也不因测试结果改选模型或调整阈值。
+
+[排除q10训练报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T060444Z-safe-probe-no-q10/training_results.md) · [三组固定测试对照](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T060444Z-safe-probe-no-q10/old40_three_way_comparison.json)

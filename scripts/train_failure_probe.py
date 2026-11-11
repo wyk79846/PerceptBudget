@@ -178,8 +178,11 @@ def train(root):
                 summary['additional_failure_recall'][method][name]=dict(episodes=len(subset),
                     detected=int((best['means'][subset]>=best['record']['threshold']).sum()))
         summary['sampling_note']=('Additional rollouts were selected for failure. Mixed-cohort accuracy/recall '
-            'does not estimate natural failure prevalence; q10 has no newly collected successful controls. '
+            'does not estimate natural failure prevalence. '
             'Also compare both probes on the identical old200 held-out tasks.')
+        summary['q10_included']=any(e.get('method')=='q10' for e in episodes)
+        if summary['q10_included']:
+            summary['sampling_note']+=' q10 has no newly collected successful controls.'
     save(root/'training_results.json',summary);save(root/'training_predictions.json',prediction_rows)
     save(root/'training_curves.json',curves)
     lines=[f"# SAFE小探针：{len(episodes)}回合离线结果",'','只训练小MLP，主模型冻结；完整特征来自保存输入的离线重放。','',
@@ -199,7 +202,8 @@ def train(root):
         for key,label in (('before','补采前'),('after','补采后')):
             result=comparison[key]['test']
             lines.append(f"|{label}|{result['auc']:.3f}|{result['tp']}/{result['failures']}|{result['fp']}/{result['episodes']-result['failures']}|")
-        lines+=['','新增q10未采成功对照，其单独召回不等于已验证正常任务不会误报。']
+        if summary['q10_included']:
+            lines+=['','新增q10未采成功对照，其单独召回不等于已验证正常任务不会误报。']
     (root/'training_results.md').write_text('\n'.join(lines)+'\n')
     (root/'progress.md').write_text(f'# SAFE：完成\n\n{len(episodes)}回合、{len(items)}次推理特征已提取，MLP训练与离线验证完成。\n\n[训练结果](training_results.md)\n')
     save(root/'training_progress.json',dict(status='completed',elapsed_seconds=time.monotonic()-started,selected=best['record']))
