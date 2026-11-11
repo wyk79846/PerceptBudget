@@ -1,4 +1,4 @@
-"""Train a small SAFE-style MLP on frozen old200 expert features.
+"""Train a small SAFE-style MLP on frozen saved expert features.
 
 Tasks, rather than frames/seeds, are held out. Report count-normalized risk at
 an equal control-step cutoff within each task, alongside the original running
@@ -95,8 +95,8 @@ def train(root):
     def progress(**extra):
         record=dict(status='running',elapsed_seconds=time.monotonic()-started,**extra)
         save(root/'training_progress.json',record)
-        (root/'progress.md').write_text('# SAFE旧200：小MLP训练\n\n'
-            f"1527条特征已采齐；模型训练{record.get('model',0)}/4，epoch={record.get('epoch',0)}/1000。\n\n"
+        (root/'progress.md').write_text('# SAFE：小MLP训练\n\n'
+            f"{len(episodes)}回合、{len(items)}条特征已采齐；模型训练{record.get('model',0)}/4，epoch={record.get('epoch',0)}/1000。\n\n"
             '任务0–5训练、6–7验证、8–9测试；同一任务的所有seed放在同一组。\n')
         print('PROBE_TRAINING='+json.dumps(record,ensure_ascii=False),flush=True)
     for aggregation in (0,1):
@@ -154,11 +154,35 @@ def train(root):
         splits={name:dict(episodes=len(ids),failures=int(labels[ids].sum())) for name,ids in splits.items()},
         evaluation='At each task common minimum episode length; exclude features not ready by cutoff. '
             'Primary risk is mean instantaneous SAFE-MLP output, alongside original cumulative score and query-count baseline.',
-        scope='Offline development pilot only; detection metrics are not policy success or closed-loop recovery rates; '
-            'new25seed, checkpoint, FlashRT and finalv4 were not changed')
+        source_scope=plan['source_scope'],
+        scope='Offline development pilot only; detection metrics are not policy success or closed-loop recovery rates. '
+            'Checkpoint, FlashRT and finalv4 were not changed')
+    if plan.get('reuse_root'):
+        old_ids={name:[i for i in ids if episodes[i]['source_group']=='old200'] for name,ids in splits.items()}
+        reference=torch.load(Path(plan['reuse_root'])/'failure_probe.pt',map_location='cpu',weights_only=True)
+        old_model=torch.nn.Sequential(torch.nn.Linear(1024,256),torch.nn.ReLU(),torch.nn.Linear(256,1)).to(device)
+        old_model.load_state_dict(reference['state_dict']);old_model.eval()
+        old_x=features[:,reference['aggregation_index']]
+        normalized_old=torch.as_tensor((old_x-reference['mean'].numpy())/reference['std'].numpy(),device=device)
+        with torch.no_grad():old_prob=old_model(normalized_old).flatten().sigmoid().cpu().numpy()
+        old_means,_=endpoint(old_prob)
+        summary['same_old200_comparison']=dict(
+            before={name:metrics(labels[ids],old_means[ids],reference['threshold']) for name,ids in old_ids.items()},
+            after={name:metrics(labels[ids],best['means'][ids],best['record']['threshold']) for name,ids in old_ids.items()},
+            note='Identical original held-out tasks and observation cutoffs; no test-based model or threshold selection')
+        summary['additional_failure_recall']={}
+        for method in sorted({e['method'] for e in episodes if e['source_group']=='new_failed_only'}):
+            summary['additional_failure_recall'][method]={}
+            for name,ids in splits.items():
+                subset=[i for i in ids if episodes[i]['source_group']=='new_failed_only' and episodes[i]['method']==method]
+                summary['additional_failure_recall'][method][name]=dict(episodes=len(subset),
+                    detected=int((best['means'][subset]>=best['record']['threshold']).sum()))
+        summary['sampling_note']=('Additional rollouts were selected for failure. Mixed-cohort accuracy/recall '
+            'does not estimate natural failure prevalence; q10 has no newly collected successful controls. '
+            'Also compare both probes on the identical old200 held-out tasks.')
     save(root/'training_results.json',summary);save(root/'training_predictions.json',prediction_rows)
     save(root/'training_curves.json',curves)
-    lines=['# SAFE小探针：旧200回合离线结果','','只训练小MLP，主模型冻结；完整特征来自保存输入的离线重放。','',
+    lines=[f"# SAFE小探针：{len(episodes)}回合离线结果",'','只训练小MLP，主模型冻结；完整特征来自保存输入的离线重放。','',
         '|划分|回合|失败|失败检测AUC|平衡准确率|失败召回|误报率|','|---|---:|---:|---:|---:|---:|---:|']
     for name,metrics_ in best['record']['metrics'].items():
         lines.append(f"|{name}|{metrics_['episodes']}|{metrics_['failures']}|{metrics_['auc']:.3f}|{metrics_['balanced_accuracy']:.3f}|{metrics_['failure_recall']:.3f}|{metrics_['false_alarm_rate']:.3f}|")
@@ -168,8 +192,16 @@ def train(root):
         '每任务在相同控制步截止点比较，主要报告平均风险，另保存原累积分数与推理次数基线，防止仅靠运行长度判断超时。',
         '这是SAFE风格的工程小测，不是原论文数据/超参的完整复现。检测到失败不等于刷新一次就能恢复；本轮没有闭环改动。', '',
         '[逐回合预测](training_predictions.json) · [全部候选](training_candidates.json) · [训练曲线](training_curves.json) · [采集清单](manifest.json)']
+    if 'same_old200_comparison' in summary:
+        comparison=summary['same_old200_comparison']
+        lines+=['','新增部分只采失败，合并表不代表自然成败比例。下表保留原200回合的同一测试集，对照旧模型与补充训练后的模型：','',
+            '|原40回合测试集|AUC|识别失败|成功回合误报|','|---|---:|---:|---:|']
+        for key,label in (('before','补采前'),('after','补采后')):
+            result=comparison[key]['test']
+            lines.append(f"|{label}|{result['auc']:.3f}|{result['tp']}/{result['failures']}|{result['fp']}/{result['episodes']-result['failures']}|")
+        lines+=['','新增q10未采成功对照，其单独召回不等于已验证正常任务不会误报。']
     (root/'training_results.md').write_text('\n'.join(lines)+'\n')
-    (root/'progress.md').write_text('# SAFE旧200：完成\n\n200回合、1527次推理特征已提取，MLP训练与离线验证完成。\n\n[训练结果](training_results.md)\n')
+    (root/'progress.md').write_text(f'# SAFE：完成\n\n{len(episodes)}回合、{len(items)}次推理特征已提取，MLP训练与离线验证完成。\n\n[训练结果](training_results.md)\n')
     save(root/'training_progress.json',dict(status='completed',elapsed_seconds=time.monotonic()-started,selected=best['record']))
     print('PROBE_TRAINING_RESULT='+json.dumps(summary,ensure_ascii=False),flush=True)
 

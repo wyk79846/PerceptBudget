@@ -1,7 +1,7 @@
-"""Extract final expert features from old200 saved inputs, one resident model.
+"""Extract final expert features from saved inputs, one resident model.
 
-Only replay saved requests. There is no simulator execution, new policy noise,
-checkpoint training, frequency write or access to the new25seed test campaign.
+Replay saved requests without simulator execution or frequency changes. An
+existing extraction can be reused while adding only failed saved rollouts.
 """
 import argparse
 from collections import Counter
@@ -19,30 +19,52 @@ sys.path.insert(0, str(PROJECT))
 from scripts.analyze_gripper_timing import INDEX, save
 
 
-def prepare():
-    original = json.loads(INDEX.read_text())['rows']
-    root = INDEX.parent.parent / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-safe-probe-old200')
+def prepare(reuse_root=None, failures_index=None):
+    if (reuse_root is None)!=(failures_index is None):
+        raise ValueError('Use --reuse-run and --append-failures together')
+    label='old200' if reuse_root is None else 'old200-plus-failures'
+    root = INDEX.parent.parent / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-safe-probe-'+label)
     root.mkdir()
     episodes, items = [], []
-    for number, row in enumerate(original):
+    if reuse_root is None:
+        original = json.loads(INDEX.read_text())['rows']
+    else:
+        previous=json.loads((reuse_root/'manifest.json').read_text())
+        episodes,items=previous['episodes'],previous['items']
+        for episode in episodes:
+            episode.update(source_group='old200',method='mixed',request_file='q5_requests.json',frame_file='q5_frames.npz')
+        original=[row for row in json.loads(failures_index.read_text())['rows'] if row['outcome']!='success']
+    reused=len(items)
+    for row in original:
+        number=len(episodes)
         run = Path(row['run'])
-        requests = json.loads((run/'rtc/q5_requests.json').read_text())
+        request_path=next((run/'rtc').glob('q*_requests.json'))
+        requests = json.loads(request_path.read_text())
+        frame_file=request_path.name.replace('_requests.json','_frames.npz')
         split = 'train' if row['task_id'] < 6 else 'validation' if row['task_id'] < 8 else 'test'
         episodes.append(dict(episode=number, seed=row['seed'], suite=row['suite'], task_id=row['task_id'],
             outcome=row['outcome'], failure=row['outcome']!='success', steps=row['steps'],
-            split=split, source_run=str(run)))
+            split=split, source_run=str(run),method=row.get('method','mixed'),
+            source_group='old200' if reuse_root is None else 'new_failed_only',
+            request_file=request_path.name,frame_file=frame_file))
         for index, request in enumerate(requests):
             items.append(dict(index=len(items), episode=number, request_index=index,
                 prediction_id=request['prediction_id'], observation_step=request['observation_step'],
                 ready_step=request.get('ready_observed_step'),
-                mode=request['context_refresh']['mode'], valid=request['rtc_guidance']['valid_prefix_length']))
+                mode=(request.get('context_refresh') or {}).get('mode','full'),
+                valid=request['rtc_guidance']['valid_prefix_length']))
     manifest = dict(source_index=str(INDEX), episodes=episodes, items=items, total=len(items),
+        dataset_label=label,reuse_root=str(reuse_root) if reuse_root else None,reused_features=reused,
+        failures_index=str(failures_index) if failures_index else None,
         feature_names=['last_denoise_mean_actions','mean_denoise_mean_actions'], feature_width=1024,
         split='Within every suite: task0..5 train, task6..7 validation, task8..9 test; all seeds of a task stay together',
-        source_scope='Only original old200 development data; new25seed remains untouched',
+        source_scope='Only original old200 development data; new25seed remains untouched' if reuse_root is None else
+            'User-authorized old200 plus failed rollouts from the 2000 campaign; failure-enriched development data',
         policy='Frozen H50/N5/BF16, saved Full/Fast state and original positions, saved RTC inputs')
     save(root/'manifest.json', manifest)
-    save('/tmp/perceptbudget-safe-old200-current.json', dict(run=str(root), progress=str(root/'progress.md')))
+    pointer=dict(run=str(root),progress=str(root/'progress.md'))
+    save('/tmp/perceptbudget-safe-'+label+'-current.json',pointer)
+    save('/tmp/perceptbudget-safe-current.json',pointer)
     return root
 
 
@@ -75,25 +97,34 @@ def worker(root):
     if not resume:
         features[:] = np.nan
         done[:] = False
+        if plan.get('reuse_root'):
+            previous=Path(plan['reuse_root'])
+            count=plan['reused_features']
+            features[:count]=np.load(previous/'features.npy',mmap_mode='r')
+            done[:count]=np.load(previous/'completed.npy',mmap_mode='r')
+            features.flush();done.flush()
     metadata_path = root/'extraction_rows.jsonl'
     status = dict(status='loading', completed=int(done.sum()), total=len(items), model_loads=0,
+        reused_features=plan.get('reused_features',0),episodes=len(episodes),
         source_scope=plan['source_scope'], clock_settings_changed=False, checkpoint_frozen=True)
     def progress(stage, **extra):
         status.update(stage=stage, completed=int(done.sum()), elapsed_seconds=time.monotonic()-started, **extra)
         save(root/'progress.json', status)
         per = Counter(episodes[item['episode']]['split'] for item in items if done[item['index']])
-        (root/'progress.md').write_text('# SAFE小探针：旧200特征采集\n\n'
+        (root/'progress.md').write_text('# SAFE小探针：特征采集\n\n'
             f"状态{status['status']}；阶段{stage}；推理记录{status['completed']}/{len(items)}；模型加载{status['model_loads']}次。\n\n"
+            f"复用已有{status['reused_features']}条；本次新增{status['completed']-status['reused_features']}/{len(items)-status['reused_features']}条。\n\n"
             f"已采集：训练{per['train']}、验证{per['validation']}、测试{per['test']}条；按任务划分。\n\n"
-            '只重放旧输入，不跑仿真；新25seed与正式v4均不改。\n')
+            '只重放保存输入，不跑仿真；正式v4保持不变。\n')
         print('FEATURE_PROGRESS='+json.dumps({k:status[k] for k in ('status','stage','completed','total','elapsed_seconds')},ensure_ascii=False),flush=True)
     progress('starting')
     bank = tap = None
     @lru_cache(maxsize=4)
     def source_data(number):
-        run = Path(episodes[number]['source_run'])
-        requests = json.loads((run/'rtc/q5_requests.json').read_text())
-        with np.load(run/'rtc/q5_frames.npz', allow_pickle=False) as archive:
+        episode=episodes[number]
+        run = Path(episode['source_run'])
+        requests = json.loads((run/'rtc'/episode.get('request_file','q5_requests.json')).read_text())
+        with np.load(run/'rtc'/episode.get('frame_file','q5_frames.npz'), allow_pickle=False) as archive:
             frames, steps = archive['frames'], archive['frame_steps']
         return requests, frames, {int(step):i for i,step in enumerate(steps)}
     def inputs(item):
@@ -142,7 +173,8 @@ def worker(root):
         # Observe both geometry paths early; these are real dataset requests,
         # not extra rollout/calibration samples and never repeated afterward.
         early = [next((item for item in ordered if item['mode']==mode),None) for mode in ('full','pool2_agent')]
-        early = [item for item in early if item is not None]
+        early.append(next((item for item in ordered if episodes[item['episode']].get('method')=='q10'),None))
+        early = list({item['index']:item for item in early if item is not None}.values())
         ordered = early + [item for item in ordered if item not in early]
         progress('collecting', status='running')
         with metadata_path.open('a') as metadata:
@@ -212,9 +244,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepare',action='store_true')
     parser.add_argument('--run-dir',type=Path)
+    parser.add_argument('--reuse-run',type=Path)
+    parser.add_argument('--append-failures',type=Path)
     args=parser.parse_args()
     if args.prepare:
-        print(prepare());return
+        print(prepare(args.reuse_run,args.append_failures));return
     if args.run_dir is None:parser.error('--prepare or --run-dir is required')
     with (INDEX.parent.parent.parent/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

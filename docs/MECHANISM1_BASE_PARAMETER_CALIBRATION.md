@@ -227,3 +227,15 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 结论：内部特征可低成本采集，小网络训练很快；当前这一版离线结果尚不支持接入正式刷新逻辑。特征、模型和全部候选结果保留，后续若继续，优先完善旧开发数据的失败覆盖和按任务验证。新25seed的2000回合仍未用于提取、训练或选择模型，正式v4未改。
 
 [训练与离线验证报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_results.md) · [完整指标](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_results.json) · [逐回合预测](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_predictions.json) · [ROC图](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/failure_probe_roc.png) · [小模型权重](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/failure_probe.pt)
+
+## 11 补充失败样本，采集量控制在约30分钟
+
+用户随后授权使用2000回合的大测数据，并要求只补采失败、先取约30分钟的样本。全量有275个失败、7800次推理；本次按任务集合、任务和方法分组，以固定随机种子11轮流抽取完整回合，在2800次新增推理预算内选中113个失败、2799次推理。不是按某个任务的复测结果调整规则。
+
+新增Spatial35、Object28、Goal14、Long36回合，来自candidate37的62回合和q10的51回合。原200回合的1527条特征直接复用，合计313回合、4326条特征，其中172成功、141失败；不复制保存图像或checkpoint。每套任务0–5训练、6–7验证、8–9测试的划分保持不变：训练190回合/83失败，验证61/27，测试62/31。
+
+采集只重放保存输入，一次常驻加载，完成后自动训练相同的四组小MLP。内存中断保留已采特征，只继续缺项；程序错误停止并记录。新增数据按失败富集，合并成绩不代表自然任务中的失败比例；q10本次没有新增成功对照。额外在原来同一40回合测试集上比较旧、新模型，避免更换测试组成造成表面提高。正式v4、主模型权重、RTC和FlashRT均不修改。2000回合中的已选样本现属于开发数据，不再称为未参与训练的新测试数据。
+
+后台服务`perceptbudget-safe-fail30m-20261111t053337`已启动，当前尚无补采训练结果。4项针对性CPU检查通过；没有新增仿真回合或额外模型校准。
+
+[实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/progress.md) · [采集量与分项](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/collection_plan.json) · [样本清单](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T053337Z-safe-probe-old200-plus-failures/manifest.json)
