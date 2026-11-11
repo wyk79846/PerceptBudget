@@ -21,6 +21,81 @@ from scripts.analyze_gripper_timing import INDEX, save
 from perceptbudget.failure_features import FEATURE_LAYOUTS
 
 
+def prepare_training240(source, index):
+    """Reuse selected cached features, append only new Long seen-task inputs."""
+    import numpy as np
+    from perceptbudget.safe_dataset import select_training240, TRAINING_QUOTAS
+    original=json.loads((source/'manifest.json').read_text())
+    retained,added=select_training240(original['episodes'],json.loads(index.read_text())['rows'])
+    keep={e['episode'] for e in retained}
+    selected=[e for e in original['episodes'] if e['safe_split']!='train' or e['episode'] in keep]
+    episodes=[];mapping={}
+    for old in selected:
+        number=len(episodes);mapping[old['episode']]=number
+        episodes.append(dict(old,episode=number,source_episode=old['episode']))
+    items=[];reuse_indices=[]
+    for old in original['items']:
+        if old['episode'] in mapping:
+            items.append(dict(old,index=len(items),episode=mapping[old['episode']]))
+            reuse_indices.append(old['index'])
+    reused=len(items)
+    eval_cutoffs={}
+    for e in original['episodes']:
+        key=e['suite']+':'+str(e['task_id'])
+        eval_cutoffs[key]=min(eval_cutoffs.get(key,e['steps']),e['steps'])
+    order=max(e['safe_split_order'] for e in original['episodes'] if e['safe_split']=='train')+1
+    for offset,row in enumerate(added):
+        number=len(episodes);run=Path(row['run'])
+        requests=json.loads((run/'rtc/q5_requests.json').read_text())
+        episodes.append(dict(episode=number,seed=row['seed'],suite=row['suite'],task_id=row['task_id'],
+            outcome=row['outcome'],failure=row['outcome']!='success',steps=row['steps'],
+            split='train',safe_split='train',safe_split_order=order+offset,
+            source_run=str(run),method='candidate37',source_group='training240_long_supplement',
+            request_file='q5_requests.json',frame_file='q5_frames.npz'))
+        for k,r in enumerate(requests):
+            items.append(dict(index=len(items),episode=number,request_index=k,
+                prediction_id=r['prediction_id'],observation_step=r['observation_step'],
+                ready_step=r.get('ready_observed_step'),mode=r['context_refresh']['mode'],
+                valid=r['rtc_guidance']['valid_prefix_length']))
+    root=source.parent/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-safe-training240-long120')
+    root.mkdir()
+    manifest={k:v for k,v in original.items() if k not in ('episodes','items','success_selection')}
+    manifest.update(episodes=episodes,items=items,total=len(items),dataset_label='safe_training240_long120',
+        source_manifest=str(source/'manifest.json'),reference_training=str(source/'paper_training'),
+        evaluation_cutoffs=eval_cutoffs,
+        frozen_paper_split_reference=str(source/'paper_training/training_plan.json'),
+        reuse_root=str(source),reused_features=reused,
+        source_scope='Training240: Long120, Spatial/Object/Goal40 each; prior validation153 and test79 frozen',
+        split='Retain old validation/test identities and order; rebalance training only, held-out tasks7/8/9 excluded',
+        intervention='Training suite quotas only; original SAFE network/loss/grid/alpha and original baseline retained',
+        training_rebalance=dict(seed=37,quotas=TRAINING_QUOTAS,index=str(index),
+            retained_training=len(retained),added_long_training=len(added),
+            removed_training=len([e for e in original['episodes'] if e['safe_split']=='train'])-len(retained),
+            preserve_short_failures=True,long_final_task_counts=[18,17,17,17,17,17,17]))
+    save(root/'manifest.json',manifest)
+    cached=np.load(source/'features.npy',mmap_mode='r')
+    cached_done=np.load(source/'completed.npy',mmap_mode='r')
+    if not cached_done[reuse_indices].all():raise ValueError('Selected source features are incomplete')
+    features=np.lib.format.open_memmap(root/'features.npy',mode='w+',dtype=np.float32,
+        shape=(len(items),*cached.shape[1:]))
+    done=np.lib.format.open_memmap(root/'completed.npy',mode='w+',dtype=np.bool_,shape=(len(items),))
+    features[:]=np.nan;done[:]=False
+    features[:reused]=cached[reuse_indices];done[:reused]=True
+    features.flush();done.flush()
+    split_counts={role:dict(episodes=sum(e['safe_split']==role for e in episodes),
+        successes=sum(e['safe_split']==role and not e['failure'] for e in episodes),
+        failures=sum(e['safe_split']==role and e['failure'] for e in episodes))
+        for role in ('train','validation','test')}
+    save(root/'training_selection.json',dict(manifest['training_rebalance'],splits=split_counts,
+        reused_features=reused,new_features=len(items)-reused,
+        added_rows=added,dropped_source_runs=[e['source_run'] for e in original['episodes']
+            if e['safe_split']=='train' and e['episode'] not in keep]))
+    pointer=dict(run=str(root),progress=str(root/'progress.md'))
+    save('/tmp/perceptbudget-safe-training240-current.json',pointer)
+    save('/tmp/perceptbudget-safe-current.json',pointer)
+    return root
+
+
 def prepare_successes(source,index):
     manifest=json.loads((source/'manifest.json').read_text())
     prior=json.loads((source/'paper_training/training_plan.json').read_text())
@@ -325,11 +400,15 @@ def main():
     parser.add_argument('--reuse-run',type=Path)
     parser.add_argument('--append-failures',type=Path)
     parser.add_argument('--append-successes',type=Path)
+    parser.add_argument('--training240-index',type=Path,help='Training240 quotas with Long120; reuse fixed validation/test')
     parser.add_argument('--source-manifest',type=Path)
     parser.add_argument('--feature-layout',choices=tuple(FEATURE_LAYOUTS),default='pooled')
     args=parser.parse_args()
     if args.prepare:
-        if args.append_successes:
+        if args.training240_index:
+            if args.reuse_run is None:parser.error('--training240-index requires --reuse-run')
+            print(prepare_training240(args.reuse_run,args.training240_index))
+        elif args.append_successes:
             if args.reuse_run is None:parser.error('--append-successes requires --reuse-run')
             print(prepare_successes(args.reuse_run,args.append_successes))
         elif args.source_manifest:

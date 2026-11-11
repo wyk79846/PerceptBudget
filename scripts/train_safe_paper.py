@@ -17,7 +17,7 @@ import time
 PROJECT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(PROJECT))
 from perceptbudget.safe_paper import (AUTHOR_ROOT,CHOICES,aggregate_corners,compact_loss,
-    compact_weights,conformal_bands,make_model,paper_split)
+    compact_weights,conformal_bands,evaluation_cutoffs,make_model,paper_split)
 from scripts.analyze_gripper_timing import save
 from scripts.train_failure_probe import auc,metrics
 
@@ -41,10 +41,7 @@ def train(feature_root,root,epochs=1000):
     splits=paper_split(episodes)
     by_episode={i:[] for i in range(len(episodes))}
     for item in items:by_episode[item['episode']].append(item['index'])
-    cutoffs={}
-    for e in episodes:
-        key=(e['suite'],e['task_id'])
-        cutoffs[key]=min(cutoffs.get(key,e['steps']),e['steps'])
+    cutoffs=evaluation_cutoffs(episodes,manifest.get('evaluation_cutoffs'))
     prefixes={e['episode']:[i for i in by_episode[e['episode']] if items[i]['ready_step'] is not None
         and items[i]['ready_step']<=cutoffs[e['suite'],e['task_id']]] for e in episodes}
     visible={e['episode']:[i for i in by_episode[e['episode']] if items[i]['ready_step'] is not None
@@ -69,6 +66,10 @@ def train(feature_root,root,epochs=1000):
         splits={name:dict(episode_ids=ids,episodes=len(ids),failures=int(labels[ids].sum()),
             features=sum(len(by_episode[i]) for i in ids)) for name,ids in splits.items()},
         scope='SAFE method transferred to cached pi0.5/RTC Full-Fast data; not original pi0 benchmark reproduction')
+    if manifest.get('training_rebalance'):
+        plan.update(training_rebalance=manifest['training_rebalance'],
+            task_split='Training240 quotas; previous validation/test membership, ordering and evaluation cutoffs frozen',
+            evaluation_cutoffs=manifest['evaluation_cutoffs'])
     plan_path=root/'training_plan.json'
     if plan_path.exists() and json.loads(plan_path.read_text())!=plan:
         raise ValueError('Existing run has a different training plan')
@@ -190,8 +191,9 @@ def train(feature_root,root,epochs=1000):
                     per_suite_test=prior['per_suite_test'],calibration_successes=prior['calibration_successes']),
                 after=dict(test=split_metrics['test'],old40=old_metrics,
                     per_suite_test=per_suite,calibration_successes=len(successful_cal)))
-            summary['success_controls_comparison']=comparison
-            save(root/'success_controls_comparison.json',comparison)
+            comparison_name='training_data_comparison' if manifest.get('training_rebalance') else 'success_controls_comparison'
+            summary[comparison_name]=comparison
+            save(root/(comparison_name+'.json'),comparison)
         save(root/'training_results.json',summary);save(root/'predictions.json',predictions)
         save(root/'cp_bands.json',{k:v.tolist() for k,v in bands.items()})
         lines=['# SAFE官方方法：训练与测试结果','',
@@ -207,14 +209,16 @@ def train(feature_root,root,epochs=1000):
             '这是SAFE方法在pi0.5/RTC自适应刷新记录上的移植；数据、主模型和采样节奏不同于论文实验，检测成绩不等于机器人成功率或恢复效果。','',
             '[完整指标](training_results.json) · [逐回合预测](predictions.json) · [全部训练候选](candidates.json) · [固定训练计划](training_plan.json)']
         if comparison:
-            lines+=['','## 补成功样本前后，同一固定测试集','',
+            balanced=bool(manifest.get('training_rebalance'))
+            lines+=['','## '+('训练240回合、Long120前后' if balanced else '补成功样本前后')+'，同一固定测试集','',
                 '|固定测试集|版本|AUC|识别失败|成功误报|','|---|---|---:|---:|---:|']
             for cohort,label in (('test','79回合'),('old40','原40回合')):
                 for key,version in (('before','补充前'),('after','补充后')):
                     value=comparison[key][cohort]
                     lines.append(f"|{label}|{version}|{value['auc']:.3f}|{value['tp']}/{value['failures']}|{value['fp']}/{value['episodes']-value['failures']}|")
-            lines+=['','原训练、验证、测试回合成员均保持，新增成功仅进入已见任务训练/验证；网络、网格与主alpha不变。',
-                '[补成功对照完整数据](success_controls_comparison.json)']
+            lines+=['',('训练集调整为Long120、其余三套各40；原验证、测试回合成员、顺序和评估截止点保持，网络、网格与主alpha不变。'
+                if balanced else '原训练、验证、测试回合成员均保持，新增成功仅进入已见任务训练/验证；网络、网格与主alpha不变。'),
+                f'[训练数据对照完整数据]({comparison_name}.json)']
         (root/'training_results.md').write_text('\n'.join(lines)+'\n')
         save(root/'progress.json',dict(status='completed',completed_candidates=len(records),total_candidates=len(grid),
             elapsed_seconds=summary['elapsed_seconds'],selected=choice))

@@ -14,6 +14,19 @@ CHOICES=('first','last','concat')
 AUTHOR_ROOT=Path(__file__).resolve().parents[1]/'third_party/safe'
 
 
+def evaluation_cutoffs(episodes, frozen=None):
+    limits={}
+    for e in episodes:
+        key=e['suite'],e['task_id']
+        limits[key]=min(limits.get(key,e['steps']),e['steps'])
+    if frozen is not None:
+        original={(key.rsplit(':',1)[0],int(key.rsplit(':',1)[1])):steps for key,steps in frozen.items()}
+        if set(original)!=set(limits) or any(steps<=0 for steps in original.values()):
+            raise ValueError('Frozen evaluation cutoffs must cover the same tasks')
+        return original
+    return limits
+
+
 def aggregate_corners(features, horizon, denoise):
     """Horizon selection first, then diffusion selection, as in author loader."""
     import numpy as np
