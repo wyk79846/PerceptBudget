@@ -2,7 +2,7 @@
   "model_id": "lerobot_h50_quantiles_v044",
   "python_executable": "/home/wyk/venvs/lutvla/bin/python",
   "flashrt_root": "/home/wyk/workspace/FlashRT-upstream",
-  "flashrt_revision": "bea4db9ea19d2fde3ca72b2633b39a2ac50baa84",
+  "flashrt_revision": "3346d9c325277b9f6defe24c3accf8449b7b352f",
   "flashrt_base_revision": "e4fe1232ee49f8d3cd96e32706114fd960b320fb",
   "flashrt_loading_patch": "/home/wyk/workspace/PerceptBudget/patches/flashrt_low_memory_load.patch",
   "flashrt_loading_patch_sha256": "4658d612e3371cdb40717d162b9d3c7979081bca5f7628f0bc4b2effe83e46cc",
