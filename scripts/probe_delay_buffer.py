@@ -323,7 +323,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         from perceptbudget.visual_monitor import WristSlipMonitor
         settings=config['visual_monitor']
         visual_monitor=WristSlipMonitor(interval=settings['interval'],
-            confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'])
+            confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'],
+            detector=settings.get('detector','original_v1'))
     future = None
     previous_request_step = 0
     previous_commit_step = 0

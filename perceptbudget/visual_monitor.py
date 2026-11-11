@@ -8,10 +8,13 @@ import time
 
 
 class WristSlipMonitor:
-    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75):
+    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75, detector='original_v1'):
         import cv2
+        if detector not in ('original_v1','updated_v2'):
+            raise ValueError('Unknown wrist monitor detector')
         cv2.setNumThreads(1)
         self.cv = cv2
+        self.detector=detector
         self.interval = interval
         self.confirmation = confirmation
         self.loss_fraction = loss_fraction
@@ -46,6 +49,26 @@ class WristSlipMonitor:
                                     self.cv.TM_CCOEFF_NORMED).max()))
         return sum(v < .65 for v in scores)/len(scores), min(scores)
 
+    def update_visible_reference(self, gray, reference, step):
+        """Update only strongly matched patches after a coherent observation.
+
+        The same1.25px motion test used to establish carrying is retained.
+        Missing patches never become new reference patches, and a mostly lost
+        object cannot be learned as background.
+        """
+        cv=self.cv;visible=[]
+        for x,y,template in reference['templates']:
+            search=gray[y-8:y+9,x-8:x+9]
+            _,score,_,location=cv.minMaxLoc(cv.matchTemplate(search,template,cv.TM_CCOEFF_NORMED))
+            dx,dy=location[0]-3,location[1]-3
+            visible.append(score>=.65 and dx*dx+dy*dy<=1.25**2)
+        coherent=sum(visible)/len(visible)>=self.loss_fraction
+        if coherent:
+            reference['templates']=[(x,y,gray[y-5:y+6,x-5:x+6].copy() if ok else template)
+                for (x,y,template),ok in zip(reference['templates'],visible)]
+            reference['updated_step']=step
+        return coherent
+
     def observe(self, image, state, action, *, step, eligible=True):
         import numpy as np
         start = time.monotonic()
@@ -58,6 +81,15 @@ class WristSlipMonitor:
         width = abs(float(state[6]-state[7]))
         row = dict(step=int(step), eligible=bool(eligible), closed=closed,
                    width=width, locked=False, alarm=False, reason='warming_up')
+        if self.detector=='updated_v2':
+            gap=step-self.last_step if self.last_step>=0 else None
+            row['sample_gap_steps']=gap
+            if self.previous is not None and gap is not None and gap>self.interval:
+                # An unobserved interval does not demonstrate persistent loss.
+                # Re-establish the reference instead of carrying stale evidence.
+                self.reset_grasp(reset_alarm=False)
+                self.previous=None
+                row.update(reference_reacquired=True,reason='observation_gap_reacquire')
         if not closed:
             self.reset_grasp()
             row['reason'] = 'gripper_open'
@@ -89,6 +121,9 @@ class WristSlipMonitor:
                 if eligible and self.bad >= self.confirmation and not self.alarmed:
                     row.update(alarm=True, reason='persistent_carried_texture_loss')
                     self.alarmed = True
+                if self.detector=='updated_v2' and loss<self.loss_fraction:
+                    row['reference_updated']=self.update_visible_reference(gray,self.anchor,step)
+                    row['reference_step']=self.anchor.get('updated_step',self.anchor['step'])
             elif not row['alarm']:
                 # Raw LIBERO wrist images have the hand at the top edge.
                 # Exclude the palm/fingers; inspect the space beyond their tips.

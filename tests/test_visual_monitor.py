@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from perceptbudget.visual_monitor import WristSlipMonitor, continuation_eligible, cap_visual_refresh
 
@@ -14,16 +15,18 @@ def image_sequence(lost=False):
         yield image, state, [0., 0., .1, 0., 0., 0., 1.], i*5
 
 
-def test_attached_texture_survives_background_motion():
-    monitor = WristSlipMonitor()
+@pytest.mark.parametrize('detector',['original_v1','updated_v2'])
+def test_attached_texture_survives_background_motion(detector):
+    monitor = WristSlipMonitor(detector=detector)
     rows = [monitor.observe(image, state, action, step=step)
             for image, state, action, step in image_sequence()]
     assert any(r['locked'] for r in rows)
     assert not any(r['alarm'] for r in rows)
 
 
-def test_persistent_loss_requires_two_fresh_images_and_emits_once():
-    monitor = WristSlipMonitor()
+@pytest.mark.parametrize('detector',['original_v1','updated_v2'])
+def test_persistent_loss_requires_two_fresh_images_and_emits_once(detector):
+    monitor = WristSlipMonitor(detector=detector)
     rows = [monitor.observe(image, state, action, step=step)
             for image, state, action, step in image_sequence(lost=True)]
     assert rows[4]['loss_fraction'] == 1.
@@ -59,8 +62,9 @@ def test_release_between_images_invalidates_old_carried_reference():
     assert monitor.anchor is None and monitor.previous is None
 
 
-def test_joint_visual_and_jaw_loss_can_alarm_without_waiting_another_image():
-    monitor=WristSlipMonitor()
+@pytest.mark.parametrize('detector',['original_v1','updated_v2'])
+def test_joint_visual_and_jaw_loss_can_alarm_without_waiting_another_image(detector):
+    monitor=WristSlipMonitor(detector=detector)
     samples=list(image_sequence(lost=True))
     for image,state,action,step in samples[:4]:
         monitor.observe(image,state,action,step=step)
@@ -153,3 +157,34 @@ def test_only_confirmed_alarm_requests_stop_and_discard_the_failed_reference():
     assert not stop_response(dict(visual_monitor=dict(mode='observe',response='stop_and_replan')))
     assert not stop_response(dict(visual_monitor=dict(mode='refresh',response='async')))
     assert not stop_response({})
+
+
+def test_unobserved_gap_does_not_count_as_persistent_visual_loss():
+    monitor=WristSlipMonitor(detector='updated_v2')
+    samples=list(image_sequence(lost=True))
+    for image,state,action,step in samples[:5]:
+        monitor.observe(image,state,action,step=step)
+    assert monitor.bad==1
+    image,state,action,_=samples[5]
+    result=monitor.observe(image,state,action,step=50)
+    assert not result['alarm']
+    assert result['reference_reacquired'] and monitor.bad==0
+
+
+def test_reference_can_follow_small_registration_drift_but_not_learn_absence():
+    rng=np.random.default_rng(6)
+    background=rng.integers(0,256,(256,256),dtype=np.uint8)
+    texture=rng.integers(0,256,(48,80),dtype=np.uint8)
+    original=WristSlipMonitor()
+    updated=WristSlipMonitor(detector='updated_v2')
+    original_rows=[];updated_rows=[]
+    for i in range(16):
+        image=np.roll(background,(i*3,i*2),axis=(0,1))
+        image[64:112,88:168]=np.roll(texture,i,axis=1) if i<14 else 0
+        state=[0.,0.,i*.012,0.,0.,0.,.012,-.012]
+        action=[0.,0.,.1,0.,0.,0.,1.]
+        original_rows.append(original.observe(image,state,action,step=i*5))
+        updated_rows.append(updated.observe(image,state,action,step=i*5))
+    assert any(r['alarm'] for r in original_rows[:14])
+    assert not any(r['alarm'] for r in updated_rows[:14])
+    assert updated_rows[15]['alarm']

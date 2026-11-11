@@ -20,6 +20,8 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--cases', type=int, nargs='+')
     p.add_argument('--reuse-images', action='store_true')
+    p.add_argument('--image-cache',type=Path,help='Read existing sparse images without copying or re-rendering')
+    p.add_argument('--detector',choices=('original_v1','updated_v2'),default='original_v1')
     args = p.parse_args()
     os.environ.update(MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='0')
     import numpy as np
@@ -39,7 +41,7 @@ def main():
     try:
         for case_id, case in selected:
             folder = root/f'{case_id:04d}'; folder.mkdir(exist_ok=True)
-            image_path = folder/'observations.npz'
+            image_path = (args.image_cache/f'{case_id:04d}' if args.image_cache else folder)/'observations.npz'
             records=[]; decision=None; opened=False
             for line in (Path(case['source_run'])/'rtc/trace.jsonl').open():
                 row=json.loads(line)
@@ -56,7 +58,7 @@ def main():
             if image_path.exists():
                 with np.load(image_path) as data: images=data['images']
             else:
-                if args.reuse_images: raise RuntimeError('Missing saved sparse images')
+                if args.reuse_images or args.image_cache: raise RuntimeError('Missing saved sparse images')
                 key=(case['suite'],case['task_id'])
                 if key!=last_key:
                     if env is not None: env.close()
@@ -77,7 +79,7 @@ def main():
                     images.append(obs['robot0_eye_in_hand_image'])
                 images=np.asarray(images,dtype=np.uint8)
                 np.savez_compressed(image_path,images=images)
-            monitor=WristSlipMonitor();samples=[]
+            monitor=WristSlipMonitor(detector=args.detector);samples=[]
             for r,image in zip(records,images):
                 if r['opened_since_previous_sample']:
                     monitor.reset_grasp();monitor.previous=None
@@ -96,9 +98,9 @@ def main():
             report=dict(case_id=case_id,suite=case['suite'],task_id=case['task_id'],
                 seed=case['seed'],split=case['split'],samples=samples,events=events,
                 alarms=matches,visible_texture_locked=any(s['locked'] for s in samples),
-                source_run=case['source_run'])
+                source_run=case['source_run'],detector=args.detector,image_source=str(image_path))
             save(folder/'monitor.json',report);results.append(report)
-            summary=dict(status='running',completed=len(results),total=len(selected),
+            summary=dict(status='running',detector=args.detector,completed=len(results),total=len(selected),
                 samples=sum(len(r['samples']) for r in results),
                 locked_episodes=sum(r['visible_texture_locked'] for r in results),
                 alarms=sum(len(r['alarms']) for r in results),
