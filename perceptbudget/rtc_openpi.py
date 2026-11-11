@@ -29,6 +29,10 @@ class OriginalOpenPiRTCAdapter:
             raise ValueError('exact FlashAttention and suffix-only eager VJP are alternative backends, not stackable')
         self._attention_restore = None
         self._norm_restore = None
+        self._safe_monitor = None
+        if config.get('safe_failure_probe'):
+            from perceptbudget.safe_runtime import SafeFailureMonitor
+            self._safe_monitor = SafeFailureMonitor(self.expert, torch, config['safe_failure_probe'])
 
     def prepare_step_bank(self,lengths,*,progress=None):
         from perceptbudget.rtc_source_step_graph import SourceStepBank
@@ -176,6 +180,8 @@ class OriginalOpenPiRTCAdapter:
         noise = torch.randn(self.horizon, 32, device='cuda', dtype=torch.float32)
         previous = None if previous_raw is None else torch.as_tensor(np.asarray(previous_raw), device='cuda', dtype=torch.float32)
         clean_trace=[] if self.config.get('m3_dvac_enabled') and previous is not None else None
+        if self._safe_monitor is not None:
+            self._safe_monitor.begin_request()
         if step_graph is not None and previous is not None:
             if clean_trace is None:
                 raw,correction_norms=step_graph.replay(noise,previous,delay,executed)
@@ -194,6 +200,8 @@ class OriginalOpenPiRTCAdapter:
                 delay=delay,executed=executed,
                 solver='author_source_order' if self.config.get('rtc_author_order') else 'legacy')
         raw_actions = raw.cpu().numpy().copy()
+        if self._safe_monitor is not None:
+            request['safe_failure_probe'] = self._safe_monitor.observe(self.num_steps)
         if clean_trace:
             request['dvac']=self._dvac_tracker.observe(torch.stack(clean_trace).cpu().numpy())
         elif clean_trace is not None:
@@ -226,6 +234,8 @@ class OriginalOpenPiRTCAdapter:
         return actions
 
     def bootstrap(self, snapshot, prompt, request):
+        if self._safe_monitor is not None:
+            self._safe_monitor.reset()
         if self.config.get('m3_dvac_enabled'):
             from perceptbudget.dvac import DvacTracker
             self._dvac_tracker=DvacTracker()
@@ -236,6 +246,9 @@ class OriginalOpenPiRTCAdapter:
 
     def release_graph(self):
         import gc
+        if self._safe_monitor is not None:
+            self._safe_monitor.close()
+            self._safe_monitor = None
         if self._norm_restore is not None:
             self._norm_restore()
             self._norm_restore=None

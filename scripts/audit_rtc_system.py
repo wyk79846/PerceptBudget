@@ -363,6 +363,18 @@ def audit(run):
     critical_waits={e['prediction_id']:e for e in events if e['event']=='critical_wait'}
     for request in requests:
         pid=request['prediction_id'];origin=request['observation_step']
+        if cfg.get('safe_failure_probe'):
+            safe=request.get('safe_failure_probe',{})
+            earlier=[r.get('safe_failure_probe',{}) for r in requests if r['prediction_id']<pid]
+            cumulative=sum(r.get('probability',0.) for r in earlier)+safe.get('probability',0.)
+            threshold=safe.get('threshold')
+            exceeded=threshold is not None and safe.get('cumulative_score',-1.)>=threshold
+            check('safe_cumulative_score',safe.get('request_index')==pid
+                and 0.<=safe.get('probability',-1.)<=1.
+                and abs(safe.get('cumulative_score',-1.)-cumulative)<1e-4
+                and safe.get('expert_forwards')==cfg['N'],pid)
+            check('safe_first_alarm_only',safe.get('exceeded')==exceeded
+                and safe.get('new_alarm')==(exceeded and not any(r.get('exceeded') for r in earlier)),pid)
         g=request['rtc_guidance'];solver=request['rtc_solver_inputs']
         if synchronous or not origin:
             check('bootstrap_without_guidance',g.get('guidance_enabled') is False
@@ -473,6 +485,14 @@ def audit(run):
                         force_event=decision['reason']=='action_event'
                         check('critical_event_fast_explicit_override',f.get('event_fast_override')==force_event,pid)
                         if force_event:expected='Fast'
+                    if decision.get('safe_refresh'):
+                        proof=decision['safe_refresh']
+                        alarm=by_id[proof['prediction_id']].get('safe_failure_probe',{})
+                        check('safe_full_response_opt_in',bool(cfg.get('safe_failure_probe'))
+                            and cfg.get('safe_probe_mode')=='refresh' and alarm.get('new_alarm') is True
+                            and proof==request.get('safe_failure_response')
+                            and f.get('reason')=='safe_failure_probe',pid)
+                        expected='Full'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
                 event_exception=cfg.get('m3_fast_every_event') and decision.get('reason')=='action_event'
@@ -1146,6 +1166,16 @@ def audit(run):
                             and proof['ordinary_wait_seconds']>wait_limit
                             and abs(proof['ordinary_wait_seconds']-(proof['ordinary_latest_start']-
                                 proof['activation_monotonic']))<1e-8)
+                    if cap.get('scope')=='safe_failure_probe':
+                        proof=cap['alarm'];request_step=proof['request_step']
+                        alarm=by_id[proof['prediction_id']].get('safe_failure_probe',{})
+                        source_commit=next((c for c in commits if c['prediction_id']==proof['prediction_id']),None)
+                        valid_cap=(bool(cfg.get('safe_failure_probe')) and cfg.get('safe_probe_mode')=='refresh'
+                            and alarm.get('new_alarm') is True and source_commit is not None
+                            and proof['commit_step']==source_commit['commit_step']
+                            and request_step==proof['commit_step']+1
+                            and d.get('safe_refresh')==proof and request.get('safe_failure_response')==proof
+                            and sum(bool(r.get('safe_failure_response')) for r in requests)==1)
                     first_start=d['decision_monotonic']+(request_step-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
                     check('m3_first_refresh_cap_inputs',valid_cap
                           and cap['request_step']==request_step and cap['recovery_ticks']==recovery_ticks

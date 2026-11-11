@@ -81,6 +81,9 @@ def main():
     parser.add_argument('--energy-refresh',action='store_true',help='Simplified Full plus prediction-consistency filtering and a20-step ordinary feedback window; no30-step cap')
     parser.add_argument('--action-signals',type=Path,
         help='Opt-in pooled action-signal settings JSON; enrich M1 cues with a20/22-step request budget')
+    parser.add_argument('--safe-failure-probe',type=Path,help='Opt-in trained SAFE checkpoint; default v4 is unchanged')
+    parser.add_argument('--safe-probe-mode',choices=('observe','refresh'),default='refresh',
+        help='Log SAFE scores only, or request one Full refresh on the first alarm')
     parser.add_argument('--full-approach-delta',type=float,
         help='Retain open-gripper turns into a downward-dominant approach; minimum increase in normalized downward command component')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
@@ -96,6 +99,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.safe_failure_probe and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh):
+        parser.error('--safe-failure-probe requires M3 three-frequency energy refresh')
     if args.action_signals and (args.acceptance_group!='m3' or not args.energy_refresh):
         parser.error('--action-signals requires --acceptance-group m3 --energy-refresh')
     if args.fast_every_event and not args.fast_critical:
@@ -210,6 +215,9 @@ def main():
     cfg=load_config(repo_root=ROOT)
     if args.validate_setup:validate(cfg)
     cfg['m4_validate_setup']=args.validate_setup
+    if args.safe_failure_probe:
+        cfg['safe_failure_probe']=str(args.safe_failure_probe.resolve())
+        cfg['safe_probe_mode']=args.safe_probe_mode
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
     cfg['m3_full_energy']=args.full_energy
@@ -459,6 +467,7 @@ def main():
             if args.simplified_refresh:command.append('--simplified-refresh')
             if args.energy_refresh:command.append('--energy-refresh')
             if args.action_signals:command.extend(['--action-signals',str(args.action_signals.resolve())])
+            if args.safe_failure_probe:command.extend(['--safe-failure-probe',str(args.safe_failure_probe.resolve()),'--safe-probe-mode',args.safe_probe_mode])
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')

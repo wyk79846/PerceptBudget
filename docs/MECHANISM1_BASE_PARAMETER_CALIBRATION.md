@@ -320,3 +320,15 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 服务`perceptbudget-safe-success-20261111t070655`已启动，一次常驻加载采新增输入，资源中断保留完成记录；采集完自动调用官方SAFE训练入口，沿用135组网格、1000轮、相同损失和主alpha0.2，比较同一79及40回合的AUC、检出和误报。此次只验证成功覆盖假设，正式v4与FlashRT均不修改。
 
 [补采与重训实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T070655Z-safe-success-controls/progress.md) · [成功样本固定清单](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T070655Z-safe-success-controls/success_selection.json)
+
+补采和重训已完成：新增1251条全部原动作精确回放；采集702秒，135组训练649秒。选中末去噪步、首动作位置、lr0.0001、L2=0.001。固定79测试AUC0.843，检出25/33、误报10/46；原40子集AUC0.864，检出6/9、误报4/31。Long仍检出12/12，成功误报由9/10降至6/10。成功覆盖增加后误报减少，漏检略增，尚未证明机器人成功率改善。
+
+## 16 SAFE首次报警触发一次Full：在线实验
+
+新增可选`--safe-failure-probe <checkpoint>`，默认不开启；`--safe-probe-mode observe`只记录，`refresh`在每回合首次超过原CP带后，提前安排一次Full，之后继续原v4规则。使用同一个训练完成的模型、alpha0.2和原始特征；累计评分不在Full后清零，每回合bootstrap才重置。超出31次已校准推理范围后只记分，不外推最后阈值。报警不重复触发，不覆盖更早的关键动作截止时刻、RTC接续和原控制最小请求间隔。
+
+特征钩子在CUDA图准备前安装，只读取专家末层、末去噪首动作隐藏向量；不改变专家计算或梯度。MLP初始化保留策略随机数状态。观察和干预两组都启用同样的特征读取和评分，避免把额外模块开销混入策略区别；均保留实际总能量统计。FlashRT及`action_signals_v4.json`未改。
+
+59项CPU检查通过，包括特征顺序、原输出/输入梯度保持、随机数保持、累计报警只触发一次、每回合重置、强制Full和原频率预算。闭环为seed211/init1，Spatial/Object/Goal/Long各task8，两组各4回合；未按任务改阈值。每组一次常驻加载，内存中断仅续跑未完成项。
+
+[在线小测实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/progress.md) · [实验计划](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/plan.json) · [接入实现](../perceptbudget/safe_runtime.py)

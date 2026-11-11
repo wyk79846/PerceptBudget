@@ -165,6 +165,9 @@ class ThreeFullRuntime(LowFullRuntime):
         self.start_floor_seconds=config.get('m3_start_floor_ms',0)/1000
         if self.start_floor_seconds not in (0.,.025):raise ValueError('Startup floor supports0 or25ms')
         self.recovery_target=None
+        self.safe_response_enabled=bool(config.get('safe_failure_probe') and
+            config.get('safe_probe_mode','refresh')=='refresh')
+        self.safe_pending=None
 
     def start_clocks(self,directory):
         self.action_signal_directory=Path(directory)
@@ -188,6 +191,9 @@ class ThreeFullRuntime(LowFullRuntime):
             return d
         item=queue.get(step)
         if item is None:return d
+        if self.safe_pending is not None:
+            from perceptbudget.safe_runtime import cap_refresh
+            d=cap_refresh(d,self.safe_pending,now=now,step=step,current_profile=self.clocks.profile)
         d=advance_grasp_deadline(d,step=step,lead_steps=self.grasp_lead_steps)
         period=d['estimated_control_period_seconds']
         guard=math.ceil(self.margin.seconds/period-1e-9)+(self.clocks.profile!='gpu_emc')
@@ -196,7 +202,7 @@ class ThreeFullRuntime(LowFullRuntime):
         medium=max(percentile(list(v),self.settings['service_quantile']) for v in self.low_histories.values())
         formula=select_full(d,medium_seconds=medium,medium_cap=cap,
                             current_profile=self.clocks.profile,transitions=self.transitions)
-        if self.fast_own_budget and d['reason']=='action_event':
+        if self.fast_own_budget and d['reason']=='action_event' and not d.get('safe_refresh'):
             from perceptbudget.ordinary_fast import choose
             from perceptbudget.fast_start_budget import select
             choices={}
@@ -368,6 +374,11 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_previous=request.get('m3_fast_choice',{}).get('mode','Full')
         self.ordinary_full_streak=(0 if fast else 1 if request['prediction_id']==0 else self.ordinary_full_streak+1)
         self.last_ready=request.get('ready_monotonic',commit['commit_monotonic'])
+        if self.safe_response_enabled and request.get('safe_failure_probe',{}).get('new_alarm'):
+            self.safe_pending=dict(prediction_id=request['prediction_id'],
+                commit_step=commit['commit_step'],request_step=commit['commit_step']+1,
+                score=request['safe_failure_probe']['cumulative_score'],
+                threshold=request['safe_failure_probe']['threshold'])
 
     def control_clocks(self,decision,*,inflight):
         decision=self._control_full_clocks(decision,inflight=inflight)
@@ -435,6 +446,9 @@ class ThreeFullRuntime(LowFullRuntime):
         if self.clocks.pending is not None or self.clocks.profile=='deep_idle':
             raise RuntimeError('Cannot infer in deep Continue or before clock acknowledgement')
         DeadlineRuntime.requested(self,request)
+        if self.safe_pending is not None:
+            request['safe_failure_response']=dict(self.safe_pending)
+            self.safe_pending=None
         self.active_profile=self.clocks.profile
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile

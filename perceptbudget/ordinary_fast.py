@@ -110,6 +110,7 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
     if approach:selected='Full'
     force_event=every_event and decision['reason']=='action_event'
     if force_event:selected='Fast'
+    if decision.get('safe_refresh'):selected='Full'
     if policy==CRITICAL_POLICY:
         mode_reason=('critical_fast' if selected=='Fast' else 'full_stable_stage' if ordinary else
                      'full_after_fast' if previous_mode=='Fast' else 'full_fast_timing')
@@ -118,7 +119,7 @@ def choose(decision, *, step, previous_mode, phases, events, costs, fast_delay,
                      'ordinary_cheaper_fast' if selected=='Fast' else 'full_after_fast' if previous_mode=='Fast' else
                      'full_key_stage' if not ordinary else 'full_cost_or_timing')
     result=dict(policy=policy,mode=selected,
-        reason='critical_event_fast' if force_event else 'full_downward_approach' if approach else mode_reason,
+        reason='safe_failure_probe' if decision.get('safe_refresh') else 'critical_event_fast' if force_event else 'full_downward_approach' if approach else mode_reason,
         observation_step=step,previous_mode=previous_mode,ordinary=ordinary,
         full_per_fast=full_per_fast,full_streak=streak,
         active_phases=active,near_events=near,fast_delay_steps=fast_delay,
