@@ -64,7 +64,7 @@ def prepare(row):
     return cfg, by_id, packets
 
 
-def filtered(pid, packet, results, by_id, cfg, settings):
+def filtered(pid, packet, results, by_id, cfg, settings, *, receipts=None):
     proof, timing = packet['proof'], packet['timing']
     source = by_id[pid]
     events = [dict(e, prediction_id=pid) for e in results[pid]['events']]
@@ -86,6 +86,7 @@ def filtered(pid, packet, results, by_id, cfg, settings):
         reference = dict(prediction_id=reference_id, origin=by_id[reference_id]['observation_step'],
                          actions=by_id[reference_id]['actions'], events=results[reference_id]['events'])
     ignored = set()
+    feedback_events = {}
     if cfg.get('m3_feedback_policy'):
         old = timing['feedback_review']
         review = review_cues(events, prediction_id=pid, origin=source['observation_step'],
@@ -94,12 +95,18 @@ def filtered(pid, packet, results, by_id, cfg, settings):
             minimum_steps=cfg['m3_feedback_minimum_steps'], actions=source['actions'],
             reference=reference, config=settings, policy=cfg['m3_feedback_policy'])
         ignored = {(e['kind'], e['target_step']) for e in review['events'] if e['suppress']}
+        feedback_events = {(e['kind'], e['target_step']): e for e in review['events']}
     chunks = {k: dict(origin=r['observation_step'], phase_actions=r['actions']) for k, r in by_id.items()}
     surviving = []
     rejected = Counter()
+    def record(event, stage, **details):
+        if receipts is not None:
+            receipts.append(dict(event, filter_stage=stage, **details))
     for event in events:
-        if any(e['kind'] == event['kind'] and abs(e['target_step'] - event['target_step']) <= settings.match_steps
-               for e in packet['covered']):
+        points = [e for e in packet['covered'] if e['kind'] == event['kind']
+            and abs(e['target_step'] - event['target_step']) <= settings.match_steps]
+        if points:
+            record(event, 'point', covered_points=points)
             rejected['point'] += 1; continue
         covering = [p for p in packet['phases'] if covered_by_phase(event, p)]
         restored = False
@@ -107,11 +114,15 @@ def filtered(pid, packet, results, by_id, cfg, settings):
             restored = (event['kind'] == 'turn' and cfg.get('m3_event_identity')
                         and not review_turn(event, covering, chunks, settings)['same_event'])
             if not restored:
+                record(event, 'phase', covered_phases=covering)
                 rejected['phase'] += 1; continue
         if event['kind'] == 'turn' and event['target_step'] in ordinary and not restored:
+            record(event, 'ordinary_turn')
             rejected['ordinary_turn'] += 1; continue
         if (event['kind'], event['target_step']) in ignored:
+            record(event, 'feedback', feedback=feedback_events[(event['kind'], event['target_step'])])
             rejected['feedback'] += 1; continue
+        record(event, 'eligible')
         surviving.append(event)
     return surviving, phases, dict(rejected)
 

@@ -142,3 +142,21 @@
 本次仅新增离线分析脚本和记录，未修改FlashRT、线上事件检测或最终v4配置；没有重新加载模型或运行仿真。旧200回合来自原M4，不能当作最终v4的新评测结果。
 
 [完整参数比较](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T041808Z-motion-cue-calibration-old200/results.md) · [逐回合与参数汇总](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T041808Z-motion-cue-calibration-old200/summary.json) · [Object首次闭爪来源](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T041808Z-motion-cue-calibration-old200/object_first_close_slowdown.json) · [统计脚本](/home/wyk/workspace/PerceptBudget/scripts/calibrate_motion_cues.py)
+
+## 8 新反馈是否被去重过滤
+
+进一步读取每段预测首次实际调度判断。原200回合得到1,440段预测，比上一节多113段，增加的都是未随下一次请求保存完整判断的段落；没有重新评测。另核查旧五组开发样本的v3失败复测25回合、408段预测。原始事件、阶段过滤、普通转向过滤、反馈过滤、选中关键点均与记录一致，408份新增信号的候选回放也一致。
+
+两类过滤应分开看：同类关键点或同类阶段已经响应，是去重；当前计划仍较新或新旧预测相符，是普通运动的反馈过滤。后者并不作用于夹爪开闭切换，类型不同的已完成阶段也不会自动覆盖新的夹爪事件。
+
+原200回合中，减速信号的894次过滤来自预测一致/新鲜窗口，198次来自同类点覆盖，没有减速信号被阶段覆盖过滤。转向有1,347次反馈过滤、963次普通转向过滤，阶段覆盖仅2次。这些是不同预测中的候选事件数，不能当作省略的推理次数。
+
+Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减速或转向信号，成功与失败各2个，均因与上一预测相符而过滤。9个失败回合中其余7个在这个区间没有这类原始信号，不能说它们都是被去重吞掉。该统计不包含新旧动作差异新增信号，也不等于此前预测从未识别到闭爪。
+
+发现一处独立的候选遍历缺口：新增分歧模块先固定最早候选，实际准入时若它已被同类关键点覆盖，直接返回，不再检查后面的准入候选。25个旧v3开发回合中，6段预测首候选命中点覆盖，5段后面还有未覆盖候选；其中4段在同一保存决策上可以加入更早截止点，涉及2个Spatial回合。另1段已有更早原事件，继续扫描也不应抢占它。
+
+例如某段预测在94步判断：96步候选被此前98步的响应覆盖，但104步仍有符合原两类证据及覆盖条件的候选。原程序直接结束候选检查，记录中下一次取图为121步。继续扫描能选中104步；这仅证明当前决策漏选，不能推断闭环后必然成功。
+
+当前v4沿用相同候选选择函数，因此该缺口仍适用。建议下一步的独立实验只修这一处：按时间跳过过期或已覆盖候选，选下一个仍符合原规则的候选；保持阶段去重、已有更早事件优先、每段最多一个新增截止点。参数、RTC、动作及FlashRT不变，不因这两个回合设置例外。新25seed没有参与本次核查或参数选择，正式v4尚未修改。
+
+[过滤核查报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/results.md) · [汇总与逐项回放差异](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/summary.json) · [v3逐候选原始证据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/v3_development25_episodes.json) · [离线核查脚本](/home/wyk/workspace/PerceptBudget/scripts/analyze_refresh_filtering.py)
