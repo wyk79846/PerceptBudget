@@ -94,3 +94,16 @@
 目前证据不支持优先扫夹爪分界0.2；确认窗口有实际影响，但效果仍需闭环。下一步先复核闭爪前接近、减速、接触和最近有效观测，区分过早闭爪、推偏后闭爪及后续松脱，再提出统一候选。最近物体中心距离和手指接触只能辅助查轨迹，不能单独标注是否抓住或是否过早。
 
 [离线结果与分项统计](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T032831Z-gripper-timing-old200/results.md) · [逐次闭爪时间线CSV](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T032831Z-gripper-timing-old200/closes.csv) · [统计脚本](/home/wyk/workspace/PerceptBudget/scripts/analyze_gripper_timing.py)
+
+## 6 Object抓取接触复核
+
+进一步检查旧200回合中的全部50个Object回合，41成功、9超时。仅离线按任务文字确定目标物，读取已有物体位姿、夹爪开度、手指接触和输入图像；这些目标标签不进入线上机制，也没有重新运行仿真或模型。
+
+- 9个失败中7个全程目标抬升不足20mm，机械臂已进入抬起与后续动作；另外2个曾抬起再掉落。
+- 两个掉落样本在掉落前后的指令始终为闭爪。seed67/Object2在61步抬到峰值，63步已下降超过20mm，111步才开爪；seed109/Object5在76步达峰值，78步已下降超过20mm，123步才开爪。两例物体下降时机械臂仍向上。
+- 失败中8/9在首次闭爪前10步已有手指与目标接触，但没有一例在这个窗口中目标平移达到10mm。从动作源观测到闭爪的目标平移中位数，成功约4.75mm、失败约4.98mm，本批并非普遍大幅推走目标。
+- 同任务比较需与总体统计区分。牛奶盒成功2回合的观测年龄17、18步，失败3回合16、17、16步；失败并非观测更旧。闭爪时末端高于目标中心的中位数，成功约45mm、失败约63mm，支持继续检查接近位置是否到位。该相对高度不是通用抓取阈值，需结合手指姿态和接触看待。
+
+当前更适合优先校准抓取前接近阶段的减速、转向与闭爪事件关系，并核对空夹后反馈；单凭观测年龄不能决定是否刷新，单凭闭爪指令不能判断已抓稳。后续统一参数仍从全200回合中选取，包含其他任务类型与成功对照。最终v4继续冻结。
+
+[50回合接触分析](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T035124Z-object-grasp-contact-old50/results.md) · [保存图像对比](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T035124Z-object-grasp-contact-old50/grasp_examples.png) · [离线统计脚本](/home/wyk/workspace/PerceptBudget/scripts/analyze_grasp_contacts.py)
