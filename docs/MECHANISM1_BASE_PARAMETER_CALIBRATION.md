@@ -368,3 +368,23 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 Spatial9、Object7、Long7在报警干预后完成，值得继续观察；但不能归因为SAFE相对最终v4的确定提升。Long8没有报警也成功，直接说明新旧结果差异不能全部归于报警模块。历史成功的Goal9、Long9本轮报警后仍成功。保留实验开关，正式v4不替换；本轮未新增训练、阈值搜索、FlashRT修改或额外基准测试。
 
 [六任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T075230Z-safe-heldout-alarm-pair6/results.md) · [逐任务原始数据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T075230Z-safe-heldout-alarm-pair6/results.json) · [固定任务与历史报警来源](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T075230Z-safe-heldout-alarm-pair6/plan.json)
+
+## 18 新随机种子完整40任务
+
+用户要求随机换一个种子，沿用仅报警组、不重测v4对照。用系统随机数抽到seed253278，排除SAFE数据清单及近期已知种子，固定init1，四套任务各10全部运行。新种子没有出现在SAFE采集清单；其中28个任务身份0–6为训练/验证见过的任务类型，12个任务身份7/8/9始终未参与训练或验证，不能把全部40称为未见任务。MLP、CP带、v4、RTC、频率控制和每回合最多一次Full响应均保持冻结。
+
+|集合|成功|报警回合|
+|---|---:|---:|
+|Spatial|9/10|4|
+|Object|9/10|4|
+|Goal|10/10|4|
+|Long|7/10|6|
+|合计|35/40（87.5%）|18/40（45%）|
+
+实际触发17次Full响应，占356次推理的4.78%；另1次Spatial0在任务结束附近报警，没有后续Full。每回合仅第一次报警有响应。已见任务身份新seed回合25/28成功，未见任务身份10/12成功。全部5个最终失败都发生过报警并补了Full：Spatial9在39步、Object5在22步、Long0在47步、Long4在123步、Long7在25步响应，仍分别在220/280/520/520/520步超时。报警能覆盖这批最终失败，但一次Full不是通用恢复策略。
+
+总任务能量5796.81J，任务时间438.25秒，平均刷新21.63步。评分平均2.158毫秒，356次合计0.768秒；这是评分本身的计时，特征钩子的整条推理增量未单独测定。模型262657参数，FP32权重约1MiB。40项运行审核通过，零断供，一次常驻加载、没有RAM续测；本轮没有新增训练或修改FlashRT。
+
+此前按历史报警选择的6/6不能代表完整任务集。本轮给出了未按报警或成败筛选的40回合结果；由于按用户要求没有同seed当前v4对照，不能据此计算净成功率提升或节能收益，也不能把报警后成功的13回合全算作被救回。
+
+[40任务结果表](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T080110Z-safe-random-seed253278-all40/results.md) · [原始逐任务索引](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T080110Z-safe-random-seed253278-all40/results.json) · [固定随机种子与完整配置](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T080110Z-safe-random-seed253278-all40/plan.json)
