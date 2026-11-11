@@ -201,8 +201,15 @@ class WristSlipMonitor:
                            locked_step=self.anchor['step'])
                 if not row['alarm']:row['reason'] = 'tracking_carried_texture'
                 if eligible and self.bad >= self.confirmation and not self.alarmed:
-                    row.update(alarm=True, reason='persistent_carried_texture_loss')
-                    self.alarmed = True
+                    if self.grasp_check:
+                        # Appearance loss can also come from occlusion, lighting
+                        # or slow view changes. In the joint-evidence experiment
+                        # it is a suspicion, not a confirmed physical anomaly.
+                        row.update(reason='visual_change_unconfirmed',
+                                   unconfirmed_reason='persistent_carried_texture_loss')
+                    else:
+                        row.update(alarm=True, reason='persistent_carried_texture_loss')
+                        self.alarmed = True
                 if self.detector=='updated_reference' and loss<self.loss_fraction:
                     row['reference_updated']=self.update_visible_reference(gray,self.anchor,step)
                     row['reference_step']=self.anchor.get('updated_step',self.anchor['step'])

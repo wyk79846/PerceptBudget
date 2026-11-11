@@ -86,6 +86,27 @@ def test_gripper_closing_alone_without_image_loss_does_not_alarm():
     assert not row['alarm']
 
 
+def test_grasp_check_keeps_visual_loss_unconfirmed_without_state_evidence():
+    monitor=WristSlipMonitor(detector='updated_reference',grasp_check=True)
+    rows=[monitor.observe(image,state,action,step=step)
+          for image,state,action,step in image_sequence(lost=True)]
+    assert rows[5]['consecutive_loss']>=monitor.confirmation
+    assert rows[5]['reason']=='visual_change_unconfirmed'
+    assert not any(r['alarm'] for r in rows)
+    assert not monitor.alarmed
+
+
+def test_grasp_check_still_alarms_on_joint_jaw_and_visual_loss():
+    monitor=WristSlipMonitor(detector='updated_reference',grasp_check=True)
+    samples=list(image_sequence(lost=True))
+    for image,state,action,step in samples[:4]:
+        monitor.observe(image,state,action,step=step)
+    image,state,action,step=samples[4]
+    state[6],state[7]=.001,-.001
+    row=monitor.observe(image,state,action,step=step)
+    assert row['alarm'] and row['reason']=='closed_jaw_collapse_and_texture_loss'
+
+
 def test_visual_response_preserves_earlier_mandatory_deadline():
     d=dict(estimated_control_period_seconds=.05,latest_start=9.8,
         first_refresh_cap=dict(latest_start=9.9),start_now=True)
