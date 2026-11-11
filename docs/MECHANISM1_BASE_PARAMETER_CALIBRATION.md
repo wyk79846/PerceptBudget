@@ -332,3 +332,18 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 59项CPU检查通过，包括特征顺序、原输出/输入梯度保持、随机数保持、累计报警只触发一次、每回合重置、强制Full和原频率预算。闭环为seed211/init1，Spatial/Object/Goal/Long各task8，两组各4回合；未按任务改阈值。每组一次常驻加载，内存中断仅续跑未完成项。
 
 [在线小测实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/progress.md) · [实验计划](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/plan.json) · [接入实现](../perceptbudget/safe_runtime.py)
+
+8回合闭环已完成，两组均3/4成功：Spatial8为102步、Object8为154步、Goal8为73步，Long8均520步超时。三个成功任务未报警；Long第11次预测（观测267步）完成后越过CP带，干预组在275步实际执行一次Full响应，未救回该失败。两组均保留正常异步RTC及频率控制，8项独立运行审核通过，零断供。新增接入检查加原系统审核共84项CPU检查通过。
+
+|同条件4任务，含失败|v4＋只评分|v4＋首次报警Full|
+|---|---:|---:|
+|成功|3/4|3/4|
+|总任务能量|614.95 J|653.11 J|
+|任务总时间|48.76 s|50.05 s|
+|推理次数|36|40|
+|平均刷新间隔|24.41步|22.25步|
+|评分平均耗时|2.17 ms|2.19 ms|
+
+实际Full响应1次，随后动作轨迹和常规刷新次数也随之改变，故总推理增加4次，不能都记作SAFE直接补推理。能量增加6.21%，本轮没有恢复收益；这说明检测报警和执行恢复是两个问题，不能用离线AUC代替恢复效果。该开关仅保留为实验路径，未替换最终v4，不继续自动扩测。评分耗时包含读取结果同步，不是单独测得的整条推理增量。
+
+[闭环结果表](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/results.md) · [逐任务原始索引](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T074214Z-safe-online-pair4/results.json)
