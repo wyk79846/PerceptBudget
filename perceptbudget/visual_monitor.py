@@ -181,3 +181,9 @@ def cap_visual_refresh(decision, pending, *, now, step, current_profile):
                  wait_seconds=max(0.,latest-now), start_constraint='first_refresh')
     d['visual_refresh'] = dict(pending)
     return d
+
+
+def stop_response(config, request=None):
+    settings=config.get('visual_monitor',{})
+    enabled=settings.get('mode')=='refresh' and settings.get('response')=='stop_and_replan'
+    return enabled and (request is None or bool(request.get('visual_monitor_response')))

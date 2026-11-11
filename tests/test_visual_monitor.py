@@ -142,3 +142,14 @@ def test_pair_summary_counts_real_task_drain_without_inventing_a_terminal_hold(t
     result=summarize_pairs(episodes,tmp_path,groups=('visual_off','visual_on'))
     assert all(r['task_plus_inference_j']==11. for r in result['rows'])
     assert all(r['terminal_low_j'] is None for r in result['rows'])
+
+
+def test_only_confirmed_alarm_requests_stop_and_discard_the_failed_reference():
+    from perceptbudget.visual_monitor import stop_response
+    cfg=dict(visual_monitor=dict(mode='refresh',response='stop_and_replan'))
+    assert stop_response(cfg)
+    assert not stop_response(cfg,{})
+    assert stop_response(cfg,dict(visual_monitor_response=dict(sample_id=0)))
+    assert not stop_response(dict(visual_monitor=dict(mode='observe',response='stop_and_replan')))
+    assert not stop_response(dict(visual_monitor=dict(mode='refresh',response='async')))
+    assert not stop_response({})

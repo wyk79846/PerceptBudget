@@ -377,6 +377,7 @@ def audit(run):
     from perceptbudget.action_events import EventConfig
     wait_guard=PhaseWait()
     critical_waits={e['prediction_id']:e for e in events if e['event']=='critical_wait'}
+    visual_waits={e['prediction_id']:e for e in events if e['event']=='visual_monitor_wait'}
     for request in requests:
         pid=request['prediction_id'];origin=request['observation_step']
         if cfg.get('safe_failure_probe'):
@@ -691,7 +692,26 @@ def audit(run):
             old=by_id[previous['prediction_id']]
             s=origin-old['observation_step']
             if not synchronous:
-                if cfg.get('rtc_disable_guidance'):
+                if g.get('visual_stop_replan'):
+                    stopped=visual_waits.get(pid,{})
+                    settings=cfg.get('visual_monitor',{})
+                    response=request.get('visual_monitor_response',{})
+                    begin=stopped.get('start_monotonic',float('inf'))
+                    end=stopped.get('stop_monotonic',-1.)
+                    check('visual_stop_replan_without_failed_tail',settings.get('mode')=='refresh'
+                        and settings.get('response')=='stop_and_replan' and bool(response)
+                        and g.get('guidance_enabled') is False and solver['previous_raw'] is None
+                        and not g.get('vjp_norms') and solver['delay']==g['delay_estimate_steps']==0
+                        and solver['executed']==s==g['executed_steps']
+                        and g.get('old_tail_policy')=='discard_failed_reference'
+                        and request['m3_fast_choice']['mode']=='Full',pid)
+                    check('visual_stop_no_old_actions_until_ready',stopped.get('step')==origin==response.get('sample_step')
+                        and stopped.get('resume_step')==origin and stopped.get('old_actions_executed')==0
+                        and stopped.get('simulation_frozen') is True and end>=begin
+                        and request['observation_monotonic']>=begin
+                        and end>=request['ready_monotonic']
+                        and not any(begin<=r['action_start_monotonic']<end for r in controls),pid)
+                elif cfg.get('rtc_disable_guidance'):
                     check('unguided_without_old_target_or_vjp',g.get('guidance_enabled') is False
                         and solver['previous_raw'] is None and not g.get('vjp_norms')
                         and solver['executed']==s==g['executed_steps']
@@ -1278,7 +1298,13 @@ def audit(run):
                         check('m4_compute_delay_key',request.get('planned_delay_key')==key and g.get('delay_history_key')==key,pid)
                     expected_history=mode_histories.get(key,[])
                 expected_delay=max(expected_history) if estimate is None else estimate
-                if cfg.get('rtc_critical_wait_prefix_policy')=='committed_stop_v1':
+                if g.get('visual_stop_replan'):
+                    check('visual_stop_zero_delay_not_async_history',
+                        g.get('uncapped_delay_estimate_steps')==expected_delay
+                        and request.get('delay_queue_observed') is False
+                        and bool(g.get('delay_history_excluded_reason')),pid)
+                    expected_delay=0
+                elif cfg.get('rtc_critical_wait_prefix_policy')=='committed_stop_v1':
                     review=dict(wait=wait_target(request) is not None,reason='point_event')
                     if review['wait'] and cfg.get('m3_critical_wait_phases'):
                         review=wait_guard.review(request,old['actions'],old['observation_step'],EventConfig(**cfg['m3_events']))
@@ -1313,7 +1339,7 @@ def audit(run):
             cap=request.get('rtc_wait_prefix',{}).get('maximum_consumed_steps')
             if cap is not None:
                 check('known_stop_no_uncommitted_execution',actual<=cap,pid)
-        if origin and not synchronous:
+        if origin and not synchronous and not g.get('visual_stop_replan'):
             for step in range(origin,at):
                 source=by_step[step]['source']
                 old=by_id[previous['prediction_id']]

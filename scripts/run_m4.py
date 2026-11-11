@@ -86,6 +86,8 @@ def main():
         help='Log SAFE scores only, or request one Full refresh on the first alarm')
     parser.add_argument('--visual-monitor',choices=('observe','refresh'),
         help='Experimental wrist images every5 closed-gripper Continue steps; optionally refresh on visible loss')
+    parser.add_argument('--visual-response',choices=('async','stop_and_replan'),default='stop_and_replan',
+        help='Confirmed visual alarm pauses execution and replans; async reproduces the first experiment')
     parser.add_argument('--visual-monitor-pair',action='store_true',
         help='Compare visual monitoring off/on with one resident model')
     parser.add_argument('--full-approach-delta',type=float,
@@ -225,7 +227,7 @@ def main():
     cfg['m4_validate_setup']=args.validate_setup
     if args.visual_monitor:
         cfg['visual_monitor']=dict(version='wrist_slip_v1',mode=args.visual_monitor,
-            interval=5,confirmation=2,loss_fraction=.75)
+            interval=5,confirmation=2,loss_fraction=.75,response=args.visual_response)
         if args.visual_monitor_pair:
             cfg['m4_visual_monitor_pair']=True
             cfg['m4_visual_monitor_settings']=dict(cfg['visual_monitor'])
@@ -486,7 +488,7 @@ def main():
             if args.energy_refresh:command.append('--energy-refresh')
             if args.action_signals:command.extend(['--action-signals',str(args.action_signals.resolve())])
             if args.safe_failure_probe:command.extend(['--safe-failure-probe',str(args.safe_failure_probe.resolve()),'--safe-probe-mode',args.safe_probe_mode])
-            if args.visual_monitor:command.extend(['--visual-monitor',args.visual_monitor])
+            if args.visual_monitor:command.extend(['--visual-monitor',args.visual_monitor,'--visual-response',args.visual_response])
             if args.visual_monitor_pair:command.append('--visual-monitor-pair')
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')

@@ -318,6 +318,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         capture = ContinueCapture(request_only=bool(config.get('m4_request_only_images')))
     visual_monitor = None
     visual_images = []
+    visual_stop = None
     if config.get('visual_monitor'):
         from perceptbudget.visual_monitor import WristSlipMonitor
         settings=config['visual_monitor']
@@ -422,6 +423,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             rtc_adapter.select_next_mode(request['m3_fast_choice']['mode'])
         if scheduler is not None:
             scheduler.requested(request)
+        from perceptbudget.visual_monitor import stop_response
+        visual_replan=stop_response(config,request)
         selected_delay_queue=delay_queue
         if frequency_delay_queues is not None:
             selected_delay_queue=frequency_delay_queues[request['m4_compute_profile']]
@@ -447,7 +450,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if step not in queue:
                 raise RuntimeError(f'RTC old-action target missing at control step {step}')
             uncapped_delay = delay
-            if config.get('rtc_critical_wait_prefix_policy') == 'committed_stop_v1':
+            if not visual_replan and config.get('rtc_critical_wait_prefix_policy') == 'committed_stop_v1':
                 from perceptbudget.critical_wait import rtc_prefix_plan, wait_target
                 review = dict(wait=wait_target(request) is not None, reason='point_event')
                 if review['wait'] and config.get('m3_critical_wait_phases'):
@@ -456,6 +459,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                         owner['observation_step'], scheduler.events_config)
                 request['rtc_wait_prefix'] = rtc_prefix_plan(request, step, delay, review)
                 delay = request['rtc_wait_prefix']['selected_delay_steps']
+            if visual_replan:
+                delay=0
             feasible = (0 <= delay <= config['H'] - executed if delay_queue is not None
                         else delay <= executed <= config['H'] - delay)
             if not feasible:
@@ -474,6 +479,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 raise RuntimeError('RTC old-action target is incomplete or lacks raw actions') from exc
             if rtc_previous_raw.shape != (target_len, 32):
                 raise RuntimeError(f'invalid RTC old-action target shape {rtc_previous_raw.shape}')
+            if visual_replan:
+                # The robot will consume no old action while stopped. A known
+                # failed tail is not a useful soft target for this new plan.
+                rtc_previous_raw=None
+                delay=0
             request['rtc_guidance'] = {
                 'delay_estimate_steps': delay,
                 'executed_steps': executed,
@@ -484,6 +494,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             }
             if 'rtc_wait_prefix' in request:
                 request['rtc_guidance']['uncapped_delay_estimate_steps'] = uncapped_delay
+            if visual_replan:
+                request['rtc_guidance'].update(visual_stop_replan=True,
+                    uncapped_delay_estimate_steps=uncapped_delay,
+                    old_tail_policy='discard_failed_reference')
             if delay_queue is not None:
                 request['rtc_guidance']['delay_history_steps'] = list(selected_delay_queue.values)
                 if mode_delay_queues is not None:
@@ -540,7 +554,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if rtc_adapter is not None and current_request.get('rtc_guidance'):
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
-            if delay_queue is not None and not current_request.get('delay_queue_observed'):
+            if guidance.get('visual_stop_replan'):
+                current_request['delay_queue_observed']=False
+                guidance['delay_history_excluded_reason']='Visual alarm freezes control; zero consumed steps is not an async latency sample'
+            elif delay_queue is not None and not current_request.get('delay_queue_observed'):
                 observed_queue=delay_queue
                 if frequency_delay_queues is not None:
                     observed_queue=frequency_delay_queues[current_request['m4_compute_profile']]
@@ -669,10 +686,23 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 decision = scheduler.decide(now=time.monotonic(),step=step,queue=queue,
                                             rows=rows,inflight=future is not None,rtc_delay_steps=rtc_delay)
                 decision = scheduler.control_clocks(decision,inflight=future is not None)
-                due = decision['start_now'] and future is None and step-previous_request_step >= q
+                if visual_stop is not None:
+                    # Clock restoration is part of the stop: no env.step,
+                    # dequeuing, or old action execution while waiting for ACK.
+                    while not decision['start_now']:
+                        if time.monotonic()-visual_stop['start_monotonic']>config.get('m3_request_timeout_seconds',3.):
+                            raise RuntimeError('Visual-stop clock recovery timed out')
+                        time.sleep(.002)
+                        decision=scheduler.control_clocks(decision,inflight=False)
+                        if (not decision.get('visual_refresh') and scheduler.clocks.pending is None
+                                and scheduler.recovering_plan is None):
+                            decision=scheduler.decide(now=time.monotonic(),step=step,queue=queue,
+                                rows=rows,inflight=False,rtc_delay_steps=rtc_delay)
+                            decision=scheduler.control_clocks(decision,inflight=False)
+                due = decision['start_now'] and future is None and (visual_stop is not None or step-previous_request_step >= q)
                 base._trace(stream, 'm3_decision', step=step, **decision)
             if (rtc_adapter is not None and config.get('rtc_wait_for_delay_feasibility')
-                    and future is None and step > 0 and due):
+                    and future is None and step > 0 and due and visual_stop is None):
                 recent_rows = rows[-16:]
                 periods = [b['action_end_monotonic'] - a['action_end_monotonic'] - b.get('critical_wait_seconds', 0.)
                            for a, b in zip(recent_rows, recent_rows[1:])]
@@ -700,7 +730,24 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     missed_triggers.append(step)
                     base._trace(stream, 'busy_trigger', task_id=task['task_id'], q=q,
                                 trial_index=trial_index, condition=condition, step=step)
-            critical_wait_seconds = 0.0
+            visual_wait_seconds=0.0
+            if visual_stop is not None:
+                if future is None or not current_request.get('rtc_guidance',{}).get('visual_stop_replan'):
+                    raise RuntimeError('Visual stop requires a fresh Full before any next action')
+                waiting_request=current_request
+                while future is not None:
+                    harvest(step)
+                    if future is not None:time.sleep(.002)
+                stopped=dict(visual_stop,stop_monotonic=time.monotonic(),
+                    prediction_id=waiting_request['prediction_id'],resume_step=step,
+                    simulation_frozen=True,old_actions_executed=0)
+                visual_wait_seconds=stopped['stop_monotonic']-stopped['start_monotonic']
+                stopped['seconds']=visual_wait_seconds
+                waiting_request['visual_stop']=stopped
+                base._trace(stream,'visual_monitor_wait',**stopped)
+                deadline+=visual_wait_seconds
+                visual_stop=None
+            critical_wait_seconds = visual_wait_seconds
             if config.get('m3_critical_wait') and future is not None:
                 from perceptbudget.critical_wait import should_wait, wait_target
                 if should_wait(current_request, step):
@@ -779,6 +826,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                 'condition': condition,
                 'tick_monotonic': tick,
                 'critical_wait_seconds': critical_wait_seconds,
+                **({'visual_monitor_wait_seconds':visual_wait_seconds} if visual_wait_seconds else {}),
                 'action_start_monotonic': action_start,
                 'action_end_monotonic': action_end,
                 'before': before,
@@ -816,6 +864,10 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                     visual_images.append(visual_monitor.cv.cvtColor(image,visual_monitor.cv.COLOR_RGB2GRAY))
                     base._trace(stream,'visual_monitor',**sample)
                     scheduler.arm_visual_alarm(sample)
+                    from perceptbudget.visual_monitor import stop_response
+                    if sample['alarm'] and stop_response(config):
+                        visual_stop=dict(sample_id=sample['sample_id'],step=sample['step'],
+                            start_monotonic=time.monotonic())
             if step % 20 == 0:
                 base._trace(stream, 'device_state', q=q, trial_index=trial_index,
                             condition=condition, step=step,
@@ -828,6 +880,8 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if terminal:
                 status = 'success' if success else 'timeout' if step + 1 == task['max_steps'] else 'failure'
                 break
+            if visual_stop is not None:
+                continue  # Start recovery immediately, without the usual tick sleep.
             if time.monotonic() > deadline:
                 deadline = time.monotonic()
             else:
@@ -969,6 +1023,7 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             alarms=sum(s['alarm'] for s in samples),responses=sum('visual_monitor_response' in r for r in requests),
             acquisition_seconds=sum(s['acquisition']['stop_monotonic']-s['acquisition']['start_monotonic'] for s in samples),
             detector_seconds=sum(s['detector_seconds'] for s in samples),
+            stopped_seconds=sum(r.get('visual_monitor_wait_seconds',0.) for r in rows),
             cost_scope='Included in whole-task wall time and board energy; request images remain separate')
     if env_audit is not None:
         result['env_forward_optimization'] = env_audit

@@ -213,7 +213,7 @@ class OriginalOpenPiRTCAdapter:
             delay_estimate_steps=delay, executed_steps=executed, guidance_enabled=previous is not None,
             solver_backend=('original_source_step_graph' if step_graph is not None and previous is not None else
                 'original_openpi_cuda_graph' if use_graph and previous is not None else
-                'original_openpi_eager_unguided' if self.config.get('rtc_disable_guidance') else 'original_openpi_eager_vjp'),
+                'original_openpi_eager_unguided' if previous is None else 'original_openpi_eager_vjp'),
             expert_backend='original_openpi_source',
             valid_prefix_length=valid, vjp_norms=norms, beta=self.beta,
             fused_norm=bool(self.config.get('rtc_fused_norm')),
