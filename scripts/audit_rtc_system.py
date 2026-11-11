@@ -36,6 +36,37 @@ def phase_history_at_decision(commits,by_id,step,now):
     return result
 
 
+def point_history_at_decision(commits, by_id, step, now, cfg):
+    """Rebuild completed event responses independently of the controller."""
+    from perceptbudget.action_events import EventConfig, detect_events
+    config = EventConfig(**cfg['m3_events'])
+    points = []
+    for commit in commits:
+        if commit['commit_monotonic'] > now or commit['commit_step'] > step:
+            continue
+        request = by_id[commit['prediction_id']]
+        timing = request.get('m3_timing', {})
+        target = timing.get('critical_step')
+        if target is None or commit['commit_step'] > target:
+            continue
+        kinds = timing.get('candidate_event_kinds') or []
+        if cfg.get('m3_event_coverage_mode', 'event_only') == 'event_only':
+            if timing.get('reason') != 'action_event' or (
+                    timing.get('arrival_lateness_seconds') and cfg.get('m3_feedback_policy') != 'overlap_pacing_v2'):
+                continue
+        else:
+            if commit['commit_step'] < request['observation_step']:
+                continue
+            events = detect_events(request['actions'], config,
+                start_offset=max(0, commit['commit_step']-request['observation_step']))
+            kinds = [kind for kind in kinds if not (cfg.get('m3_ignore_turn') and kind == 'turn')
+                and any(e['kind'] == kind and abs(request['observation_step']+e['offset']-target) <= config.match_steps
+                        for e in events)]
+        points.extend(dict(kind=kind, target_step=target) for kind in kinds
+            if target+config.match_steps >= step)
+    return points
+
+
 def turn_identity_from_record(event,phases,by_id,config):
     """Independent reconstruction from saved Full outputs, not runtime chunks."""
     valid=[p for p in phases if p['start_step']<=event['target_step']<p['stop_step']
@@ -840,7 +871,8 @@ def audit(run):
                                 period=proof['source_period_seconds'],response_seconds=report['response_seconds'],
                                 margin_seconds=t['margin_seconds'],
                                 prediction_count=sum(i<=old['prediction_id'] for i in by_id),
-                                covered_phases=signal_phases)
+                                covered_phases=signal_phases,
+                                covered_events=point_history_at_decision(commits,by_id,at,proof['source_monotonic'],cfg))
                             check('action_signal_budget_and_features',signal==packet['review']
                                 and signal==source_decisions[0].get('action_signal_review'),pid)
                             if 'action_revision' in d.get('candidate_event_kinds',[]):

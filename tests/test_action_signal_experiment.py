@@ -267,6 +267,53 @@ def test_v3_skips_covered_phase_and_preserves_a_later_independent_change():
     assert prepare(**kw,settings=legacy)==prepare(**kw,settings=legacy,covered_phases=[phase])
 
 
+def test_optional_point_filter_selects_later_candidate_and_preserves_v4_default():
+    actions=[action()]*18+[action(.7)]*18+[action(1.2)]*14
+    kw=dict(actions=actions,origin=0,source_step=8,history={},
+        reference=dict(origin=0,actions=[action()]*50),config=EventConfig(),period=.05,
+        response_seconds=.5,margin_seconds=.025,prediction_count=1)
+    cfg=dict(settings(),version=PAIRED_VERSION,refresh_budget_enabled=False)
+    covered=[dict(kind='action_revision',target_step=18)]
+    old=prepare(**kw,settings=cfg,covered_events=covered)
+    assert old==prepare(**kw,settings=cfg)
+    assert old['review']['candidate']['target_step']==18
+    assert apply_candidate([],packet=old,step=8,end=50,prediction_id=1,
+        covered=covered,tolerance=5)==[]
+    fixed=prepare(**kw,settings=dict(cfg,skip_covered_candidates=True),covered_events=covered)
+    assert fixed['review']['candidate']['target_step']==35
+    assert fixed['review']['point_rejected']>0
+    actual=apply_candidate([],packet=fixed,step=8,end=50,prediction_id=1,
+        covered=covered,tolerance=5)
+    assert [e['target_step'] for e in actual]==[35]
+    earlier=[dict(kind='gripper_close',target_step=30)]
+    assert apply_candidate(earlier,packet=fixed,step=8,end=50,prediction_id=1,
+        covered=covered,tolerance=5)==earlier
+    phase=dict(start_step=30,stop_step=45,kinds=['action_revision'],event_source='remaining_v2')
+    no_later=prepare(**kw,settings=dict(cfg,skip_covered_candidates=True),
+        covered_events=covered,covered_phases=[phase])
+    assert no_later['review']['candidate'] is None
+
+
+def test_point_filter_is_typed_and_applied_before_the_saved_runtime_packet(tmp_path):
+    r=runtime(50);r.feedback_policy='overlap_pacing_v2';r.feedback_minimum=20
+    r.action_signal_settings=dict(settings(),version=PAIRED_VERSION,
+        refresh_budget_enabled=False,skip_covered_candidates=True)
+    r.action_signal_directory=tmp_path
+    r.committed(dict(prediction_id=0,observation_step=0,observation_monotonic=0.,actions=[action()]*50),
+        dict(commit_step=0,commit_monotonic=0.))
+    actions=[action()]*18+[action(.7)]*8+[action(1.2)]*24
+    r.committed(dict(prediction_id=1,observation_step=20,observation_monotonic=1.,actions=actions),
+        dict(commit_step=28,commit_monotonic=1.4))
+    r.covered_events=[dict(kind='action_revision',target_step=38),dict(kind='gripper_close',target_step=45)]
+    d=r.decide(now=1.4,step=28,queue={20+i:(a,1,20,i) for i,a in enumerate(actions)},
+        rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['action_signal_review']['candidate']['target_step']==45
+    assert d['action_signal_added']
+    saved=json.loads((tmp_path/'action_signals.jsonl').read_text())
+    assert saved['review']==d['action_signal_review']
+    assert saved['review']['point_rejected']>0
+
+
 def test_v3_does_not_blanket_suppress_other_event_types_in_a_grasp_phase():
     actions=[action()]*18+[action(grip=1.)]*32
     kw=dict(actions=actions,origin=0,source_step=8,history={},

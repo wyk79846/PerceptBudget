@@ -160,3 +160,15 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 当前v4沿用相同候选选择函数，因此该缺口仍适用。建议下一步的独立实验只修这一处：按时间跳过过期或已覆盖候选，选下一个仍符合原规则的候选；保持阶段去重、已有更早事件优先、每段最多一个新增截止点。参数、RTC、动作及FlashRT不变，不因这两个回合设置例外。新25seed没有参与本次核查或参数选择，正式v4尚未修改。
 
 [过滤核查报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/results.md) · [汇总与逐项回放差异](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/summary.json) · [v3逐候选原始证据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T042333Z-refresh-filter-review-development/v3_development25_episodes.json) · [离线核查脚本](/home/wyk/workspace/PerceptBudget/scripts/analyze_refresh_filtering.py)
+
+## 9 独立实验：跳过已覆盖的首候选
+
+新增实验配置[action_signals_v4_candidate_scan.json](../action_signals_v4_candidate_scan.json)，在最终v4上仅开启`skip_covered_candidates`。生成新增候选时，先检查已经完成的同类点响应，把命中覆盖的候选标为`point_already_refreshed`，再从剩余准入候选中选最早的一项。这样候选一开始就保存正确，后续调度和原始日志使用同一结果。
+
+原有阶段覆盖、预算、同类证据和更早事件优先仍保留。每段预测仍最多增加一个截止点，选定后保持不变。默认关闭本实验开关，正式[action_signals_v4.json](../action_signals_v4.json)未改；FlashRT、RTC、动作和四项P90阈值均未修改。
+
+44项针对性CPU检查通过。旧v3开发25回合的408份新增信号回放，关闭开关时与原保存结果零差异；开启后6份首候选改变，其中4份能按原准入规则加入更早截止点，与前一节核查一致。这里只回放保存决策，不把它计为任务成功。
+
+闭环小测预先固定seed109/init1的Spatial9漏选案例，以及Spatial0、Object0两个原成功对照。当前v4与修复版分别新跑3回合，共6回合；每组一次常驻加载，条件相同，不按结果调整参数。后台服务`perceptbudget-candidate-scan-dev3-20261111t043706`，资源中断仅续未完成任务，所有已完成成败保留。
+
+[六回合实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/progress.md) · [固定任务与指令](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/plan.json) · [408段离线回放](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/offline_replay.json)

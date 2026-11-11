@@ -42,6 +42,8 @@ def validate(settings):
         raise ValueError('This experiment keeps the 20-step / 22-step refresh budget')
     if type(settings.get('refresh_budget_enabled', True)) is not bool:
         raise ValueError('refresh_budget_enabled must be a boolean')
+    if type(settings.get('skip_covered_candidates', False)) is not bool:
+        raise ValueError('skip_covered_candidates must be a boolean')
     if type(settings.get('pair_components', True)) is not bool:
         raise ValueError('pair_components must be a boolean')
     if type(settings.get('gripper_conflict', False)) is not bool:
@@ -175,7 +177,7 @@ def disagreement_kinds(evidence, thresholds):
 
 def prepare(*, actions, origin, source_step, history, reference, config,
             settings, period, response_seconds, margin_seconds, prediction_count,
-            covered_phases=()):
+            covered_phases=(), covered_events=()):
     """Freeze candidate and budget once at commit, just like the old forecast."""
     phase_aware = settings['version'] == PAIRED_VERSION
     paired = phase_aware and settings.get('pair_components', True)
@@ -232,6 +234,11 @@ def prepare(*, actions, origin, source_step, history, reference, config,
             cue = dict(kind='action_revision', target_step=f['target_step'])
             if any(covered_by_phase(cue, phase) for phase in covered_phases):
                 opportunities[-1].update(admitted=False, reason='phase_already_refreshed')
+        if settings.get('skip_covered_candidates', False) and opportunities[-1]['admitted']:
+            if any(event['kind'] == 'action_revision'
+                    and abs(event['target_step'] - f['target_step']) <= config.match_steps
+                    for event in covered_events):
+                opportunities[-1].update(admitted=False, reason='point_already_refreshed')
     selected = next((f for f in opportunities if f['admitted']), None)
     event = (dict(kind='action_revision', target_step=selected['target_step'],
                   evidence=dict(geometry=selected['geometry'], disagreement=selected['disagreement']))
@@ -262,6 +269,10 @@ def prepare(*, actions, origin, source_step, history, reference, config,
         # Imminent cues now reach the existing scheduler, which may wait for
         # inference at the critical action instead of dropping the cue here.
         review['refresh_budget_enabled'] = False
+    if settings.get('skip_covered_candidates', False):
+        review.update(skip_covered_candidates=True,
+            covered_events=[dict(e) for e in covered_events],
+            point_rejected=sum(f['reason']=='point_already_refreshed' for f in opportunities))
     return dict(review=review, features=features, opportunities=opportunities)
 
 

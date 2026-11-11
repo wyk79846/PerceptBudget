@@ -551,7 +551,7 @@ class DeadlineRuntime:
                     period=forecast_proof['source_period_seconds'],
                     response_seconds=current['feedback_review']['response_seconds'],
                     margin_seconds=self.margin.seconds,prediction_count=len(self.chunks),
-                    covered_phases=coverages)
+                    covered_phases=coverages,covered_events=self.covered_events)
                 signal_packet['prediction_id']=item[1]
                 signal_packet['execution_feedback']=observe_execution(rows[-self.feedback_minimum:])
                 current['action_signal_packet']=signal_packet

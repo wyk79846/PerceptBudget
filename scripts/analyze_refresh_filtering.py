@@ -86,6 +86,7 @@ def analyze(row, contacts):
             if timing.get('reason') == 'action_event' and critical is not None and commit['commit_step'] <= critical:
                 covered.extend(dict(kind=kind, target_step=critical)
                     for kind in timing.get('candidate_event_kinds') or [])
+        covered = [event for event in covered if event['target_step']+config.match_steps >= step]
         packet = dict(proof=proof, timing=decision, history=history, phases=phases, covered=covered)
         local = []
         eligible, _, _ = filtered(pid, packet, results, by_id, cfg, config, receipts=local)
@@ -106,7 +107,8 @@ def analyze(row, contacts):
                 source_step=step, history=history, reference=reference, config=config, settings=settings,
                 period=proof['source_period_seconds'], response_seconds=response,
                 margin_seconds=decision['margin_seconds'],
-                prediction_count=sum(c['commit_monotonic'] <= now for c in commits), covered_phases=phases)
+                prediction_count=sum(c['commit_monotonic'] <= now for c in commits),
+                covered_phases=phases, covered_events=covered)
             saved = saved_signals.get(pid)
             mismatches['signal_packet'] += saved is None or signal['review'] != saved['review'] or signal['opportunities'] != saved['opportunities']
             candidate = signal['review']['candidate']
