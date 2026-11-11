@@ -88,7 +88,8 @@ def main():
         help='Experimental wrist images every5 closed-gripper Continue steps; optionally refresh on visible loss')
     parser.add_argument('--visual-response',choices=('async','stop_and_replan'),default='stop_and_replan',
         help='Confirmed visual alarm pauses execution and replans; async reproduces the first experiment')
-    parser.add_argument('--visual-detector',choices=('original_v1','updated_v2'),default='original_v1',
+    from perceptbudget.visual_monitor import detector_name
+    parser.add_argument('--visual-detector',type=detector_name,choices=('fixed_reference','updated_reference'),default='fixed_reference',
         help='Opt-in reference refresh and time-gap reset; original monitor remains available')
     parser.add_argument('--visual-monitor-pair',action='store_true',
         help='Compare visual monitoring off/on with one resident model')
@@ -230,8 +231,11 @@ def main():
     if args.visual_monitor:
         cfg['visual_monitor']=dict(version='wrist_slip_v1',mode=args.visual_monitor,
             interval=5,confirmation=2,loss_fraction=.75,response=args.visual_response)
-        if args.visual_detector!='original_v1':
-            cfg['visual_monitor'].update(version='wrist_slip_v2',detector=args.visual_detector)
+        cfg['visual_monitor_method']=args.visual_detector
+        if args.visual_detector=='updated_reference':
+            # Keep the recorded config contract resumable; user-facing method
+            # names are semantic, while old serialized identifiers remain valid.
+            cfg['visual_monitor'].update(version='wrist_slip_v2',detector='updated_v2')
         if args.visual_monitor_pair:
             cfg['m4_visual_monitor_pair']=True
             cfg['m4_visual_monitor_settings']=dict(cfg['visual_monitor'])

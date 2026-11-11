@@ -7,14 +7,21 @@ empty grasp that never established a visible carried object.
 import time
 
 
+def detector_name(value):
+    """Semantic method names; accept recorded commands from older experiments."""
+    aliases={'original_v1':'fixed_reference','updated_v2':'updated_reference'}
+    value=aliases.get(value,value)
+    if value not in ('fixed_reference','updated_reference'):
+        raise ValueError('Unknown wrist monitor detector')
+    return value
+
+
 class WristSlipMonitor:
-    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75, detector='original_v1'):
+    def __init__(self, *, interval=5, confirmation=2, loss_fraction=.75, detector='fixed_reference'):
         import cv2
-        if detector not in ('original_v1','updated_v2'):
-            raise ValueError('Unknown wrist monitor detector')
         cv2.setNumThreads(1)
         self.cv = cv2
-        self.detector=detector
+        self.detector=detector_name(detector)
         self.interval = interval
         self.confirmation = confirmation
         self.loss_fraction = loss_fraction
@@ -81,7 +88,7 @@ class WristSlipMonitor:
         width = abs(float(state[6]-state[7]))
         row = dict(step=int(step), eligible=bool(eligible), closed=closed,
                    width=width, locked=False, alarm=False, reason='warming_up')
-        if self.detector=='updated_v2':
+        if self.detector=='updated_reference':
             gap=step-self.last_step if self.last_step>=0 else None
             row['sample_gap_steps']=gap
             if self.previous is not None and gap is not None and gap>self.interval:
@@ -121,7 +128,7 @@ class WristSlipMonitor:
                 if eligible and self.bad >= self.confirmation and not self.alarmed:
                     row.update(alarm=True, reason='persistent_carried_texture_loss')
                     self.alarmed = True
-                if self.detector=='updated_v2' and loss<self.loss_fraction:
+                if self.detector=='updated_reference' and loss<self.loss_fraction:
                     row['reference_updated']=self.update_visible_reference(gray,self.anchor,step)
                     row['reference_step']=self.anchor.get('updated_step',self.anchor['step'])
             elif not row['alarm']:

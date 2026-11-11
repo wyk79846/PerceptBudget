@@ -8,6 +8,7 @@ import time
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
+from perceptbudget.visual_monitor import detector_name
 
 
 def save(path, value):
@@ -21,7 +22,7 @@ def main():
     p.add_argument('--cases', type=int, nargs='+')
     p.add_argument('--reuse-images', action='store_true')
     p.add_argument('--image-cache',type=Path,help='Read existing sparse images without copying or re-rendering')
-    p.add_argument('--detector',choices=('original_v1','updated_v2'),default='original_v1')
+    p.add_argument('--detector',type=detector_name,choices=('fixed_reference','updated_reference'),default='fixed_reference')
     args = p.parse_args()
     os.environ.update(MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='0')
     import numpy as np
