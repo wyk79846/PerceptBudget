@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/vla-safe/SAFE",
+  "revision": "b8e31dfe4ea27d238f8f7b92f0c0f998a7179f78",
+  "files": {
+    "model/indep.py": "failure_prob/model/indep.py",
+    "model/utils.py": "failure_prob/model/utils.py",
+    "conformal/abstract_predictor.py": "failure_prob/utils/conformal/abstract_predictor.py",
+    "conformal/functional_predictor.py": "failure_prob/utils/conformal/functional_predictor.py",
+    "LICENSE": "LICENSE"
+  }
+}
