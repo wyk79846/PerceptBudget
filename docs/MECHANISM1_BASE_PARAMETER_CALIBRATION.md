@@ -209,3 +209,21 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 4项针对性CPU检查通过，确认采集不改变投影结果及输入梯度，统计指标能正确处理并列分数。采集服务`perceptbudget-safe-old200-20261111t050309`，训练服务`perceptbudget-safe-train-old200-20261111t050309`等待特征完成后自动启动；正式v4和新25seed数据保持不动。
 
 [实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/progress.md) · [任务划分及逐推理清单](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/manifest.json) · [采集程序](../scripts/collect_safe_features.py) · [训练程序](../scripts/train_failure_probe.py)
+
+本轮已完成。1527次特征提取耗时852.3秒，所有原始动作重放最大误差为0；两种特征合计11.93MiB。四组小MLP训练合计20.1秒，网络262657参数，GPU训练。主采集进程一次常驻加载；此前任务编号错误的失败启动另加载过一次。
+
+按验证集AUC选出全去噪步均值特征、学习率0.0003、第25轮的模型。四组均已训练至1000轮，留出的测试任务不参与模型或阈值选择。
+
+|划分|回合/失败|失败检测AUC|平衡准确率|识别失败|成功回合误报|
+|---|---:|---:|---:|---:|---:|
+|训练|120/13|0.971|90.55%|12/13|12/107|
+|验证|40/6|0.941|94.12%|6/6|4/34|
+|测试|40/9|0.688|55.56%|1/9|0/31|
+
+测试集仅看推理次数的基线AUC为0.726，当前选中模型没有显示额外优势。分集合看，测试Spatial有5个失败，均未识别，AUC0.28；Long有4个失败，识别1个，AUC1.0但验证阈值未良好转移；Object、Goal各10回合均成功，不能据此评估其失败召回。
+
+另一个候选在测试上可识别6/9、误报1/31，但它的验证AUC较低，本轮不能看过测试结果后改用它并仍称为独立验证。这说明当前小样本模型选择与跨任务校准不稳定。训练集仅13个失败、验证集6个失败，失败类型覆盖有限；高训练和验证分数没有转移到新任务，不能直接归结为训练轮数不足。
+
+结论：内部特征可低成本采集，小网络训练很快；当前这一版离线结果尚不支持接入正式刷新逻辑。特征、模型和全部候选结果保留，后续若继续，优先完善旧开发数据的失败覆盖和按任务验证。新25seed的2000回合仍未用于提取、训练或选择模型，正式v4未改。
+
+[训练与离线验证报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_results.md) · [完整指标](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_results.json) · [逐回合预测](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/training_predictions.json) · [ROC图](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/failure_probe_roc.png) · [小模型权重](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T050309Z-safe-probe-old200/failure_probe.pt)
