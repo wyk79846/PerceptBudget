@@ -63,7 +63,9 @@ def train(feature_root,root,epochs=1000):
         score='Cumulative sigmoid, not running mean',normalization='Author default: no feature normalization',
         loss='Exact author mean per rollout, inverse smoothed class frequency; compact gradient equivalent',
         primary_alpha=.2,calibration='Official Tfunc/Mean functional CP; seen validation successes;30/70 split',
-        task_split='Fixed unseen task7/8/9 in each suite; seeded60/40 rollout split within seen task0..6',
+        task_split=('Prior train/validation/test membership frozen; add seen successful controls60/40 per task'
+            if manifest.get('frozen_paper_split_reference') else
+            'Fixed unseen task7/8/9 in each suite; seeded60/40 rollout split within seen task0..6'),
         splits={name:dict(episode_ids=ids,episodes=len(ids),failures=int(labels[ids].sum()),
             features=sum(len(by_episode[i]) for i in ids)) for name,ids in splits.items()},
         scope='SAFE method transferred to cached pi0.5/RTC Full-Fast data; not original pi0 benchmark reproduction')
@@ -178,6 +180,18 @@ def train(feature_root,root,epochs=1000):
                 'Functional CP uses official Tfunc/Mean implementation and30/70 successful validation split; no nominal coverage claim across unseen tasks.',
                 'Additional62 rollouts were failure-selected; this is enriched development data, not a natural-prevalence final evaluation.',
                 'Offline detector evaluation only; no policy recovery rollout or robotics success improvement was tested.'])
+        comparison=None
+        if manifest.get('reference_training'):
+            prior_root=Path(manifest['reference_training'])
+            prior=json.loads((prior_root/'training_results.json').read_text())
+            comparison=dict(reference=str(prior_root),
+                intervention=manifest['intervention'],
+                before=dict(test=prior['metrics']['test'],old40=prior['old40_test'],
+                    per_suite_test=prior['per_suite_test'],calibration_successes=prior['calibration_successes']),
+                after=dict(test=split_metrics['test'],old40=old_metrics,
+                    per_suite_test=per_suite,calibration_successes=len(successful_cal)))
+            summary['success_controls_comparison']=comparison
+            save(root/'success_controls_comparison.json',comparison)
         save(root/'training_results.json',summary);save(root/'predictions.json',predictions)
         save(root/'cp_bands.json',{k:v.tolist() for k,v in bands.items()})
         lines=['# SAFE官方方法：训练与测试结果','',
@@ -192,6 +206,15 @@ def train(feature_root,root,epochs=1000):
             '训练、验证来自同一批已见任务的不同回合，测试任务完全留出。所有测试统计在选模完成后计算。',
             '这是SAFE方法在pi0.5/RTC自适应刷新记录上的移植；数据、主模型和采样节奏不同于论文实验，检测成绩不等于机器人成功率或恢复效果。','',
             '[完整指标](training_results.json) · [逐回合预测](predictions.json) · [全部训练候选](candidates.json) · [固定训练计划](training_plan.json)']
+        if comparison:
+            lines+=['','## 补成功样本前后，同一固定测试集','',
+                '|固定测试集|版本|AUC|识别失败|成功误报|','|---|---|---:|---:|---:|']
+            for cohort,label in (('test','79回合'),('old40','原40回合')):
+                for key,version in (('before','补充前'),('after','补充后')):
+                    value=comparison[key][cohort]
+                    lines.append(f"|{label}|{version}|{value['auc']:.3f}|{value['tp']}/{value['failures']}|{value['fp']}/{value['episodes']-value['failures']}|")
+            lines+=['','原训练、验证、测试回合成员均保持，新增成功仅进入已见任务训练/验证；网络、网格与主alpha不变。',
+                '[补成功对照完整数据](success_controls_comparison.json)']
         (root/'training_results.md').write_text('\n'.join(lines)+'\n')
         save(root/'progress.json',dict(status='completed',completed_candidates=len(records),total_candidates=len(grid),
             elapsed_seconds=summary['elapsed_seconds'],selected=choice))

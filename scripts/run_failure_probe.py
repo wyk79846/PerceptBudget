@@ -20,7 +20,10 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-dir',type=Path,required=True)
     parser.add_argument('--collect-only',action='store_true',help='Stop after extraction; do not run the legacy pooled-feature trainer')
+    parser.add_argument('--train-safe-paper',action='store_true',help='Use the official SAFE endpoint training recipe after collection')
     args=parser.parse_args()
+    if args.collect_only and args.train_safe_paper:
+        parser.error('--collect-only and --train-safe-paper cannot be combined')
     root=args.run_dir
     attempt=0
     while True:
@@ -49,8 +52,10 @@ def main():
         save(root/'workflow.json',dict(status='completed',stage='feature_extraction',extraction_attempts=attempt))
         return
     save(root/'workflow.json',dict(status='training',extraction_attempts=attempt))
-    result=subprocess.run([sys.executable,'-u',str(PROJECT/'scripts/train_failure_probe.py'),
-        '--run-dir',str(root)],cwd=PROJECT)
+    command=([sys.executable,'-u',str(PROJECT/'scripts/train_safe_paper.py'),'--features',str(root)]
+        if args.train_safe_paper else
+        [sys.executable,'-u',str(PROJECT/'scripts/train_failure_probe.py'),'--run-dir',str(root)])
+    result=subprocess.run(command,cwd=PROJECT)
     save(root/'workflow.json',dict(status='completed' if result.returncode==0 else 'invalid',
         stage='training',extraction_attempts=attempt,exit_code=result.returncode))
     raise SystemExit(result.returncode)

@@ -47,3 +47,16 @@ def test_functional_band_does_not_fit_held_out_scores():
     for alpha in original:
         assert np.isfinite(original[alpha]).all()
         assert np.array_equal(original[alpha],changed[alpha])
+
+
+def test_success_augmentation_preserves_all_existing_split_memberships():
+    episodes=[dict(episode=task*5+j,suite='suite',task_id=task,failure=False) for task in range(10) for j in range(5)]
+    original=paper_split(episodes)
+    for role,ids in original.items():
+        for order,i in enumerate(ids):episodes[i].update(safe_split=role,safe_split_order=order)
+    episodes.append(dict(episode=50,suite='suite',task_id=0,failure=False,safe_split='train',safe_split_order=len(original['train'])))
+    episodes.append(dict(episode=51,suite='suite',task_id=1,failure=False,safe_split='validation',safe_split_order=len(original['validation'])))
+    current=paper_split(episodes)
+    assert current['test']==original['test']
+    for role in ('train','validation'):
+        assert [i for i in current[role] if i<50]==original[role]

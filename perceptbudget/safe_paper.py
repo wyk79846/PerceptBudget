@@ -69,6 +69,16 @@ def compact_loss(model,features,weights,regularization):
 def paper_split(episodes,seed=11):
     """Fixed 7/3 tasks per suite; author's seeded 60/40 rollout split on seen tasks."""
     import torch
+    if episodes and all('safe_split' in e for e in episodes):
+        splits=dict(train=[],validation=[],test=[])
+        for e in episodes:
+            role=e['safe_split']
+            if role not in splits or ((e['task_id']>=7)!=(role=='test')):
+                raise ValueError('Pinned SAFE split violates seen/unseen task isolation')
+            splits[role].append(e['episode'])
+        for ids in splits.values():
+            ids.sort(key=lambda i:episodes[i].get('safe_split_order',i))
+        return splits
     groups={}
     for e in episodes:
         groups.setdefault((e['suite'],e['task_id']),[]).append(e['episode'])

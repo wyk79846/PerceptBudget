@@ -4,13 +4,14 @@ Replay saved requests without simulator execution or frequency changes. An
 existing extraction can be reused while adding only failed saved rollouts.
 """
 import argparse
-from collections import Counter
+from collections import Counter,defaultdict
 from datetime import datetime, timezone
 import fcntl
 from functools import lru_cache
 import json
 import os
 from pathlib import Path
+import random
 import sys
 import time
 
@@ -18,6 +19,62 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from scripts.analyze_gripper_timing import INDEX, save
 from perceptbudget.failure_features import FEATURE_LAYOUTS
+
+
+def prepare_successes(source,index):
+    manifest=json.loads((source/'manifest.json').read_text())
+    prior=json.loads((source/'paper_training/training_plan.json').read_text())
+    roles={i:(name,order) for name,record in prior['splits'].items() for order,i in enumerate(record['episode_ids'])}
+    episodes,items=manifest['episodes'],manifest['items']
+    for e in episodes:
+        e['safe_split'],e['safe_split_order']=roles[e['episode']]
+    next_order={name:len(record['episode_ids']) for name,record in prior['splits'].items()}
+    reused=len(items)
+    groups=defaultdict(list)
+    for row in json.loads(index.read_text())['rows']:
+        if row['method']=='candidate37' and row['outcome']=='success' and row['task_id']<7:
+            groups[row['suite'],row['task_id']].append(row)
+    rng=random.Random(23);selection=[]
+    for (suite,task),rows in sorted(groups.items()):
+        rng.shuffle(rows)
+        chosen=rows[:10 if suite=='libero_10' else 5]
+        ntrain=int(.6*len(chosen))
+        for j,row in enumerate(chosen):
+            role='train' if j<ntrain else 'validation'
+            run=Path(row['run']);number=len(episodes)
+            requests=json.loads((run/'rtc/q5_requests.json').read_text())
+            episodes.append(dict(episode=number,seed=row['seed'],suite=suite,task_id=task,
+                outcome='success',failure=False,steps=row['steps'],split=role,safe_split=role,
+                safe_split_order=next_order[role],
+                source_run=str(run),method='candidate37',source_group='new_success_controls',
+                request_file='q5_requests.json',frame_file='q5_frames.npz'))
+            next_order[role]+=1
+            for k,r in enumerate(requests):
+                items.append(dict(index=len(items),episode=number,request_index=k,
+                    prediction_id=r['prediction_id'],observation_step=r['observation_step'],
+                    ready_step=r.get('ready_observed_step'),mode=r['context_refresh']['mode'],
+                    valid=r['rtc_guidance']['valid_prefix_length']))
+            selection.append(dict(suite=suite,task_id=task,seed=row['seed'],split=role,
+                run=str(run),requests=len(requests)))
+    root=source.parent/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-safe-success-controls')
+    root.mkdir()
+    manifest.update(episodes=episodes,items=items,total=len(items),dataset_label='safe_success_controls',
+        source_manifest=str(source/'manifest.json'),reference_training=str(source/'paper_training'),
+        frozen_paper_split_reference=str(source/'paper_training/training_plan.json'),
+        reuse_root=str(source),reused_features=reused,
+        source_scope='Prior262 plus successful candidate37 seen-task controls; original train/validation/test membership retained',
+        split='Original paper split frozen; new seen-task successes split60/40 per task; no test additions',
+        intervention='Add successful controls only; frozen task7/8/9 test and unchanged SAFE model/grid/alpha',
+        success_selection=dict(index=str(index),seed=23,per_seen_task=5,long_per_seen_task=10,
+            availability_cap=True,rows=selection))
+    save(root/'manifest.json',manifest)
+    save(root/'success_selection.json',dict(added_successes=len(selection),new_requests=len(items)-reused,
+        suites=dict(Counter(row['suite'] for row in selection)),
+        splits=dict(Counter(row['split'] for row in selection)),rows=selection))
+    pointer=dict(run=str(root),progress=str(root/'progress.md'))
+    save('/tmp/perceptbudget-safe-success-current.json',pointer)
+    save('/tmp/perceptbudget-safe-current.json',pointer)
+    return root
 
 
 def prepare_saved(source_manifest, layout):
@@ -130,7 +187,8 @@ def worker(root):
     def progress(stage, **extra):
         status.update(stage=stage, completed=int(done.sum()), elapsed_seconds=time.monotonic()-started, **extra)
         save(root/'progress.json', status)
-        per = Counter(episodes[item['episode']]['split'] for item in items if done[item['index']])
+        per = Counter(episodes[item['episode']].get('safe_split',episodes[item['episode']]['split'])
+            for item in items if done[item['index']])
         (root/'progress.md').write_text('# SAFE小探针：特征采集\n\n'
             f"状态{status['status']}；阶段{stage}；推理记录{status['completed']}/{len(items)}；模型加载{status['model_loads']}次。\n\n"
             f"复用已有{status['reused_features']}条；本次新增{status['completed']-status['reused_features']}/{len(items)-status['reused_features']}条。\n\n"
@@ -266,11 +324,15 @@ def main():
     parser.add_argument('--run-dir',type=Path)
     parser.add_argument('--reuse-run',type=Path)
     parser.add_argument('--append-failures',type=Path)
+    parser.add_argument('--append-successes',type=Path)
     parser.add_argument('--source-manifest',type=Path)
     parser.add_argument('--feature-layout',choices=tuple(FEATURE_LAYOUTS),default='pooled')
     args=parser.parse_args()
     if args.prepare:
-        if args.source_manifest:
+        if args.append_successes:
+            if args.reuse_run is None:parser.error('--append-successes requires --reuse-run')
+            print(prepare_successes(args.reuse_run,args.append_successes))
+        elif args.source_manifest:
             print(prepare_saved(args.source_manifest,args.feature_layout))
         else:
             print(prepare(args.reuse_run,args.append_failures))
