@@ -77,3 +77,9 @@
 冻结`7f08f1f`的报警停等策略，随机抽取seed308884、init1，Spatial/Object/Goal/LIBERO-10各10任务、各一次。没有训练、没有新阈值校准。正常一次常驻模型加载，只有RAM/OOM资源中断才自动续测，所有已完成成败保留；同seed原v4对照未包含在本批。
 
 [实时进度与逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T122939Z-visual-stop-fresh-seed308884-all40/progress.md)。完成后同目录自动生成`results.md`、`results.json`和`alarm_review.json`，包括成功率、能量、刷新间隔、报警/停等及局部异常记录核对。未匹配物理标签的报警保留看图复核，不能直接判成误报。
+
+已完成：36/40（90%），Spatial9/10、Object8/10、Goal10/10、LIBERO-10为9/10；总任务及在途能量5423.54J，平均刷新间隔22.50步，监测采图349次。1次常驻模型加载、零断供、全部系统审核通过。
+
+唯一报警为Object8第145步，停等0.799秒后最终成功，但复核显示这是误报：物体在75–145步一直双指接触、随手移动，未出现滑落；旧模板匹配逐渐变差，第115和145步相隔30步仍累计成连续两次异常。4个失败均未报警（Spatial7、Object1/5、LIBERO-10 task8），其中Object5有空夹抬手记录。此次不能把90%归因于报警恢复，也没有同seed原v4的净收益证据。
+
+此次只复核结果，不修改阈值或策略。后续应在旧开发数据上检查确认间隔和模板更新，seed308884保留评测用途。[完整结果与报警复核](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T122939Z-visual-stop-fresh-seed308884-all40/results.md)。
