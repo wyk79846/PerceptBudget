@@ -71,3 +71,9 @@
 - [旧轨迹12回合结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T113141Z-v4-visual-monitor/summary.json)、[24回合验证](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T113141Z-v4-visual-monitor/validation/summary.json)。
 - [掉落图像证据](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T113141Z-v4-visual-monitor/slip_image_evidence.png)。
 - [真实闭环配对报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T113141Z-v4-visual-monitor/live_results.md)、[逐任务原始数据索引](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T113141Z-v4-visual-monitor/live_results.json)。
+
+## 新seed的40任务扩测
+
+冻结`7f08f1f`的报警停等策略，随机抽取seed308884、init1，Spatial/Object/Goal/LIBERO-10各10任务、各一次。没有训练、没有新阈值校准。正常一次常驻模型加载，只有RAM/OOM资源中断才自动续测，所有已完成成败保留；同seed原v4对照未包含在本批。
+
+[实时进度与逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T122939Z-visual-stop-fresh-seed308884-all40/progress.md)。完成后同目录自动生成`results.md`、`results.json`和`alarm_review.json`，包括成功率、能量、刷新间隔、报警/停等及局部异常记录核对。未匹配物理标签的报警保留看图复核，不能直接判成误报。
