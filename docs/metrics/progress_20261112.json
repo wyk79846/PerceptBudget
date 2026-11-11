@@ -1,0 +1,466 @@
+{
+  "schema_version": 1,
+  "updated_date": "2026-11-12",
+  "purpose": "为灵玑 OS 构建更加省电、同时追求高准确率的 VLA 推理方案。",
+  "model": {
+    "checkpoint": "lerobot/pi05_libero_finetuned_quantiles_v044",
+    "checkpoint_revision": "b6bfb493bc0f21c4ab24d816409ea3cebf5e43bd",
+    "horizon": 50,
+    "denoising_steps": 5,
+    "weight_precision": "bfloat16",
+    "rtc_action_state_dtype": "float32",
+    "rtc_beta": 5.0
+  },
+  "orin_nx_campaign": {
+    "source_run_id": "20261110T115527Z-candidate37-q10-25seeds",
+    "status": "completed",
+    "total_episodes": 2000,
+    "seed_count": 25,
+    "seeds": [
+      156037,
+      685001,
+      959966,
+      96606,
+      257325,
+      575577,
+      599286,
+      104454,
+      234544,
+      603690,
+      907892,
+      550158,
+      964178,
+      458924,
+      63562,
+      851220,
+      675199,
+      241249,
+      575925,
+      532541,
+      547420,
+      584145,
+      796532,
+      673722,
+      600841
+    ],
+    "init_state_index": 1,
+    "tasks_per_seed_method": 40,
+    "candidate_version": "candidate37, gripper-lift feedback and pre-event freshness refresh enabled",
+    "groups": {
+      "candidate37": {
+        "completed": 1000,
+        "successes": 852,
+        "total_energy_j": 135857.82175981384,
+        "total_task_seconds": 10576.543477879837,
+        "mean_refresh_steps": 22.234898425938383,
+        "requests": 8433,
+        "per_suite": {
+          "libero_spatial": {
+            "completed": 250,
+            "successes": 209
+          },
+          "libero_object": {
+            "completed": 250,
+            "successes": 204
+          },
+          "libero_goal": {
+            "completed": 250,
+            "successes": 241
+          },
+          "libero_10": {
+            "completed": 250,
+            "successes": 198
+          }
+        }
+      },
+      "q10": {
+        "completed": 1000,
+        "successes": 873,
+        "total_energy_j": 244824.4100955403,
+        "total_task_seconds": 10179.138357782736,
+        "mean_refresh_steps": 10.000290782204129,
+        "requests": 18195,
+        "per_suite": {
+          "libero_spatial": {
+            "completed": 250,
+            "successes": 228
+          },
+          "libero_object": {
+            "completed": 250,
+            "successes": 231
+          },
+          "libero_goal": {
+            "completed": 250,
+            "successes": 240
+          },
+          "libero_10": {
+            "completed": 250,
+            "successes": 174
+          }
+        }
+      }
+    },
+    "comparison": {
+      "all_outcomes": {
+        "paired_tasks": 1000,
+        "candidate_energy_j": 135857.82175981384,
+        "q10_energy_j": 244824.4100955403,
+        "energy_saving_percent": 44.50805713907503,
+        "candidate_successes": 852,
+        "q10_successes": 873
+      },
+      "common_success": {
+        "paired_tasks": 767,
+        "candidate_energy_j": 82412.00731281753,
+        "q10_energy_j": 149177.6080427855,
+        "energy_saving_percent": 44.75577910514491,
+        "candidate_successes": 767,
+        "q10_successes": 767
+      }
+    },
+    "candidate_success_rate_delta_pp": -2.1,
+    "candidate_total_task_time_change_percent": 3.904113551941779,
+    "energy_scope": "Board-level task energy, including unsuccessful attempts and pending inference as recorded by the paired comparison",
+    "limitation": "Full campaign belongs to the pre-rollback candidate, not the final freshness-off v4"
+  },
+  "final_v4": {
+    "tag": "v4-final-20261111",
+    "commit": "40e441438c96fa160b4e898d78dba8c971f46647",
+    "signal_config": "action_signals_v4.json",
+    "pre_event_freshness_refresh": false,
+    "gripper_lift_feedback": true,
+    "full_1000_episode_evaluation_completed": false,
+    "targeted_ablation": {
+      "source_run_id": "20261111T012948Z-freshness-off-triggered87",
+      "status": "completed",
+      "paired_episodes": 87,
+      "selection": "All historical candidate episodes that actually triggered pre-event freshness refresh, including success and failure",
+      "groups": {
+        "freshness_off": {
+          "completed": 87,
+          "successes": 25,
+          "total_energy_j": 23109.874608853894
+        },
+        "candidate37": {
+          "completed": 87,
+          "successes": 25,
+          "total_energy_j": 23813.214103323207
+        },
+        "q10": {
+          "completed": 87,
+          "successes": 54,
+          "total_energy_j": 35188.23189231542
+        }
+      },
+      "freshness_off_energy_saving_vs_on_percent": 2.9535680963417743,
+      "limitation": "Trigger-selected cohort; does not represent the full 1000-task distribution"
+    }
+  },
+  "agx_orin_64gb_latency": {
+    "measurement_date": "2026-11-11",
+    "status": "completed",
+    "project_source_revision": "8b4faa16c962acc054bc0c123c2ef3d45775af00",
+    "flashrt_revision": "3346d9c325277b9f6defe24c3accf8449b7b352f",
+    "openpi_revision": "15a9616a00943ada6c20a0f158e3adb39df2ccac",
+    "fixture": "LIBERO spatial task0, init1, fixed prepared dual images and state",
+    "configuration": {
+      "H": 50,
+      "N": 5,
+      "precision": "bfloat16",
+      "beta": 5.0,
+      "state_enabled": true,
+      "flashrt_revision": "3346d9c325277b9f6defe24c3accf8449b7b352f",
+      "checkpoint_revision": "b6bfb493bc0f21c4ab24d816409ea3cebf5e43bd",
+      "delay": 2,
+      "executed": 5,
+      "previous_suffix_length": 45,
+      "deterministic_algorithms": true,
+      "matmul_allow_tf32": false,
+      "valid_prefix_length": 665
+    },
+    "gpu_hz": 1300500000,
+    "clock_settings_changed": false,
+    "native_no_rtc": {
+      "wall_ms": [
+        160.722,
+        160.587
+      ],
+      "samples": 2,
+      "scope": "Synchronized model.predict call; excludes external preprocessing and external action decoding",
+      "limitation": "Two warmed setup-smoke timings, not a controlled latency campaign"
+    },
+    "rtc_timing_ms": {
+      "rtc_eager_vjp": {
+        "n": 12,
+        "median": 917.2117214184254,
+        "mean": 917.7926351937155,
+        "minimum": 912.6468519680202,
+        "maximum": 922.4326843395829
+      },
+      "rtc_source_step_graph_packed_conditioning": {
+        "n": 12,
+        "median": 299.5809589046985,
+        "mean": 299.65655722965795,
+        "minimum": 298.99201402440667,
+        "maximum": 300.3909317776561
+      }
+    },
+    "rtc_samples": [
+      {
+        "path": "rtc_eager_vjp",
+        "index": 0,
+        "wall_ms": 912.6468519680202,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 1,
+        "wall_ms": 915.2982332743704,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 2,
+        "wall_ms": 919.81365904212,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 3,
+        "wall_ms": 914.5834539085627,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 4,
+        "wall_ms": 920.4767770133913,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 5,
+        "wall_ms": 913.8314258307219,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 6,
+        "wall_ms": 916.4163749665022,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 7,
+        "wall_ms": 921.8689268454909,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 8,
+        "wall_ms": 917.2369008883834,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 9,
+        "wall_ms": 922.4326843395829,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 10,
+        "wall_ms": 917.1865419484675,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_eager_vjp",
+        "index": 11,
+        "wall_ms": 921.7197922989726,
+        "solver_backend": "original_openpi_eager_vjp",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 0,
+        "wall_ms": 299.5727490633726,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 1,
+        "wall_ms": 299.0667298436165,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 2,
+        "wall_ms": 300.3909317776561,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 3,
+        "wall_ms": 299.15399523451924,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 4,
+        "wall_ms": 300.22126622498035,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 5,
+        "wall_ms": 300.1056187786162,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 6,
+        "wall_ms": 299.32759795337915,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 7,
+        "wall_ms": 300.04699481651187,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 8,
+        "wall_ms": 300.2311890013516,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 9,
+        "wall_ms": 299.58916874602437,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 10,
+        "wall_ms": 299.180431291461,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      },
+      {
+        "path": "rtc_source_step_graph_packed_conditioning",
+        "index": 11,
+        "wall_ms": 298.99201402440667,
+        "solver_backend": "original_source_step_graph",
+        "guidance_enabled": true,
+        "valid_prefix_length": 665,
+        "variable_length_fallback": false,
+        "gpu_hz": 1300500000
+      }
+    ],
+    "source_step_graph_validation": {
+      "passed": true,
+      "audits": [
+        {
+          "valid": 665,
+          "beta": 5.0,
+          "raw_max_abs": 0.0,
+          "vjp_norm_max_abs": 0.0,
+          "passed": true
+        }
+      ]
+    },
+    "rtc_timing_scope": "Fixed prepared images/state; context + RTC expert/VJP + CPU action output/decoding",
+    "rtc_timing_excluded": "Camera/render, external image/state preprocessing, control execution, model load, graph preparation",
+    "full_closed_loop_energy_and_success_evaluation_completed": false
+  }
+}
