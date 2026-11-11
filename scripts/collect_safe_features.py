@@ -17,6 +17,25 @@ import time
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from scripts.analyze_gripper_timing import INDEX, save
+from perceptbudget.failure_features import FEATURE_LAYOUTS
+
+
+def prepare_saved(source_manifest, layout):
+    manifest=json.loads(source_manifest.read_text())
+    root=source_manifest.parent.parent/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-safe-'+layout+'-no-q10')
+    root.mkdir()
+    manifest.update(dataset_label='safe_'+layout+'_no_q10',source_manifest=str(source_manifest),
+        feature_layout=layout,feature_names=FEATURE_LAYOUTS[layout],reused_features=0,reuse_root=None,
+        pilot_reference_root=manifest.get('reuse_root'),
+        intervention=f"Re-extract first/last action positions and first/last denoising steps; same saved{len(manifest['episodes'])} rollouts, no q10")
+    if 'collection_budget' in manifest:
+        manifest['source_selection_budget']=manifest.pop('collection_budget')
+    manifest.pop('feature_source',None)
+    save(root/'manifest.json',manifest)
+    pointer=dict(run=str(root),progress=str(root/'progress.md'))
+    save('/tmp/perceptbudget-safe-'+layout+'-current.json',pointer)
+    save('/tmp/perceptbudget-safe-current.json',pointer)
+    return root
 
 
 def prepare(reuse_root=None, failures_index=None):
@@ -91,8 +110,9 @@ def worker(root):
     started = time.monotonic()
     features_path, done_path = root/'features.npy', root/'completed.npy'
     resume = features_path.exists()
+    feature_shape=(len(plan['feature_names']),plan['feature_width'])
     features = np.lib.format.open_memmap(features_path, mode='r+' if resume else 'w+', dtype=np.float32,
-        shape=(len(items), 2, 1024))
+        shape=(len(items), *feature_shape))
     done = np.lib.format.open_memmap(done_path, mode='r+' if resume else 'w+', dtype=np.bool_, shape=(len(items),))
     if not resume:
         features[:] = np.nan
@@ -167,7 +187,7 @@ def worker(root):
         enable_exact_flash_probe(expert)
         enable_fused_norm(expert,cfg['output_root'])
         enable_condition_cache(expert,graph_live=True)
-        tap = ExpertFeatureTap(expert,torch)
+        tap = ExpertFeatureTap(expert,torch,layout=plan.get('feature_layout','pooled'))
         ordered = sorted((item for item in items if not done[item['index']]),
             key=lambda item:(item['mode']!='full',item['valid'],item['episode'],item['prediction_id']))
         # Observe both geometry paths early; these are real dataset requests,
@@ -219,7 +239,7 @@ def worker(root):
                 else:
                     raw,_=graph.replay(noise,previous,solver['delay'],solver['executed'])
                 result=tap.read(5)
-                if result.shape!=(2,1024) or not np.isfinite(result).all():
+                if result.shape!=feature_shape or not np.isfinite(result).all():
                     raise RuntimeError('Invalid extracted feature')
                 error=float(np.max(np.abs(raw.cpu().numpy()-np.asarray(request['actions_raw'],dtype=np.float32))))
                 features[item['index']]=result
@@ -246,9 +266,15 @@ def main():
     parser.add_argument('--run-dir',type=Path)
     parser.add_argument('--reuse-run',type=Path)
     parser.add_argument('--append-failures',type=Path)
+    parser.add_argument('--source-manifest',type=Path)
+    parser.add_argument('--feature-layout',choices=tuple(FEATURE_LAYOUTS),default='pooled')
     args=parser.parse_args()
     if args.prepare:
-        print(prepare(args.reuse_run,args.append_failures));return
+        if args.source_manifest:
+            print(prepare_saved(args.source_manifest,args.feature_layout))
+        else:
+            print(prepare(args.reuse_run,args.append_failures))
+        return
     if args.run_dir is None:parser.error('--prepare or --run-dir is required')
     with (INDEX.parent.parent.parent/'.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

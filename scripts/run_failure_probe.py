@@ -19,6 +19,7 @@ def oom_count():
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-dir',type=Path,required=True)
+    parser.add_argument('--collect-only',action='store_true',help='Stop after extraction; do not run the legacy pooled-feature trainer')
     args=parser.parse_args()
     root=args.run_dir
     attempt=0
@@ -44,6 +45,9 @@ def main():
             note='Completed features retained; only unfinished records will resume'))
         print('RESOURCE_RESUME='+json.dumps(dict(attempt=attempt,error=error)),flush=True)
         time.sleep(30)
+    if args.collect_only:
+        save(root/'workflow.json',dict(status='completed',stage='feature_extraction',extraction_attempts=attempt))
+        return
     save(root/'workflow.json',dict(status='training',extraction_attempts=attempt))
     result=subprocess.run([sys.executable,'-u',str(PROJECT/'scripts/train_failure_probe.py'),
         '--run-dir',str(root)],cwd=PROJECT)

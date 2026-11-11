@@ -40,3 +40,26 @@ def test_denoise_aggregation_resets_between_requests():
         assert torch.equal(torch.from_numpy(tap.read(1)),torch.full((2,8),5.))
     finally:
         tap.close()
+
+
+def test_corner_features_keep_action_and_denoising_endpoints_without_changing_gradients():
+    layer=torch.nn.Linear(4,2).eval().requires_grad_(False)
+    tap=ExpertFeatureTap(SimpleNamespace(suffix=SimpleNamespace(action_out_proj=layer)),torch,layout='corners')
+    try:
+        tap.reset()
+        first=torch.arange(12,dtype=torch.float32).reshape(1,3,4).requires_grad_()
+        expected_gradient=layer.weight.sum(0).expand_as(first)
+        result=layer(first)
+        gradient,=torch.autograd.grad(result.sum(),first)
+        for step in range(1,5):layer(first.detach()+100*step)
+        actual=torch.from_numpy(tap.read(5))
+        expected=torch.stack((first.detach()[0,0],first.detach()[0,-1],
+                              first.detach()[0,0]+400,first.detach()[0,-1]+400))
+        assert torch.equal(actual,expected)
+        assert torch.equal(gradient,expected_gradient)
+        assert not tap.first.requires_grad and tap.first.grad_fn is None
+        tap.reset();layer(first.detach()+1000)
+        expected=torch.stack((first.detach()[0,0]+1000,first.detach()[0,-1]+1000))
+        assert torch.equal(torch.from_numpy(tap.read(1)),expected.repeat(2,1))
+    finally:
+        tap.close()
