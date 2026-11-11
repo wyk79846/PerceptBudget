@@ -172,3 +172,22 @@ Object首次闭爪的动作来源未执行区中，闭爪前只有4个原始减�
 闭环小测预先固定seed109/init1的Spatial9漏选案例，以及Spatial0、Object0两个原成功对照。当前v4与修复版分别新跑3回合，共6回合；每组一次常驻加载，条件相同，不按结果调整参数。后台服务`perceptbudget-candidate-scan-dev3-20261111t043706`，资源中断仅续未完成任务，所有已完成成败保留。
 
 [六回合实时进度](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/progress.md) · [固定任务与指令](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/plan.json) · [408段离线回放](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/offline_replay.json)
+
+6回合配对已完成，两版各一次模型加载，无资源重试。包括独立记录检查在内共68项CPU检查通过；6回合实际记录检查通过，零断供，结束频率均已恢复。
+
+|指标|最终v4|候选遍历修复版|
+|---|---:|---:|
+|成功|2/3|2/3|
+|Spatial0|成功114步|成功115步|
+|Spatial9|220步超时|220步超时|
+|Object0|成功142步|成功142步|
+|总任务能量J，含失败|408.16|423.97|
+|完整推理请求次数|23|25|
+|已接管预测数|23|23|
+|平均刷新步数|21.10|20.68|
+
+修复实际在Spatial9触发一次：176步判断时，178步候选已覆盖，改选后面的193步候选，并在181步取图刷新。该任务仍超时，两个成功对照保留。总能量高3.87%；Spatial0没有触发候选改变，仍有一步及一次请求的运行差异，不能把小批全部能量差都归因于此次修复。
+
+本轮证明候选漏选已被修正，尚未观察到任务质量或能量收益。独立实验配置保留，正式v4继续不替换，没有按本次成败改阈值。完整推理请求数包含任务结束后仍需等待完成的请求，因此与已接管预测数分开统计。
+
+[六回合配对报告](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/results.md) · [逐回合结果与能量](/home/wyk/workspace/任务产出/perceptbudget/M4/20261111T043706Z-v4-candidate-scan-dev3-pair/results.json)
