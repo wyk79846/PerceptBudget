@@ -1,4 +1,4 @@
-"""First offline wrist-CNN trial using existing RGB images and independent labels."""
+"""Train the optional wrist CNN on saved RGB images and independent labels."""
 import argparse
 from collections import Counter
 import copy
@@ -191,10 +191,16 @@ def train(root,images,labels,items):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--prepared',action='store_true',help='Train an already collected RGB dataset without collecting again')
     args=parser.parse_args();root=args.output;root.mkdir(parents=True,exist_ok=True)
     with (PROJECT.parent/'任务产出/perceptbudget/.async_gpu.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        images,labels,items=prepare(root);train(root,images,labels,items)
+        if args.prepared:
+            import numpy as np
+            with np.load(root/'dataset.npz',allow_pickle=False) as data:images,labels=data['images'],data['labels']
+            items=json.loads((root/'manifest.json').read_text())['items']
+        else:images,labels,items=prepare(root)
+        train(root,images,labels,items)
     return 0
 
 

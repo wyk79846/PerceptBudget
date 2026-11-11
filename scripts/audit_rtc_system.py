@@ -299,13 +299,45 @@ def audit(run):
         count+=1
         if not ok:failures.append(dict(check=name,where=where))
     eq=lambda a,b:np.array_equal(np.asarray(a,dtype=np.float32),np.asarray(b,dtype=np.float32))
-    for sample in (e for e in events if e.get('event')=='visual_monitor'):
+    visual_samples=[e for e in events if e.get('event')=='visual_monitor']
+    cnn_settings=cfg.get('visual_monitor',{}).get('kind')=='cnn_occupancy'
+    for sample in visual_samples:
         control=by_step.get(sample['step']-1,{})
         decision=decisions.get(sample.get('decision_step'),{})
         acquired=sample.get('acquisition',{})
         period=cfg.get('visual_monitor',{}).get('interval',5)
         scheduled=sample['step']%period==0
-        if not scheduled:
+        if cnn_settings:
+            earlier=[s for s in visual_samples if s['step']<sample['step']
+                     and s.get('close_step')==sample.get('close_step')]
+            prior=earlier[-1] if earlier else None
+            scheduled=(sample['step']==sample.get('close_step') if prior is None
+                       else sample['step']-prior['step']>=period)
+            check('cnn_sample_closed_cycle',scheduled and sample['eligible']
+                and sample.get('input_kind')=='raw_wrist_rgb' and sample.get('device')=='cpu'
+                and sample.get('inference_active')==control.get('inference_active')
+                and sample.get('inference_active_at_action')==control.get('inference_active_at_action')
+                and control.get('action',[0]*7)[6]>=.2,sample.get('sample_id'))
+            probabilities=np.asarray(sample.get('probabilities',[]))
+            valid=(probabilities.shape==(2,) and np.all(np.isfinite(probabilities))
+                and np.all(probabilities>=0) and np.all(probabilities<=1)
+                and abs(float(probabilities.sum())-1)<1e-5)
+            prediction=(('held','empty')[int(probabilities.argmax())]
+                if valid and probabilities.max()>=sample['confidence_threshold'] else 'unknown')
+            check('cnn_confidence_rejection',valid and sample.get('predicted_state')==prediction,
+                sample.get('sample_id'))
+            carrying=sample.get('carrying_window',False)
+            bad=(prior.get('confirmation_count',0) if prior else 0)+1 if carrying and prediction=='empty' else 0
+            previous_alarm=any(s.get('alarm') for s in earlier)
+            check('cnn_temporal_alarm',sample.get('confirmation_count')==bad
+                and sample['alarm']==bool(not previous_alarm and bad>=cfg['visual_monitor']['confirmation']),
+                sample.get('sample_id'))
+            close_step=sample.get('close_step',0)
+            active=[r for r in controls if close_step<=r['step']+1<=sample['step']]
+            check('cnn_carry_window_from_arm_not_objects',bool(active)
+                and carrying==any(r['after']['raw_state'][2]-sample['close_z_m']>=.02 for r in active)
+                and not any(r['action'][6]<=-.2 for r in active),sample.get('sample_id'))
+        elif not scheduled:
             at=sample['step']-1
             preceding=[by_step[i] for i in sorted(by_step) if i<=at]
             opened_at=max((r['step'] for r in preceding if r['action'][6]<=-.2),default=-1)
@@ -324,11 +356,12 @@ def audit(run):
                 and (e.get('grasp_check',{}).get('state_candidate') or {}).get('close_step')==proof.get('close_step')
                 for e in events)
             check('visual_grasp_extra_camera_budget',forced_count<=2,sample.get('sample_id'))
-        check('visual_sample_real_continue',bool(cfg.get('visual_monitor'))
-            and scheduled
-            and sample['eligible'] and not control.get('inference_active_at_action',True)
-            and control.get('action',[0]*7)[6]>=.2 and not decision.get('start_now',True)
-            and decision.get('wait_seconds',0)>0,sample.get('sample_id'))
+        if not cnn_settings:
+            check('visual_sample_real_continue',bool(cfg.get('visual_monitor'))
+                and scheduled
+                and sample['eligible'] and not control.get('inference_active_at_action',True)
+                and control.get('action',[0]*7)[6]>=.2 and not decision.get('start_now',True)
+                and decision.get('wait_seconds',0)>0,sample.get('sample_id'))
         check('visual_camera_after_control_without_physics_step',
             acquired.get('sim_time')==control.get('after',{}).get('sim_time')
             and acquired.get('physics_advanced') is False
@@ -884,7 +917,11 @@ def audit(run):
                             and old['prediction_id']!=0 and t['reason']!='action_event'
                             and not any(p['start_step']<=origin<p['stop_step'] for p in phases)
                             and not imminent,pid)
-                check('m3_request_minimum_interval',origin>=max(old['observation_step']+q,previous['commit_step']),pid)
+                # Confirmed visual stops deliberately bypass the normal q gate:
+                # an in-flight request can have started only1-2 actions ago.
+                # Still require a later observation and the old commit first.
+                minimum=1 if g.get('visual_stop_replan') else q
+                check('m3_request_minimum_interval',origin>=max(old['observation_step']+minimum,previous['commit_step']),pid)
                 check('m3_request_triggered_by_recorded_deadline',
                       d.get('start_now') is True and d.get('inflight') is False
                       and t.get('deadline')==d.get('deadline') and t.get('reason')==d.get('reason'),pid)
@@ -1319,6 +1356,14 @@ def audit(run):
                         check('m4_compute_delay_key',request.get('planned_delay_key')==key and g.get('delay_history_key')==key,pid)
                     expected_history=mode_histories.get(key,[])
                 expected_delay=max(expected_history) if estimate is None else estimate
+                if request.get('visual_stop_interrupted'):
+                    interrupted=request['visual_stop_interrupted']
+                    observed=next((s for s in visual_samples if s.get('sample_id')==interrupted.get('sample_id')), {})
+                    check('cnn_inflight_stop_not_async_history',cnn_settings
+                        and observed.get('alarm') is True
+                        and interrupted.get('step')==observed.get('step')
+                        and request.get('delay_queue_observed') is False
+                        and bool(g.get('delay_history_excluded_reason')),pid)
                 if g.get('visual_stop_replan'):
                     check('visual_stop_zero_delay_not_async_history',
                         g.get('uncapped_delay_estimate_steps')==expected_delay
@@ -1370,11 +1415,12 @@ def audit(run):
                 check('old_actions_during_inference',source is None if exhausted else
                       source is not None and source['prediction_id']==previous['prediction_id'],(pid,step))
             slacks.append(g['delay_estimate_steps']-actual)
-            history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
-            if frequency_histories is not None:
+            if not request.get('visual_stop_interrupted'):
+                history=(history+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
+            if frequency_histories is not None and not request.get('visual_stop_interrupted'):
                 profile=request['m4_compute_profile']
                 frequency_histories[profile]=(frequency_histories[profile]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]
-            if mode_histories is not None:
+            if mode_histories is not None and not request.get('visual_stop_interrupted'):
                 mode=request['context_refresh' if cfg.get('m2_visual_alternation') else 'kv_recompute']['mode']
                 key=mode+':'+request['m4_compute_profile'] if cfg.get('m4_enabled') or cfg.get('m3_ordinary_fast_context') else mode
                 mode_histories[key]=(mode_histories[key]+[actual])[-cfg.get('rtc_delay_buffer_size',10):]

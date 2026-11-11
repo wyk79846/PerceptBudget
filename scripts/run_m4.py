@@ -85,7 +85,7 @@ def main():
     parser.add_argument('--safe-probe-mode',choices=('observe','refresh'),default='refresh',
         help='Log SAFE scores only, or request one Full refresh on the first alarm')
     parser.add_argument('--visual-monitor',choices=('observe','refresh'),
-        help='Experimental wrist images every5 closed-gripper Continue steps; optionally refresh on visible loss')
+        help='Optional wrist feedback: rules sample Continue; the CPU CNN also covers inference')
     parser.add_argument('--visual-response',choices=('async','stop_and_replan'),default='stop_and_replan',
         help='Confirmed visual alarm pauses execution and replans; async reproduces the first experiment')
     from perceptbudget.visual_monitor import detector_name
@@ -93,6 +93,8 @@ def main():
         help='Opt-in reference refresh and time-gap reset; original monitor remains available')
     parser.add_argument('--visual-grasp-check',action='store_true',
         help='Check a near-empty closed hand lifting; at most2 extra wrist samples per closing cycle')
+    parser.add_argument('--grip-cnn-model',type=Path,
+        help='Opt-in CPU wrist occupancy CNN; samples closure and carrying, including during inference')
     parser.add_argument('--visual-monitor-pair',action='store_true',
         help='Compare visual monitoring off/on with one resident model')
     parser.add_argument('--full-approach-delta',type=float,
@@ -110,6 +112,8 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.grip_cnn_model and (not args.visual_monitor or args.visual_grasp_check):
+        parser.error('--grip-cnn-model requires --visual-monitor and replaces --visual-grasp-check')
     if args.visual_grasp_check and (not args.visual_monitor or args.visual_detector!='updated_reference'):
         parser.error('--visual-grasp-check requires --visual-monitor and --visual-detector updated_reference')
     if args.visual_monitor_pair and not args.visual_monitor:
@@ -241,6 +245,11 @@ def main():
             # Keep the recorded config contract resumable; user-facing method
             # names are semantic, while old serialized identifiers remain valid.
             cfg['visual_monitor'].update(version='wrist_slip_v2',detector='updated_v2')
+        if args.grip_cnn_model:
+            cfg['visual_monitor'].update(kind='cnn_occupancy',version='grip_occupancy_cnn',
+                checkpoint=str(args.grip_cnn_model.resolve()),device='cpu',
+                sampling='closing_and_carrying_including_inflight')
+            cfg['visual_monitor_method']='grip_occupancy_cnn'
         if args.visual_monitor_pair:
             cfg['m4_visual_monitor_pair']=True
             cfg['m4_visual_monitor_settings']=dict(cfg['visual_monitor'])
@@ -503,6 +512,7 @@ def main():
             if args.safe_failure_probe:command.extend(['--safe-failure-probe',str(args.safe_failure_probe.resolve()),'--safe-probe-mode',args.safe_probe_mode])
             if args.visual_monitor:command.extend(['--visual-monitor',args.visual_monitor,'--visual-response',args.visual_response,'--visual-detector',args.visual_detector])
             if args.visual_grasp_check:command.append('--visual-grasp-check')
+            if args.grip_cnn_model:command.extend(['--grip-cnn-model',str(args.grip_cnn_model.resolve())])
             if args.visual_monitor_pair:command.append('--visual-monitor-pair')
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')

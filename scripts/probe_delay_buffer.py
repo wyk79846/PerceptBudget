@@ -320,11 +320,16 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     visual_images = []
     visual_stop = None
     if config.get('visual_monitor'):
-        from perceptbudget.visual_monitor import WristSlipMonitor
         settings=config['visual_monitor']
-        visual_monitor=WristSlipMonitor(interval=settings['interval'],
-            confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'],
-            detector=settings.get('detector','original_v1'),grasp_check=settings.get('grasp_check',False))
+        if settings.get('kind')=='cnn_occupancy':
+            from perceptbudget.grip_occupancy import GripOccupancyMonitor
+            visual_monitor=GripOccupancyMonitor(settings['checkpoint'],
+                interval=settings['interval'],confirmation=settings['confirmation'])
+        else:
+            from perceptbudget.visual_monitor import WristSlipMonitor
+            visual_monitor=WristSlipMonitor(interval=settings['interval'],
+                confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'],
+                detector=settings.get('detector','original_v1'),grasp_check=settings.get('grasp_check',False))
     future = None
     previous_request_step = 0
     previous_commit_step = 0
@@ -555,9 +560,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
         if rtc_adapter is not None and current_request.get('rtc_guidance'):
             guidance = current_request['rtc_guidance']
             guidance['actual_delay_steps'] = max(0, step - current_request['observation_step'])
-            if guidance.get('visual_stop_replan'):
+            if guidance.get('visual_stop_replan') or current_request.get('visual_stop_interrupted'):
                 current_request['delay_queue_observed']=False
-                guidance['delay_history_excluded_reason']='Visual alarm freezes control; zero consumed steps is not an async latency sample'
+                guidance['delay_history_excluded_reason']='Visual alarm freezes control; consumed steps during a stop are not an async latency sample'
             elif delay_queue is not None and not current_request.get('delay_queue_observed'):
                 observed_queue=delay_queue
                 if frequency_delay_queues is not None:
@@ -666,6 +671,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if capture is None:
                 frames.append(np.concatenate((observation['agentview_image'],
                                              observation['robot0_eye_in_hand_image']), axis=1))
+            if visual_stop is not None and future is not None:
+                # A CNN may alarm during inference. Freeze execution first;
+                # drain the single active predictor before starting fresh Full.
+                # Its intermediate result is committed but never executed.
+                current_request['visual_stop_interrupted']=dict(
+                    sample_id=visual_stop['sample_id'],step=step)
+                while future is not None:
+                    harvest(step)
+                    if future is not None:time.sleep(.002)
             harvest(step)
             anchor_step = previous_commit_step if refresh_policy == 'post_commit' else previous_request_step
             due = refresh_due(step, anchor_step, q, refresh_policy)
@@ -854,7 +868,9 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if visual_monitor is not None:
                 from perceptbudget.visual_monitor import continuation_eligible,fresh_wrist_image
                 visual_monitor.on_control(action,after['raw_state'],step=step+1)
-                eligible=continuation_eligible(decision,inflight=inference_active_at_action or future is not None)
+                cnn=config['visual_monitor'].get('kind')=='cnn_occupancy'
+                eligible=(True if cnn else continuation_eligible(decision,
+                    inflight=inference_active_at_action or future is not None))
                 periodic=visual_monitor.due(step+1)
                 grasp_due=visual_monitor.grasp_check_due()
                 if (not terminal and eligible and action[6]>=.2 and (periodic or grasp_due)):
@@ -863,9 +879,12 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
                         step=step+1,eligible=True)
                     sample.update(sample_id=len(visual_monitor.samples)-1,acquisition=acquisition,
                         source_prediction_id=source['prediction_id'] if source else None,
-                        decision_step=step,inference_active=False,
-                        sampling_trigger='periodic' if periodic else 'grasp_check')
-                    visual_images.append(visual_monitor.cv.cvtColor(image,visual_monitor.cv.COLOR_RGB2GRAY))
+                        decision_step=step,inference_active=bool(future is not None) if cnn else False,
+                        inference_active_at_action=inference_active_at_action,
+                        sampling_trigger=('closing_or_periodic' if cnn else
+                            'periodic' if periodic else 'grasp_check'))
+                    visual_images.append(image if cnn else
+                        visual_monitor.cv.cvtColor(image,visual_monitor.cv.COLOR_RGB2GRAY))
                     base._trace(stream,'visual_monitor',**sample)
                     scheduler.arm_visual_alarm(sample)
                     from perceptbudget.visual_monitor import stop_response
