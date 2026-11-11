@@ -7,21 +7,21 @@ from perceptbudget.experiment import _write_json_atomically
 
 
 def summarize_pairs(episodes, directory, *, groups=('full_high','full_low'), stem='full_frequency_pairs'):
-    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25'),('full_capture','lean_continue'),('inflight_images','request_images'),('ordinary_full','ordinary_fast'),('cadence_1full','cadence_2full'),('full_three_medium','full_three_energy'),('full_idle200','full_idle_candidate'),('full_idle100','full_idle_candidate')):
+    if groups not in (('full_high','full_low'),('full_two','full_three'),('full_three_strict','full_three_start25'),('full_capture','lean_continue'),('inflight_images','request_images'),('ordinary_full','ordinary_fast'),('cadence_1full','cadence_2full'),('full_three_medium','full_three_energy'),('full_idle200','full_idle_candidate'),('full_idle100','full_idle_candidate'),('visual_off','visual_on')):
         raise ValueError('Unknown Full policy pair')
     rows=[]
     for e in episodes:
         run=Path(e['run'])
         v=json.loads((run/'summary.json').read_text())['episode']
-        tail=v['terminal_low']
-        from perceptbudget.m4_acceptance import request_path
+        from perceptbudget.m4_acceptance import request_path,comparison_energy
+        energy=comparison_energy(v)
         requests=json.loads(request_path(run).read_text())
         rows.append(dict(suite=e['suite'],task_id=e['task_id'],group=e['view'],
             outcome=e['outcome'],steps=e['steps'],task_seconds=v['real_seconds'],
             task_j=v['power']['total_energy_mj']/1000,
-            task_plus_inference_j=tail['task_plus_inference_power']['total_energy_mj']/1000,
-            terminal_low_j=tail['power']['total_energy_mj']/1000,
-            common_endpoint_j=v['including_drain_power']['total_energy_mj']/1000,
+            task_plus_inference_j=energy['total_energy_j'],
+            terminal_low_j=energy['measurement_tail_energy_j'],
+            common_endpoint_j=energy['common_endpoint_energy_j'],
             requests=len(requests),low_requests=sum(r.get('m4_compute_profile')=='gpu_emc' for r in requests),
             fast_requests=sum(r.get('m3_fast_choice',{}).get('mode')=='Fast' for r in requests),
             unexecuted_requests=sum(r['prediction_id'] not in {c['prediction_id'] for c in v['commits'] if c['commit_step']<v['steps']} for r in requests),

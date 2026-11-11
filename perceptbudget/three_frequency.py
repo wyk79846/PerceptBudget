@@ -168,6 +168,8 @@ class ThreeFullRuntime(LowFullRuntime):
         self.safe_response_enabled=bool(config.get('safe_failure_probe') and
             config.get('safe_probe_mode','refresh')=='refresh')
         self.safe_pending=None
+        self.visual_response_enabled=config.get('visual_monitor',{}).get('mode')=='refresh'
+        self.visual_pending=None
 
     def start_clocks(self,directory):
         self.action_signal_directory=Path(directory)
@@ -194,6 +196,9 @@ class ThreeFullRuntime(LowFullRuntime):
         if self.safe_pending is not None:
             from perceptbudget.safe_runtime import cap_refresh
             d=cap_refresh(d,self.safe_pending,now=now,step=step,current_profile=self.clocks.profile)
+        if self.visual_pending is not None:
+            from perceptbudget.visual_monitor import cap_visual_refresh
+            d=cap_visual_refresh(d,self.visual_pending,now=now,step=step,current_profile=self.clocks.profile)
         d=advance_grasp_deadline(d,step=step,lead_steps=self.grasp_lead_steps)
         period=d['estimated_control_period_seconds']
         guard=math.ceil(self.margin.seconds/period-1e-9)+(self.clocks.profile!='gpu_emc')
@@ -202,7 +207,7 @@ class ThreeFullRuntime(LowFullRuntime):
         medium=max(percentile(list(v),self.settings['service_quantile']) for v in self.low_histories.values())
         formula=select_full(d,medium_seconds=medium,medium_cap=cap,
                             current_profile=self.clocks.profile,transitions=self.transitions)
-        if self.fast_own_budget and d['reason']=='action_event' and not d.get('safe_refresh'):
+        if self.fast_own_budget and d['reason']=='action_event' and not d.get('safe_refresh') and not d.get('visual_refresh'):
             from perceptbudget.ordinary_fast import choose
             from perceptbudget.fast_start_budget import select
             choices={}
@@ -442,6 +447,12 @@ class ThreeFullRuntime(LowFullRuntime):
             self.clocks.switch('deep_idle')
         return decision
 
+    def arm_visual_alarm(self, sample):
+        if self.visual_response_enabled and sample.get('alarm') and self.visual_pending is None:
+            self.visual_pending=dict(sample_id=sample['sample_id'],sample_step=sample['step'],
+                request_step=sample['step'],observed_monotonic=sample['acquisition']['stop_monotonic'],
+                reason=sample['reason'])
+
     def requested(self,request):
         if self.clocks.pending is not None or self.clocks.profile=='deep_idle':
             raise RuntimeError('Cannot infer in deep Continue or before clock acknowledgement')
@@ -449,6 +460,9 @@ class ThreeFullRuntime(LowFullRuntime):
         if self.safe_pending is not None:
             request['safe_failure_response']=dict(self.safe_pending)
             self.safe_pending=None
+        if self.visual_pending is not None:
+            request['visual_monitor_response']=dict(self.visual_pending)
+            self.visual_pending=None
         self.active_profile=self.clocks.profile
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile

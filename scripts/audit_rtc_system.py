@@ -299,6 +299,22 @@ def audit(run):
         count+=1
         if not ok:failures.append(dict(check=name,where=where))
     eq=lambda a,b:np.array_equal(np.asarray(a,dtype=np.float32),np.asarray(b,dtype=np.float32))
+    for sample in (e for e in events if e.get('event')=='visual_monitor'):
+        control=by_step.get(sample['step']-1,{})
+        decision=decisions.get(sample.get('decision_step'),{})
+        acquired=sample.get('acquisition',{})
+        check('visual_sample_real_continue',bool(cfg.get('visual_monitor'))
+            and sample['step']%cfg.get('visual_monitor',{}).get('interval',5)==0
+            and sample['eligible'] and not control.get('inference_active_at_action',True)
+            and control.get('action',[0]*7)[6]>=.2 and not decision.get('start_now',True)
+            and decision.get('wait_seconds',0)>0,sample.get('sample_id'))
+        check('visual_camera_after_control_without_physics_step',
+            acquired.get('sim_time')==control.get('after',{}).get('sim_time')
+            and acquired.get('physics_advanced') is False
+            and acquired.get('policy_observation_replaced') is False
+            and acquired.get('start_monotonic',-1)>=control.get('action_end_monotonic',float('inf'))
+            and acquired.get('stop_monotonic',-1)>=acquired.get('start_monotonic',float('inf')),
+            sample.get('sample_id'))
     group=cfg.get('m3_formal_group')
     if group is not None:
         # Historical runs before the explicit selector used variance_only.
@@ -492,6 +508,15 @@ def audit(run):
                             and cfg.get('safe_probe_mode')=='refresh' and alarm.get('new_alarm') is True
                             and proof==request.get('safe_failure_response')
                             and f.get('reason')=='safe_failure_probe',pid)
+                        expected='Full'
+                    if decision.get('visual_refresh'):
+                        proof=decision['visual_refresh']
+                        observed=next((e for e in events if e.get('event')=='visual_monitor'
+                            and e.get('sample_id')==proof['sample_id']),{})
+                        check('visual_full_response_opt_in',cfg.get('visual_monitor',{}).get('mode')=='refresh'
+                            and observed.get('alarm') is True
+                            and proof==request.get('visual_monitor_response')
+                            and f.get('reason')=='visual_monitor',pid)
                         expected='Full'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
@@ -1176,6 +1201,16 @@ def audit(run):
                             and request_step==proof['commit_step']+1
                             and d.get('safe_refresh')==proof and request.get('safe_failure_response')==proof
                             and sum(bool(r.get('safe_failure_response')) for r in requests)==1)
+                    if cap.get('scope')=='visual_monitor':
+                        proof=cap['alarm'];request_step=proof['request_step']
+                        observed=next((e for e in events if e.get('event')=='visual_monitor'
+                            and e.get('sample_id')==proof['sample_id']),{})
+                        valid_cap=(cfg.get('visual_monitor',{}).get('mode')=='refresh'
+                            and observed.get('alarm') is True and request_step==observed.get('step')
+                            and proof['sample_step']==observed.get('step')
+                            and proof['observed_monotonic']==observed.get('acquisition',{}).get('stop_monotonic')
+                            and proof['observed_monotonic']<request['observation_monotonic']
+                            and d.get('visual_refresh')==proof and request.get('visual_monitor_response')==proof)
                     first_start=d['decision_monotonic']+(request_step-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
                     check('m3_first_refresh_cap_inputs',valid_cap
                           and cap['request_step']==request_step and cap['recovery_ticks']==recovery_ticks

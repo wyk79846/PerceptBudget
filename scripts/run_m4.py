@@ -84,6 +84,10 @@ def main():
     parser.add_argument('--safe-failure-probe',type=Path,help='Opt-in trained SAFE checkpoint; default v4 is unchanged')
     parser.add_argument('--safe-probe-mode',choices=('observe','refresh'),default='refresh',
         help='Log SAFE scores only, or request one Full refresh on the first alarm')
+    parser.add_argument('--visual-monitor',choices=('observe','refresh'),
+        help='Experimental wrist images every5 closed-gripper Continue steps; optionally refresh on visible loss')
+    parser.add_argument('--visual-monitor-pair',action='store_true',
+        help='Compare visual monitoring off/on with one resident model')
     parser.add_argument('--full-approach-delta',type=float,
         help='Retain open-gripper turns into a downward-dominant approach; minimum increase in normalized downward command component')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
@@ -99,6 +103,10 @@ def main():
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.visual_monitor_pair and not args.visual_monitor:
+        parser.error('--visual-monitor-pair requires --visual-monitor observe or refresh')
+    if args.visual_monitor and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh):
+        parser.error('--visual-monitor requires M3 three-frequency energy refresh')
     if args.safe_failure_probe and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh):
         parser.error('--safe-failure-probe requires M3 three-frequency energy refresh')
     if args.action_signals and (args.acceptance_group!='m3' or not args.energy_refresh):
@@ -215,6 +223,12 @@ def main():
     cfg=load_config(repo_root=ROOT)
     if args.validate_setup:validate(cfg)
     cfg['m4_validate_setup']=args.validate_setup
+    if args.visual_monitor:
+        cfg['visual_monitor']=dict(version='wrist_slip_v1',mode=args.visual_monitor,
+            interval=5,confirmation=2,loss_fraction=.75)
+        if args.visual_monitor_pair:
+            cfg['m4_visual_monitor_pair']=True
+            cfg['m4_visual_monitor_settings']=dict(cfg['visual_monitor'])
     if args.safe_failure_probe:
         cfg['safe_failure_probe']=str(args.safe_failure_probe.resolve())
         cfg['safe_probe_mode']=args.safe_probe_mode
@@ -342,7 +356,7 @@ def main():
     if args.idle_min_ms is not None:
         settings['timing']['minimum_low_idle_seconds']=args.idle_min_ms/1000
         cfg['m3_short_idle_policy']='reuse_planned_ack_v1'
-    pair=bool(args.full_frequency_pair or args.continue_overhead_pair or args.ordinary_fast_pair or args.request_capture_pair)
+    pair=bool(args.full_frequency_pair or args.continue_overhead_pair or args.ordinary_fast_pair or args.request_capture_pair or args.visual_monitor_pair)
     variant_count=len(cfg['m4_diagnostic_variants']) if pair and cfg.get('m4_diagnostic_variants') else 2
     if args.ordinary_fast_pair:cfg['m4_common_low_tail_seconds']=3.
     continuation=None
@@ -432,6 +446,10 @@ def main():
             from perceptbudget.full_frequency_pairs import summarize_pairs
             result['request_capture_pairs']=summarize_pairs(result['episodes'],args.run_dir,
                 groups=('inflight_images','request_images'),stem='request_capture_pairs')
+        if args.visual_monitor_pair:
+            from perceptbudget.full_frequency_pairs import summarize_pairs
+            result['visual_monitor_pairs']=summarize_pairs(result['episodes'],args.run_dir,
+                groups=('visual_off','visual_on'),stem='visual_monitor_pairs')
         result.update(mode='short_idle' if args.idle_min_ms is not None else 'full_energy' if args.full_energy else ('ordinary_fast_pair' if args.ordinary_fast_pair else 'ordinary_fast') if args.ordinary_fast else 'm3_three_frequency' if args.three_frequency else ('m3_fast_selection' if args.acceptance_group=='m3_fast' else 'm3_frozen_joint') if args.acceptance_group in ('m3','m3_fast') else 'm4_'+(args.acceptance_group or 'joint'),m4_clock_audits=audits,service_continue_ledgers=service_ledgers)
         _write_json_atomically(args.run_dir/'summary.json',result)
         return 0
@@ -468,6 +486,8 @@ def main():
             if args.energy_refresh:command.append('--energy-refresh')
             if args.action_signals:command.extend(['--action-signals',str(args.action_signals.resolve())])
             if args.safe_failure_probe:command.extend(['--safe-failure-probe',str(args.safe_failure_probe.resolve()),'--safe-probe-mode',args.safe_probe_mode])
+            if args.visual_monitor:command.extend(['--visual-monitor',args.visual_monitor])
+            if args.visual_monitor_pair:command.append('--visual-monitor-pair')
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')

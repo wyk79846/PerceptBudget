@@ -316,6 +316,13 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     if config.get('m4_lean_continue'):
         from perceptbudget.continue_camera import ContinueCapture
         capture = ContinueCapture(request_only=bool(config.get('m4_request_only_images')))
+    visual_monitor = None
+    visual_images = []
+    if config.get('visual_monitor'):
+        from perceptbudget.visual_monitor import WristSlipMonitor
+        settings=config['visual_monitor']
+        visual_monitor=WristSlipMonitor(interval=settings['interval'],
+            confirmation=settings['confirmation'],loss_fraction=settings['loss_fraction'])
     future = None
     previous_request_step = 0
     previous_commit_step = 0
@@ -795,6 +802,20 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             }
             rows.append(row)
             base._trace(stream, 'control_step', task_id=task['task_id'], q=q, **row)
+            if visual_monitor is not None:
+                from perceptbudget.visual_monitor import continuation_eligible,fresh_wrist_image
+                visual_monitor.on_control(action)
+                eligible=continuation_eligible(decision,inflight=inference_active_at_action or future is not None)
+                if (not terminal and eligible and action[6]>=.2 and visual_monitor.due(step+1)):
+                    image,acquisition=fresh_wrist_image(env)
+                    sample=visual_monitor.observe(image,after['raw_state'],action,
+                        step=step+1,eligible=True)
+                    sample.update(sample_id=len(visual_monitor.samples)-1,acquisition=acquisition,
+                        source_prediction_id=source['prediction_id'] if source else None,
+                        decision_step=step,inference_active=False)
+                    visual_images.append(visual_monitor.cv.cvtColor(image,visual_monitor.cv.COLOR_RGB2GRAY))
+                    base._trace(stream,'visual_monitor',**sample)
+                    scheduler.arm_visual_alarm(sample)
             if step % 20 == 0:
                 base._trace(stream, 'device_state', q=q, trial_index=trial_index,
                             condition=condition, step=step,
@@ -868,6 +889,11 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
             if 'actions' in request and (not any((c['prediction_id'] == request['prediction_id'] for c in commits))):
                 base._trace(stream, 'uncommitted_prediction', task_id=task['task_id'], q=q, trial_index=trial_index, condition=condition, request=request, reason='completed after final harvest; not executed')
         base._write_json_atomic(run_dir / f'q{q}{artifact_tag}_requests.json', requests)
+        if visual_monitor is not None:
+            base._write_json_atomic(run_dir/f'q{q}{artifact_tag}_visual_monitor.json',visual_monitor.samples)
+            if visual_images:
+                np.savez_compressed(run_dir/f'q{q}{artifact_tag}_visual_monitor_frames.npz',
+                    frames=np.asarray(visual_images),frame_steps=np.asarray([s['step'] for s in visual_monitor.samples]))
         if frames:
             if capture is None:
                 frames.append(np.concatenate((observation['agentview_image'],
@@ -935,6 +961,15 @@ def run_episode(env, task, q, model, stats, config, np, torch, run_dir, stream, 
     }
     if capture is not None:
         result['continue_capture'] = capture.summary()
+    if visual_monitor is not None:
+        samples=visual_monitor.samples
+        if capture is not None:
+            result['continue_capture']['scope']='VLA request images and separate sparse wrist-monitor images; no physics/state step skipped'
+        result['visual_monitor']=dict(policy=config['visual_monitor'],samples=len(samples),
+            alarms=sum(s['alarm'] for s in samples),responses=sum('visual_monitor_response' in r for r in requests),
+            acquisition_seconds=sum(s['acquisition']['stop_monotonic']-s['acquisition']['start_monotonic'] for s in samples),
+            detector_seconds=sum(s['detector_seconds'] for s in samples),
+            cost_scope='Included in whole-task wall time and board energy; request images remain separate')
     if env_audit is not None:
         result['env_forward_optimization'] = env_audit
     print(json.dumps({k: result[k] for k in ('q', 'status', 'steps', 'real_seconds', 'post_bootstrap_control_hz', 'tail_execution_steps', 'field_checks')}, ensure_ascii=False), flush=True)
