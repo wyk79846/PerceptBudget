@@ -22,6 +22,23 @@ def memory_record(torch, stage):
     return result
 
 
+def resident_memory_record(torch, stage, *, cleanup, floor_mib, collect=True):
+    """Measure setup memory; collect at a boundary or when headroom is low."""
+    import time
+    started = time.monotonic()
+    collected = collect
+    if collect:
+        cleanup(torch)
+    value = memory_record(torch, stage)
+    if not collect and value['available_mib'] < floor_mib:
+        cleanup(torch)
+        collected = True
+        value = memory_record(torch, stage)
+    value.update(cleanup_performed=collected,
+                 monitor_seconds=time.monotonic()-started)
+    return value
+
+
 def release_unused_native_expert(model,torch):
     """Only BF16, fixed, prewarmed pipelines. No CUDA handle destruction.
 

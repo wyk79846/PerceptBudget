@@ -11,6 +11,33 @@ from unittest.mock import patch
 SUITES = ('libero_spatial', 'libero_object', 'libero_goal')
 
 
+def prediction_timing(config, torch, predict, mode='Full'):
+    """Evaluation reuses stored costs; profiling may explicitly measure them."""
+    if not config.get('m4_skip_eval_calibration'):
+        from perceptbudget.measurement import timed
+        return timed(torch, predict, count=3)
+    from statistics import median
+    costs = config.get('ordinary_fast_costs')
+    if costs:
+        samples = costs['cells']['baseline']['modes'][mode]['samples_seconds']
+        source = 'ordinary_fast_costs / baseline / ' + mode
+    else:
+        from perceptbudget.m4_costs import load_service_costs
+        cells = config.get('m3_low_full_costs', {}).get('cells')
+        if not cells:
+            cells = load_service_costs(config['m4_settings'])
+        samples = [value for cell in cells
+                   if cell['mode'] == mode and cell['profile'] == 'baseline'
+                   and cell['history'] == 'hot'
+                   for value in cell['service_samples_seconds']]
+        source = 'stored service costs / baseline / hot / ' + mode
+    if not samples or any(not math.isfinite(value) or value <= 0 for value in samples):
+        raise ValueError('Missing stored evaluation timing for ' + mode)
+    return dict(trials_ms=[value * 1000 for value in samples],
+                median_ms=median(samples) * 1000,
+                measured_during_evaluation=False, source=source)
+
+
 def camera_view_for_condition(condition):
     """Frequency pair labels select policies, never different camera inputs."""
     if condition.startswith(('rtc_initial_d','unguided_repeat')):
@@ -59,6 +86,13 @@ def configure_frequency_variant(config, view):
     elif view in ('ordinary_full','ordinary_fast'):
         if not config.get('m3_ordinary_fast_pair'):raise ValueError('Ordinary Fast pair is not enabled')
         config['m3_ordinary_fast']=view=='ordinary_fast'
+        if config.get('m3_fast_budget_pair'):
+            config.update(m3_ordinary_fast=True,m3_fast_own_budget=view=='ordinary_fast')
+        if config.get('m3_external_motion_pair'):
+            config.update(m3_ordinary_fast=True,m3_external_motion_tokens=16 if view=='ordinary_fast' else 0)
+        if config.get('m3_external_selector_pair'):
+            config.update(m3_ordinary_fast=True,
+                m3_external_token_selector='avgpool' if view=='ordinary_full' else 'divprune')
     elif view in ('full_capture','lean_continue'):
         if not config.get('m4_continue_overhead_pair'):
             raise ValueError('Continue capture pair requires its explicit opt-in')
@@ -281,7 +315,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
     from scripts.audit_rtc_system import audit
     from perceptbudget.device_profile import select_images
     from perceptbudget.libero_input import load_libero_norm_stats
-    from perceptbudget.rtc_memory import memory_record, release_unused_native_expert
+    from perceptbudget.rtc_memory import memory_record, resident_memory_record, release_unused_native_expert
     from perceptbudget.rtc_openpi import OriginalOpenPiRTCAdapter
     from perceptbudget.rtc_source_step_graph import h50_state_prefix_lengths
     from perceptbudget.measurement import timed
@@ -418,20 +452,23 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
             shared_egl=gate_record.get('candidate') == 'hard_reset_shared_egl',
             synchronize_release=bool(cfg.get('m3_ordinary_fast_context')))
     setup_started=time.monotonic()
+    from scripts.guarded_run import RAM_FLOOR_BYTES
+    ram_floor_mib=RAM_FLOOR_BYTES/2**20
+    record['ram_floor_mib']=ram_floor_mib
     def stage_progress(stage):
         row=dict(stage=stage,elapsed_seconds=round(time.monotonic()-setup_started,3))
         record.setdefault('stage_timings',[]).append(row)
         print('resident_stage='+json.dumps(row),flush=True)
         save()
-    def mem(stage):
-        cleanup(torch)
-        value = memory_record(torch, stage)
+    def mem(stage, *, collect=True):
+        value = resident_memory_record(torch,stage,cleanup=cleanup,
+            floor_mib=ram_floor_mib,collect=collect)
         value['elapsed_seconds']=time.monotonic()-setup_started
         print('resident_stage='+json.dumps(dict(stage=stage,elapsed_seconds=round(value['elapsed_seconds'],3))),flush=True)
         record['memory'].append(value)
         save()
-        if value['available_mib'] < 900:
-            raise RuntimeError('Resident quality RAM headroom below900MiB; stop without per-episode reload')
+        if value['available_mib'] < ram_floor_mib:
+            raise RuntimeError(f'Resident quality RAM headroom below{ram_floor_mib:g}MiB; stop without per-episode reload')
     stats = load_libero_norm_stats(cfg['norm_stats_path'])
     model = adapter = root_expert = env = active = None
     original_snapshot = base._make_snapshot
@@ -483,24 +520,24 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     torch.cuda.synchronize()
                     adapter.step_bank = None
                     adapter.expert = root_expert
-                    cache_dropped=False
-                    # Keep the next environment/capture preparation from
-                    # overlapping its peak with otherwise reusable old graphs.
-                    # This runs before task setup; inference still uses the
-                    # same exact graphs, rechecked by the normal source gate.
-                    if dual_visual and memory_record(torch,'before_next_task')['available_mib']<1600:
-                        evicted=adapter.evict_step_banks()
-                        record.setdefault('resident_graph_evictions',[]).append(dict(
-                            before_suite=suite,before_task_id=tid,**evicted))
-                        cache_dropped=True
-                    mem('resident_banks_evicted' if cache_dropped else 'resident_banks_retained' if dual_visual else 'old_bank_released')
+                    # Preserve reusable graph families; prepare_resident removes
+                    # obsolete lengths after the new task's actual bounds are known.
+                    mem('resident_banks_retained' if dual_visual else 'old_bank_released',collect=False)
                 base._seed_process(7, np, torch)
                 task = base._load_tasks([tid], [suite])[0]
                 env = base._make_env(env_class, task)
                 env._pb_lock_fixtures = True
                 stage_progress('environment_created')
-                observation, calibration = calibrate(env, task, np)
-                stage_progress('environment_calibrated')
+                direct_eval = bool(cfg.get('m4_skip_eval_calibration'))
+                if direct_eval:
+                    observation, control_hz = base._prepare_env_episode(env, task, np)
+                    calibration = dict(samples_seconds=[], median_seconds=1. / control_hz,
+                        suite=suite, task_id=tid, measured_during_evaluation=False,
+                        source='Configured LIBERO control period; updated by actual episode controls')
+                    stage_progress('environment_ready')
+                else:
+                    observation, calibration = calibrate(env, task, np)
+                    stage_progress('environment_calibrated')
                 prepared_start=(dict(observation=observation,physics=env.env.sim.get_state().flatten().copy(),
                                      suite=task['suite'],task_id=task['task_id'])
                     if (cfg.get('m4_acceptance_group')=='joint' or
@@ -527,36 +564,61 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         wrist_model = VLAModel(wrist_frontend(model._pipe, torch, fast_kind=visual_fast_mode,
                             no_state=cfg.get('m2_fast_no_state',False),
                             no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity'),
-                            preserve_positions=bool(cfg.get('m3_ordinary_fast_positions'))), 'torch')
+                            preserve_positions=bool(cfg.get('m3_ordinary_fast_positions')),
+                            external_selector=cfg.get('m3_external_token_selector','avgpool'),
+                            external_motion_tokens=cfg.get('m3_external_motion_tokens',0),
+                            state_prompt_capacity=cfg.get('m3_fast_state_prompt_capacity')), 'torch')
                         enable(wrist_model)
                         fast_prepared = select_images(prepared, 'wrist' if visual_fast_mode=='wrist' else 'full')
                         if cfg.get('m2_fast_no_state',False):
                             fast_prepared['state'] = None
+                        elif cfg.get('m3_fast_state_dims',32)==8:
+                            fast_prepared['state'] = fast_prepared['state'][:8]
                         if context_only:
                             record['fast_context_preparation']=prepare_context_only(wrist_model,fast_prepared,task['instruction'],torch)
                         else:
                             base._infer_actions(wrist_model, fast_prepared, task['instruction'], 50, {})
-                        if visual_fast_mode.startswith('pool2'):
+                        if not cfg.get('m4_validate_setup',True):
+                            record['fast_layout_validation']=dict(performed=False)
+                        elif cfg.get('m3_external_token_selector')=='divprune':
+                            from perceptbudget.external_divprune import check_pipeline
+                            record['fast_divprune_layout']=check_pipeline(wrist_model._pipe.pipeline,torch,np)
+                        elif visual_fast_mode.startswith('pool2'):
                             from scripts.diagnose_pool_parity import pool_check
                             layout=pool_check(wrist_model._pipe.pipeline,torch,np,'agent' if visual_fast_mode=='pool2_agent' else 'both')
                             record['fast_pool_layout']=layout
                             if layout['mismatched_elements']:
                                 raise RuntimeError('Shared pooled context layout mismatch')
-                        if not all(model._pipe._ckpt_bf16[k] is wrist_model._pipe._ckpt_bf16[k]
+                        if cfg.get('m4_validate_setup',True) and not all(model._pipe._ckpt_bf16[k] is wrist_model._pipe._ckpt_bf16[k]
                                    for k in model._pipe._ckpt_bf16):
                             raise RuntimeError('Visual alternation weight sharing failed')
                         mem('wrist_context_prepared')
+                    selector_models=None
+                    if cfg.get('m3_external_selector_pair'):
+                        pooled_model=VLAModel(wrist_frontend(model._pipe,torch,fast_kind=visual_fast_mode,
+                            no_state=cfg.get('m2_fast_no_state',False),
+                            no_state_prompt_capacity=cfg.get('m4_fast_prompt_capacity'),
+                            preserve_positions=True,external_selector='avgpool',
+                            state_prompt_capacity=cfg.get('m3_fast_state_prompt_capacity')),'torch')
+                        enable(pooled_model)
+                        record['avgpool_context_preparation']=prepare_context_only(
+                            pooled_model,fast_prepared,task['instruction'],torch)
+                        selector_models={'avgpool':pooled_model,'divprune':wrist_model}
+                        mem('selector_contexts_prepared')
                     record['native_release'] = release_unused_native_expert(model, torch)
                     if dual_visual:
                         record['wrist_native_release'] = release_unused_native_expert(wrist_model, torch)
+                    if selector_models is not None:release_unused_native_expert(pooled_model,torch)
                     adapter = OriginalOpenPiRTCAdapter(model, torch, cfg)
+                    if selector_models is not None:adapter._external_selector_models=selector_models
                     if dual_visual:
                         adapter.attach_wrist(wrist_model)
                     root_expert = adapter.expert
                     record['suffix_loads'] += 1
-                    gate = json.loads((Path(cfg['verified_reference_run'])/'summary.json').read_text())
-                    if not gate.get('passed') or root_expert.provenance != gate['original_source_hashes']:
-                        raise RuntimeError('Frozen source gate mismatch')
+                    if cfg.get('m4_validate_setup',True):
+                        gate = json.loads((Path(cfg['verified_reference_run'])/'summary.json').read_text())
+                        if not gate.get('passed') or root_expert.provenance != gate['original_source_hashes']:
+                            raise RuntimeError('Frozen source gate mismatch')
                 adapter.config = cfg
                 if explicit_visual:
                     adapter.select_next_mode('Full')
@@ -573,10 +635,18 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         full_lengths=list(lengths)
                         from perceptbudget.rtc_visual_alternation import visual_geometry
                         offset=512-visual_geometry(visual_fast_mode)['visual_tokens']
-                        fast_lengths=[n-offset for n in full_lengths]
-                        if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-offset:
-                            raise RuntimeError('Stateful Fast changed prompt/state tokenization')
-                        coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode=visual_fast_mode,fast_state_enabled=True)
+                        if cfg.get('m3_fast_state_dims',32)==8:
+                            fast_lengths=h50_state_prefix_lengths(wrist_valid,task['instruction'],
+                                num_views=2,pool_factor=2,pooled_view='agent',state_dimensions=8)
+                            coverage=dict(kind='eight_real_state_values_without_padding',
+                                full=full_lengths,fast=fast_lengths,fast_mode=visual_fast_mode,
+                                fast_state_enabled=True,full_state_dimensions=32,fast_state_dimensions=8,
+                                fast_prompt_capacity=cfg['m3_fast_state_prompt_capacity'])
+                        else:
+                            fast_lengths=[n-offset for n in full_lengths]
+                            if wrist_valid!=first['rtc_guidance']['valid_prefix_length']-offset:
+                                raise RuntimeError('Stateful Fast changed prompt/state tokenization')
+                            coverage=dict(kind='same_state_tokenizer_bounds_visual_offset',full=full_lengths,fast=fast_lengths,fast_mode=visual_fast_mode,fast_state_enabled=True)
                         lengths=full_lengths+fast_lengths
                     elif cfg.get('m4_acceptance_group') in ('joint','m3_fast') or cfg.get('m3_ordinary_fast_context'):
                         from perceptbudget.m4_acceptance import visual_prefixes
@@ -591,13 +661,14 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     cfg['m2_visual_prefix_coverage'] = coverage
                     record.setdefault('visual_prefix_coverage', []).append(dict(suite=suite,task_id=tid,**coverage))
                 cfg['source_step_prefixes'] = lengths
-                graph = adapter.prepare_step_bank(lengths, progress=lambda r: mem('prefix_'+str(r['valid'])))
+                graph = adapter.prepare_step_bank(lengths,
+                    progress=lambda r: mem('prefix_'+str(r['valid']),collect=False))
                 stage_progress('graph_bank_ready')
                 record['graph_audits'].append(dict(suite=suite, task_id=tid, **graph))
                 previous = np.asarray(first['actions_raw'], dtype=np.float32)[5:]
-                timing = timed(torch, lambda: adapter.predict(prepared, task['instruction'], previous,
-                                       delay=5, executed=5, request={}), count=3)
-                stage_progress('inference_calibrated')
+                timing = prediction_timing(cfg, torch, lambda: adapter.predict(
+                    prepared, task['instruction'], previous, delay=5, executed=5, request={}))
+                stage_progress('timing_priors_loaded' if direct_eval else 'inference_calibrated')
                 cfg['rtc_initial_delay_steps'] = math.ceil(timing['median_ms']/1000/calibration['median_seconds'])
                 if cfg.get('rtc_initial_delay_reference_run'):
                     from perceptbudget.rtc_initial_delay import reference_delay
@@ -639,7 +710,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                             raise RuntimeError('Wrist delay calibration did not encode a new wrist context')
                         return actions
                     try:
-                        wrist_timing=timed(torch,wrist_probe,count=3)
+                        wrist_timing=prediction_timing(cfg,torch,wrist_probe,mode='Fast')
                     finally:
                         cfg['m2_visual_fast_enabled']=False
                         if explicit_visual:adapter.select_next_mode('Full')
@@ -649,7 +720,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         cfg['m3_fast_energy_prior_scope']='old320 M2 energy is only a ranking proxy; report measured task energy'
                     cfg['rtc_initial_delays_by_mode']={'full':cfg['rtc_initial_delay_steps'],
                         visual_fast_mode:math.ceil(wrist_timing['median_ms']/1000/calibration['median_seconds'])}
-                    record.setdefault('mode_delay_calibrations', []).append(dict(suite=suite,task_id=tid,
+                    record.setdefault('mode_delay_priors' if direct_eval else 'mode_delay_calibrations', []).append(dict(suite=suite,task_id=tid,
                         full=timing,**{visual_fast_mode:wrist_timing},initial_delays=cfg['rtc_initial_delays_by_mode'],
                         control_period_seconds=calibration['median_seconds']))
                 if cfg.get('m4_enabled'):
@@ -670,7 +741,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         'full:gpu_emc':cfg['m3_low_full_initial_delay'],
                         **{visual_fast_mode+':'+p:math.ceil(percentile(c['modes']['Fast']['samples_seconds'])/calibration['median_seconds'])
                            for p,c in cfg['ordinary_fast_costs']['cells'].items()}}
-                    if not cfg.get('m2_fast_no_state',False) and cfg.get('m3_fast_alternation'):
+                    if not cfg.get('m2_fast_no_state',False) and (cfg.get('m3_fast_alternation') or cfg.get('m3_fast_stable') or cfg.get('m3_fast_critical')):
                         # State changes compute time: use the live Fast probe
                         # for HIGH and a Full-profile ratio for the MID prior.
                         # Both histories then update from actual requests.
@@ -678,13 +749,17 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                         cfg['rtc_initial_delays_by_compute'].update({
                             visual_fast_mode+':baseline':math.ceil(max(wrist_timing['trials_ms'])/1000/calibration['median_seconds']),
                             visual_fast_mode+':gpu_emc':math.ceil(ratio*percentile(cfg['ordinary_fast_costs']['cells']['gpu_emc']['modes']['Full']['samples_seconds'])/calibration['median_seconds'])})
-                        cfg['fast_initial_delay_source']='live HIGH calibration; MID initial Full-profile ratio; then actual history'
-                cfg['rtc_initial_control_period_source'] = 'same-environment preflight12 ticks, then reset'
+                        cfg['fast_initial_delay_source']=('stored HIGH costs; MID Full-profile ratio; then actual history'
+                            if direct_eval else 'live HIGH calibration; MID initial Full-profile ratio; then actual history')
+                cfg['rtc_initial_control_period_source'] = (calibration['source'] if direct_eval
+                    else 'same-environment preflight12 ticks, then reset')
                 for view in views:
                     current_view = 'full' if recompute_comparison or visual_comparison or dvac_paired else camera_view_for_condition(view)
                     child_cfg = copy.deepcopy(cfg)
                     if cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_request_capture_pair'):
                         configure_frequency_variant(child_cfg,view)
+                    if cfg.get('m3_external_selector_pair'):
+                        adapter.attach_wrist(adapter._external_selector_models[child_cfg['m3_external_token_selector']])
                     if cfg.get('m4_rtc_delay_sensitivity'):
                         from perceptbudget.rtc_sensitivity import configure
                         configure(child_cfg,view)
@@ -769,7 +844,8 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     save()
                     trace_dir = active/'rtc'
                     trace_dir.mkdir()
-                    _write_json_atomically(active/'control_period_calibration.json', calibration)
+                    _write_json_atomically(active/('control_period_prior.json' if direct_eval
+                        else 'control_period_calibration.json'), calibration)
                     mem('before_'+suite+str(tid)+view)
                     with (trace_dir/'trace.jsonl').open('w') as stream:
                         start_options={'prepared_start':prepared_start} if prepared_start is not None else {}
@@ -836,7 +912,7 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                     checked = None
                     active = None
                     record.update(active_run=None,active_group=None)
-                    mem('episode_released')
+                    mem('episode_released',collect=False)
                 env.close()
                 env = None
                 mem('environment_closed')
@@ -853,7 +929,9 @@ def resident_quality(config, directory, kind, *, resume=False, cleanup_gate=None
                 _write_json_atomically(directory/'paired_bootstrap_audit.json',paired)
                 record['paired_bootstrap_audit']=paired
                 record['comparison_initials_exact']=paired['passed']
-                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or cfg.get('m3_ordinary_fast_pair') or cfg.get('m4_request_capture_pair')) and not paired['passed']:
+                if (cfg.get('m3_three_frequency') and cfg.get('m4_full_frequency_pair') or cfg.get('m4_continue_overhead_pair') or
+                    (cfg.get('m3_ordinary_fast_pair') and not cfg.get('m3_external_selector_pair') and not cfg.get('m3_fast_budget_pair') and not cfg.get('m3_external_motion_pair')) or
+                    cfg.get('m4_request_capture_pair')) and not paired['passed']:
                     raise RuntimeError('Resident policy comparison requires identical bootstrap inputs and actions')
             if not record.get('skipped_episodes') and (cfg.get('m3_event_dedup_comparison') or
                     tuple(cfg.get('m3_trigger_variants') or []) in (('events_only','events_and_variance'),('events_only','variance_only')) or

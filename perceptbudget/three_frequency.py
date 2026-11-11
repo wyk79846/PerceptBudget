@@ -79,6 +79,40 @@ def start_point(step, now, latest_start, period, limit_seconds):
         requested_rule='start_point_floor_within_limit')
 
 
+def critical_high(formula, decision):
+    """Speed up event refreshes without spending the gain on a later start."""
+    if decision['reason']!='action_event':return formula
+    original=formula['selected']
+    high=next(row for row in formula['candidates'] if row['profile']=='baseline')
+    return dict(formula,policy='critical_event_high_v1',budget_policy=formula['policy'],
+        baseline_selected=original,selected=high,reason='critical_event_high',
+        prepare_anchor=dict(profile=original['profile'],latest_start=original['latest_start']))
+
+
+def advance_grasp_deadline(decision, *, step, lead_steps):
+    """Reserve action correction ticks before closure, separately from service.
+
+    Keep the physical critical step for RTC/wait/phase coverage. The new
+    deadline only asks the refresh to finish earlier; model latency and eta
+    are unchanged. No task, seed or object identity enters this rule.
+    """
+    if (not lead_steps or decision.get('grasp_lead') or
+            decision.get('reason')!='action_event' or
+            'gripper_close' not in decision.get('candidate_event_kinds',[])):
+        return decision
+    period=decision['estimated_control_period_seconds']
+    target=decision['critical_step']-lead_steps
+    deadline=min(decision['deadline'],decision['decision_monotonic']+(target-step)*period)
+    latest=min(decision['latest_start'],deadline-decision['service_seconds']-decision['margin_seconds'])
+    return dict(decision,deadline=deadline,latest_start=latest,
+        wait_seconds=max(0.,latest-decision['decision_monotonic']),
+        start_now=latest<=decision['decision_monotonic'],
+        deadline_already_unreachable=decision['decision_monotonic']+decision['service_seconds']+decision['margin_seconds']>deadline,
+        grasp_lead=dict(policy='gripper_close_correction_lead_v1',lead_steps=lead_steps,
+            physical_critical_step=decision['critical_step'],refresh_target_step=target,
+            lead_seconds=lead_steps*period,physical_deadline=decision['deadline']))
+
+
 def wait_for_clock(clocks, limit_seconds):
     """Bounded frequency acknowledgement in this control tick; no env.step."""
     if limit_seconds!=.025:raise ValueError('Startup acknowledgement wait must be25ms')
@@ -119,6 +153,10 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_full_streak=1
         self.ordinary_full_per_fast=config.get('m3_fast_full_per_fast',1)
         self.fast_delays={}
+        self.fast_own_budget=bool(config.get('m3_fast_own_budget'))
+        self.fast_every_event=bool(config.get('m3_fast_every_event'))
+        self.critical_high=bool(config.get('m3_critical_high'))
+        self.grasp_lead_steps=config.get('m3_grasp_lead_steps',0)
         self.full_energy=bool(config.get('m3_full_energy'))
         self.energy_costs=config.get('m3_full_energy_costs')
         self.last_ready=None
@@ -129,6 +167,7 @@ class ThreeFullRuntime(LowFullRuntime):
         self.recovery_target=None
 
     def start_clocks(self,directory):
+        self.action_signal_directory=Path(directory)
         self.clocks=ThreeClocks(directory)
         self.clocks.__enter__()
 
@@ -136,6 +175,12 @@ class ThreeFullRuntime(LowFullRuntime):
         self.ordinary_step=step
         item_now=queue.get(step)
         self.ordinary_phases=self.chunks[item_now[1]].get('low_full_phases',[]) if item_now else []
+        if self.fast_own_budget:
+            self.clocks.poll()
+            if self.clocks.pending is not None and self.recovering_plan is None:
+                # A pending Continue transition must not resurrect the base
+                # Full-only start time while Fast is deliberately waiting.
+                return dict(self.plan,start_now=False,clock_wait=True)
         d=DeadlineRuntime.decide(self,now=now,step=step,queue=queue,rows=rows,
                                  inflight=inflight,rtc_delay_steps=rtc_delay_steps)
         high_history=d['service_budget_history']
@@ -143,6 +188,7 @@ class ThreeFullRuntime(LowFullRuntime):
             return d
         item=queue.get(step)
         if item is None:return d
+        d=advance_grasp_deadline(d,step=step,lead_steps=self.grasp_lead_steps)
         period=d['estimated_control_period_seconds']
         guard=math.ceil(self.margin.seconds/period-1e-9)+(self.clocks.profile!='gpu_emc')
         submit=self.chunks[item[1]]['origin']+self.horizon-self.low_delay_steps
@@ -150,16 +196,44 @@ class ThreeFullRuntime(LowFullRuntime):
         medium=max(percentile(list(v),self.settings['service_quantile']) for v in self.low_histories.values())
         formula=select_full(d,medium_seconds=medium,medium_cap=cap,
                             current_profile=self.clocks.profile,transitions=self.transitions)
+        if self.fast_own_budget and d['reason']=='action_event':
+            from perceptbudget.ordinary_fast import choose
+            from perceptbudget.fast_start_budget import select
+            choices={}
+            for proposal in formula['candidates']:
+                profile=proposal['profile']
+                trial=dict(d,compute_profile=profile,latest_start=proposal['latest_start'],
+                    service_seconds=proposal['service_seconds'],
+                    rtc_delay_steps=self.low_delay_steps if profile=='gpu_emc' else rtc_delay_steps)
+                choices[profile]=choose(trial,step=step,previous_mode=self.ordinary_previous,
+                    phases=self.ordinary_phases,events=self.events,costs=self.ordinary_costs,
+                    fast_delay=self.fast_delays[profile],policy=self.ordinary_policy,
+                    match_steps=self.events_config.match_steps,
+                    full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak,
+                    every_event=self.fast_every_event)
+            formula=select(formula,d,choices=choices,fast_delays=self.fast_delays,
+                costs=self.ordinary_costs,probability=self.settings['service_quantile'],
+                prefix_caps=dict(gpu_emc=cap,baseline=now+(
+                    d['rtc_latest_submit_step']-step-d['rtc_submit_guard_steps'])*period
+                    if d.get('rtc_latest_submit_step') is not None else float('inf')))
+        if self.critical_high:formula=critical_high(formula,d)
+        if d.get('critical_freshness'):
+            # An extra observation uses its own chosen HIGH mode's budget;
+            # the normal policy retains its original medium prepare anchor.
+            formula.pop('prepare_anchor',None)
+            formula['supplement_prepare_rule']='selected_mode_service_budget'
         chosen=formula['selected']
+        anchor=formula.get('prepare_anchor')
+        latest=min(chosen['latest_start'],anchor['latest_start']) if anchor else chosen['latest_start']
         # Preserve LowFullRuntime's separate medium measurement history and RTC
         # queue; it uses the old low_full_formula selected.history field.
-        age=max(0.,now-(self.clocks.last_low or now))+max(0.,chosen['latest_start']-now)
+        age=max(0.,now-(self.clocks.last_low or now))+max(0.,latest-now)
         history='hot' if age<.2 else 'short' if age<1. else 'long'
         medium_chosen=chosen['profile']=='gpu_emc'
-        due=chosen['latest_start']-now<period-1e-9
+        due=latest-now<period-1e-9
         startup=None
         if self.start_floor_seconds:
-            startup=start_point(step,now,chosen['latest_start'],period,self.start_floor_seconds)
+            startup=start_point(step,now,latest,period,self.start_floor_seconds)
             # When a clock change is needed, start its preparation in the
             # existing window. Only submit this tick after a timely real ack.
             # At an already-ready frequency, bound the early submission itself.
@@ -173,17 +247,25 @@ class ThreeFullRuntime(LowFullRuntime):
         if chosen_cap<expected_start:expected_start=chosen_cap;constraint='rtc_prefix'
         first=d.get('first_refresh_cap',{}).get('latest_start',float('inf'))
         if first<expected_start:constraint='first_refresh'
+        if anchor:
+            d['critical_high_prepare_anchor']=anchor
+            if anchor['latest_start']<chosen['latest_start']-1e-9:constraint='critical_event_fixed_prepare'
         d.update(three_frequency_formula=formula,start_constraint=constraint,
             low_full_formula=dict(selected=dict(chosen,history=history),policy='medium_first_v1'),
             compute_profile=chosen['profile'],service_budget_history='low' if medium_chosen else d['service_budget_history'],
             service_seconds=chosen['service_seconds'],
-            latest_start=chosen['latest_start'],wait_seconds=0. if due else max(0.,chosen['latest_start']-now),
+            latest_start=latest,wait_seconds=0. if due else max(0.,latest-now),
             start_now=due,path='three_frequency',
             rtc_delay_steps=self.low_delay_steps if medium_chosen else rtc_delay_steps,
             rtc_latest_submit_step=submit if medium_chosen else d['rtc_latest_submit_step'],
             rtc_submit_guard_steps=guard if medium_chosen else d['rtc_submit_guard_steps'],
             deadline_already_unreachable=now+chosen['service_seconds']+self.margin.seconds>d['deadline'])
         if startup is not None:d['start_point_rounding']=startup
+        budget_policy=formula.get('budget_policy',formula['policy'])
+        if budget_policy=='critical_fast_own_budget_v1':
+            d['fast_start_budget']=dict(policy=budget_policy,mode=chosen['mode'],
+                source='Fast mode/profile observed delay plus commit tick and measured prior',
+                original_full=next(r for r in formula['full_candidates'] if r['profile']==chosen['profile']))
         if self.full_energy and due:
             from perceptbudget.full_energy import select,POLICY
             anchor=dict(profile=chosen['profile'],latest_start=d['latest_start'],
@@ -220,7 +302,54 @@ class ThreeFullRuntime(LowFullRuntime):
                 phases=self.chunks[item[1]].get('low_full_phases',[]),events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[chosen['profile']],
                 policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
-                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak,
+                every_event=self.fast_every_event)
+        if d.get('critical_freshness'):
+            proof=d['critical_freshness']
+            self._skip_critical_freshness=True
+            try:
+                baseline=self.decide(now=now,step=step,queue=queue,rows=rows,
+                    inflight=inflight,rtc_delay_steps=rtc_delay_steps)
+            finally:
+                self._skip_critical_freshness=False
+            event_time=now+(proof['target_step']-step)*period
+            baseline_start=max(now,baseline['latest_start'])
+            capture=step+max(0.,baseline_start-now)/period
+            already_timely=(proof['target_step']-capture<=self.critical_freshness_age
+                and baseline_start+baseline['service_seconds']+self.margin.seconds<=event_time+1e-9)
+            feasible=(d['reason']=='action_event' and d['latest_start']>=now-1e-9
+                and not d['deadline_already_unreachable'])
+            estimated_wait=max(0.,now+d['service_seconds']+self.margin.seconds-d['deadline'])
+            wait_budget=self.critical_freshness_wait_steps*period
+            prefix_ready=(d.get('rtc_latest_submit_step') is None or
+                step+d['rtc_submit_guard_steps']<=d['rtc_latest_submit_step'])
+            short_wait=(self.critical_freshness_wait_steps>0
+                and d['reason']=='action_event' and step<proof['target_step']
+                and prefix_ready and 0.<estimated_wait<=wait_budget+1e-9)
+            feasible=feasible or short_wait
+            if already_timely or not feasible:
+                baseline['critical_freshness_skipped']=dict(proof,
+                    reason='existing_refresh_timely' if already_timely else 'selected_service_too_late',
+                    selected_mode=d.get('m3_fast_formula',{}).get('mode','Full'),
+                    selected_service_seconds=d['service_seconds'],
+                    estimated_wait_seconds=estimated_wait,maximum_estimated_wait_seconds=wait_budget,
+                    rtc_prefix_available=prefix_ready)
+                self.plan=baseline
+                return baseline
+            proof.update(selected_mode=d.get('m3_fast_formula',{}).get('mode','Full'),
+                selected_service_seconds=d['service_seconds'],latest_start=d['latest_start'],
+                baseline_latest_start=baseline['latest_start'],baseline_service_seconds=baseline['service_seconds'])
+            if short_wait:
+                proof.update(maximum_wait_steps=self.critical_freshness_wait_steps,
+                    maximum_estimated_wait_seconds=wait_budget,
+                    estimated_wait_seconds=estimated_wait,
+                    wait_policy='critical_freshness_short_wait_v1')
+            if self.critical_freshness_correction_steps and proof['kind']=='gripper_close':
+                pause=max(step,proof['target_step']-self.critical_freshness_correction_steps)
+                proof.update(pause_policy='pre_grasp_correction_v1',pause_step=pause,
+                    correction_steps=self.critical_freshness_correction_steps,
+                    estimated_pause_seconds=max(0.,now+d['service_seconds']+self.margin.seconds
+                        -(now+(pause-step)*period)))
         self.plan=d
         return d
 
@@ -250,7 +379,8 @@ class ThreeFullRuntime(LowFullRuntime):
                 previous_mode=self.ordinary_previous,phases=self.ordinary_phases,events=self.events,
                 costs=self.ordinary_costs,fast_delay=self.fast_delays[decision['compute_profile']],
                 policy=self.ordinary_policy,match_steps=self.events_config.match_steps,
-                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak)
+                full_per_fast=self.ordinary_full_per_fast,full_streak=self.ordinary_full_streak,
+                every_event=self.fast_every_event)
             self.plan=decision
         return decision
 
@@ -308,7 +438,8 @@ class ThreeFullRuntime(LowFullRuntime):
         self.active_profile=self.clocks.profile
         request['m4_compute_profile']=self.active_profile
         request['m3_full_frequency']=self.active_profile
-        request['m3_three_frequency_policy']='full_energy_fixed_prepare_v1' if self.full_energy else 'medium_first_v1'
+        request['m3_three_frequency_policy']=('full_energy_fixed_prepare_v1' if self.full_energy else
+            self.plan.get('three_frequency_formula',{}).get('policy','medium_first_v1') if self.plan else 'medium_first_v1')
         if self.start_floor_seconds:request['m3_start_floor_ms']=self.start_floor_seconds*1000
         if request['observation_step'] and self.active_profile=='gpu_emc':
             request['m3_timing']['low_full_measurement_history']=self.plan['low_full_formula']['selected']['history']

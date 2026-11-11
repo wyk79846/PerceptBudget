@@ -71,7 +71,11 @@ def historical_visual_prefixes(config, suite, task_id, full_valid, wrist_valid, 
         unseen_prefix='abort before expert; no slow fallback, padding or runtime capture')
 
 
-def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False):
+def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_prompt_capacity=None,preserve_positions=False,external_selector='avgpool',state_prompt_capacity=None,external_motion_tokens=0):
+    if external_selector not in ('avgpool','divprune'):
+        raise ValueError('Unknown external token selector')
+    if external_selector=='divprune' and (fast_kind!='pool2_agent' or not preserve_positions):
+        raise ValueError('External DivPrune needs64 external tokens, full wrist and original positions')
     if preserve_positions and fast_kind not in ('selective320','selective464','pool2_agent'):
         raise ValueError('Original positions require dual selected camera tokens')
     if no_state and fast_kind not in ('pool2_agent','selective320','selective464'):
@@ -91,8 +95,12 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
             from perceptbudget.selective_pipeline import pipeline_type as selective_type
             selected_type=selective_type(Pi05Pipeline,visual_tokens=int(fast_kind.removeprefix('selective')),
                 preserve_positions=preserve_positions)
+        elif external_selector=='divprune':
+            from perceptbudget.external_divprune import pipeline_type as divprune_type
+            selected_type=divprune_type(Pi05Pipeline,motion_enabled=bool(external_motion_tokens))
         else:selected_type=pipeline_type(Pi05Pipeline,'agent',preserve_positions=preserve_positions)
-        kind=frontend_type(type(full),full._fixed_pipeline.max_prompt_len,
+        capacity=state_prompt_capacity if state_prompt_capacity is not None else full._fixed_pipeline.max_prompt_len
+        kind=frontend_type(type(full),capacity,
                            pipeline_type=selected_type,exact_no_state=no_state,
                            stateless_capacity=no_state_prompt_capacity if no_state else None)
         clone=kind.__new__(kind)
@@ -100,6 +108,7 @@ def wrist_frontend(full, torch, *, fast_kind='wrist',no_state=False,no_state_pro
     # Separate dictionaries so context-only cleanup cannot mutate the peer.
     # Tensors themselves are deliberately shared, never cloned or reloaded.
     clone._ckpt_bf16 = dict(full._ckpt_bf16)
+    if state_prompt_capacity is not None:clone.max_prompt_len=state_prompt_capacity
     clone.num_views = 1 if fast_kind=='wrist' else 2
     clone._vision_pool_factor = 1 if fast_kind=='wrist' else 2
     clone._img_buf = full._img_buf[1:] if fast_kind=='wrist' else full._img_buf

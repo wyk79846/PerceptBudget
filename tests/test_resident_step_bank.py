@@ -40,3 +40,29 @@ def test_source_graph_release_resets_native_graph_before_dropping_buffers():
     assert events==[True,True]
     assert graph.graph is graph.full_graph is graph.outputs is graph.context is graph.expert is None
     graph.release()  # Safe when cleanup is called again after an exception.
+
+
+def test_bounded_cache_reuses_a_previous_task_but_dispatches_only_active_lengths(monkeypatch):
+    import torch
+    monkeypatch.setattr(torch.cuda,'synchronize',lambda:None)
+    monkeypatch.setattr(torch.cuda,'empty_cache',lambda:None)
+    bank=SourceStepBank.__new__(SourceStepBank)
+    bank.resident=True;bank.cache_limit=3;bank.fallback=object()
+    bank.entries={};bank.audits=[];released=[];built=[]
+    def prepare(lengths,noise,beta,progress):
+        for n in lengths:
+            built.append(n)
+            bank.entries[n]=(object(),SimpleNamespace(release=lambda n=n:released.append(n)))
+            bank.audits.append(dict(valid=n,beta=beta))
+    bank._prepare=prepare
+    bank.prepare_resident([645,646],None,beta=5.)
+    original=bank.entries[645]
+    bank.prepare_resident([646,647],None,beta=5.)
+    assert set(bank.entries)=={645,646,647}
+    assert bank.select(645)==(bank.fallback,None)
+    bank.prepare_resident([645,646],None,beta=5.)
+    assert bank.select(645) is original
+    assert built==[645,646,647] and released==[]
+    bank.prepare_resident([646,648],None,beta=5.)
+    assert set(bank.entries)=={645,646,648} and released==[647]
+    assert len(bank.entries)<=bank.cache_limit

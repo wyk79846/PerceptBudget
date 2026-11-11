@@ -58,6 +58,9 @@ class OriginalOpenPiRTCAdapter:
             self.step_bank=bank
         else:
             options=dict(resident=True) if resident else {}
+            options['verify']=self.config.get('m4_validate_setup',True)
+            if resident:
+                options['cache_limit']=self.config.get('m4_prefix_cache_limit')
             if getattr(self,'_shared_step_bank_pool',None) is not None:
                 options['pool']=self._shared_step_bank_pool
             self.step_bank=SourceStepBank(self.expert,lengths,noise,beta=self.beta,
@@ -65,11 +68,14 @@ class OriginalOpenPiRTCAdapter:
                 max_lengths=17 if self.config.get('source_prefix_coverage_rule')=='h50_state8_tokenizer_bounds_v1' else 8,
                 progress=report,**options)
             if resident:self._resident_step_bank=self.step_bank
-        return dict(passed=True,backend='source_order_step_graph',
-            prepare_seconds=time.monotonic()-started,lengths=list(self.step_bank.entries),
+        return dict(passed=True if self.config.get('m4_validate_setup',True) else None,
+            prepared=True,validation_performed=self.config.get('m4_validate_setup',True),backend='source_order_step_graph',
+            prepare_seconds=time.monotonic()-started,lengths=sorted(set(lengths)),
+            cached_lengths=list(self.step_bank.entries),cache_limit=getattr(self.step_bank,'cache_limit',None),
             storage=getattr(self.step_bank,'storage_record',None),
             packed_conditioning=conditioning,
-            audits=self.step_bank.audits,limitation='unprepared valid lengths use exact slow reference; no runtime capture')
+            audits=[a for a in self.step_bank.audits if a['valid'] in lengths],
+            limitation='unprepared valid lengths use exact slow reference; no runtime capture')
 
     def prepare_graph(self, previous_raw):
         """Gate one exact prefix shape; never pad state tokens for capture."""

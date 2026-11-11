@@ -303,6 +303,22 @@ class DeadlineRuntime:
         if self.feedback_policy and (self.ordinary_turn_policy!='context_v1'
                 or type(self.feedback_minimum) is not int or not 1<=self.feedback_minimum<self.horizon):
             raise ValueError('Feedback refresh requires simplified Full and a valid minimum interval')
+        self.action_signal_settings=config.get('m3_action_signal_settings')
+        self.action_signal_directory=None
+        self.gripper_lift_feedback=bool((self.action_signal_settings or {}).get('gripper_lift_feedback'))
+        self.post_close_enabled=bool((self.action_signal_settings or {}).get('post_close_feedback') or self.gripper_lift_feedback)
+        self.post_close_cap=None
+        self.latest_feedback_observation=-1
+        self.critical_freshness_age=(self.action_signal_settings or {}).get('critical_freshness_max_age_steps')
+        self.critical_freshness_wait_steps=(self.action_signal_settings or {}).get('critical_freshness_max_wait_steps',0)
+        self.critical_freshness_correction_steps=(self.action_signal_settings or {}).get('critical_freshness_correction_steps',0)
+        self.critical_freshness_used=[]
+        self._skip_critical_freshness=False
+        if self.action_signal_settings is not None:
+            from perceptbudget.action_signal_experiment import validate
+            validate(self.action_signal_settings)
+            if self.feedback_policy!='overlap_pacing_v2':
+                raise ValueError('Budgeted action signals require the existing energy-refresh path')
         self.ignore_turn = bool(config.get('m3_ignore_turn',False))
         self.merge_gap=config.get('m3_merge_slowdown_steps')
         if self.merge_gap is not None and (type(self.merge_gap) is not int or self.merge_gap<1):
@@ -312,6 +328,7 @@ class DeadlineRuntime:
         self.recovering_plan = None
 
     def start_clocks(self, directory):
+        self.action_signal_directory=Path(directory)
         if self.mode == 'deadline_dvfs':
             self.clocks = RuntimeClocks(directory)
             self.clocks.__enter__()
@@ -321,6 +338,11 @@ class DeadlineRuntime:
             self.clocks.close()
 
     def requested(self, request):
+        if self.critical_freshness_age and self.plan and self.plan.get('critical_freshness'):
+            self.critical_freshness_used.append(dict(self.plan['critical_freshness'],
+                supplemental_observation_step=request['observation_step']))
+        if self.post_close_enabled:
+            self.latest_feedback_observation=request['observation_step']
         if self.fast_advance and request.get('m3_fast_choice',{}).get('mode')=='Fast' and self.recovering_plan is None:
             raise RuntimeError('Fast requires LOW Continue followed by recovery; hot Fast forbidden')
         if request['observation_step'] and self.plan:
@@ -462,7 +484,7 @@ class DeadlineRuntime:
         visible = [e for e in self.events if step <= e['target_step'] < end]
         candidates = [e for e in visible if not any(c['kind']==e['kind'] and
                       abs(c['target_step']-e['target_step'])<=tolerance for c in self.covered_events)]
-        phase_suppressed=[];identity_reviews=[]
+        phase_suppressed=[];identity_reviews=[];coverages=[]
         if self.phase_refresh:
             from perceptbudget.critical_wait import covered_by_phase
             if self.refresh_phase and step>=self.refresh_phase['stop_step']:self.refresh_phase=None
@@ -514,6 +536,47 @@ class DeadlineRuntime:
             ignored={(e['kind'],e['target_step']) for e in current['feedback_review']['events'] if e['suppress']}
             feedback_suppressed=[dict(e) for e in candidates if (e['kind'],e['target_step']) in ignored]
             candidates=[e for e in candidates if e not in feedback_suppressed]
+        signal_packet=None
+        if self.action_signal_settings is not None and current is not None:
+            from perceptbudget.action_signal_experiment import prepare, apply_candidate, observe_execution
+            signal_packet=current.get('action_signal_packet')
+            if signal_packet is None:
+                old=self.chunks.get(current['previous_prediction_id'])
+                reference=(dict(origin=old['origin'],actions=old['phase_actions']) if old else None)
+                at=forecast_proof['source_step']
+                signal_packet=prepare(actions=current['phase_actions'],origin=current['origin'],
+                    source_step=at,history={r['step']:r['action'] for r in rows
+                        if at-self.events_config.confirm_steps<=r['step']<at},
+                    reference=reference,config=self.events_config,settings=self.action_signal_settings,
+                    period=forecast_proof['source_period_seconds'],
+                    response_seconds=current['feedback_review']['response_seconds'],
+                    margin_seconds=self.margin.seconds,prediction_count=len(self.chunks),
+                    covered_phases=coverages)
+                signal_packet['prediction_id']=item[1]
+                signal_packet['execution_feedback']=observe_execution(rows[-self.feedback_minimum:])
+                current['action_signal_packet']=signal_packet
+                if self.action_signal_directory is not None:
+                    # Full feature rows are written ONCE per chunk, not copied
+                    # into every control-tick decision or image archive.
+                    with (self.action_signal_directory/'action_signals.jsonl').open('a') as stream:
+                        stream.write(json.dumps(signal_packet,allow_nan=False)+'\n')
+            candidates=apply_candidate(candidates,packet=signal_packet,step=step,end=end,
+                prediction_id=item[1],covered=self.covered_events,tolerance=tolerance,period=period)
+        freshness=None
+        if (self.critical_freshness_age and not self._skip_critical_freshness
+                and not inflight and current is not None):
+            from perceptbudget.critical_freshness import propose
+            self.critical_freshness_used=[p for p in self.critical_freshness_used if step<p['stop_step']]
+            freshness=propose(events=visible,candidates=candidates,phases=coverages,
+                covered=self.covered_events,used=self.critical_freshness_used,
+                ordinary_turns={r['target_step'] for r in current.get('ordinary_turn_review',[]) if r['ordinary']},
+                observation_step=current['origin'],step=step,end=end,prediction_id=item[1],
+                maximum_age=self.critical_freshness_age,tolerance=tolerance)
+            if freshness:
+                key=(freshness['kind'],freshness['target_step'])
+                candidates.append(next(e for e in visible if (e['kind'],e['target_step'])==key))
+                phase_suppressed=[e for e in phase_suppressed if (e['kind'],e['target_step'])!=key]
+                feedback_suppressed=[e for e in feedback_suppressed if (e['kind'],e['target_step'])!=key]
         fast_window=None
         ignored_events=[]
         if self.fast_selection and current is not None:
@@ -576,7 +639,7 @@ class DeadlineRuntime:
                          dvfs_policy=self.dvfs_policy,service_budget_history=budget_history,
                          merged_slowdowns=self.merged_slowdowns,
                          diagnostic_open_probe=self.open_probe_applied,
-                         suppressed_event_count=len(visible)-len(candidates),
+                         suppressed_event_count=len(visible)-sum(e['kind']!='action_revision' for e in candidates),
                          candidate_event_kinds=critical_kinds)
         if forecast_proof is not None:
             self.plan.update(critical_forecast=forecast_proof,
@@ -592,6 +655,12 @@ class DeadlineRuntime:
                     if r.get('full_approach',{}).get('requires_full')]
         if self.feedback_policy and current is not None:
             self.plan.update(feedback_review=current['feedback_review'],feedback_suppressed=feedback_suppressed)
+        if signal_packet is not None:
+            self.plan['action_signal_review']=signal_packet['review']
+            self.plan['action_signal_added']=any(e['kind']=='action_revision' for e in candidates)
+            self.plan['action_signal_activation_step']=signal_packet.get('activation_step')
+        if freshness:
+            self.plan['critical_freshness']=freshness
         if self.phase_refresh:
             response=next((p for p in current.get('refresh_phases',[]) if p['end_observed']
                 and critical is not None and p['start_step']<=critical<p['stop_step']),None) if current else None
@@ -639,6 +708,34 @@ class DeadlineRuntime:
             if cap<self.plan['latest_start']:
                 self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
                     start_now=cap<=now,start_constraint='first_refresh')
+        if self.post_close_enabled and current is not None:
+            from perceptbudget.post_close_feedback import request_cap,saturated_lift_warning
+            warning=None
+            if self.gripper_lift_feedback:
+                upcoming=[queue[s][0] for s in range(step,step+self.events_config.confirm_steps) if s in queue]
+                warning=saturated_lift_warning(rows,upcoming,self.events_config)
+            if not self.gripper_lift_feedback or warning is not None:
+                self.post_close_cap=request_cap(self.plan,rows=rows,step=step,
+                    observation_step=max(self.latest_feedback_observation,current['origin']),
+                    inflight=inflight,config=self.events_config,
+                    full_seconds=self.times.estimate('hot'),previous=self.post_close_cap,
+                    existing_wait_seconds=2*period if self.gripper_lift_feedback else None)
+                if self.post_close_cap is not None and warning is not None:
+                    self.post_close_cap.setdefault('gripper_lift_warning',warning)
+            else:
+                self.post_close_cap=None
+            if self.post_close_cap is not None:
+                feedback=self.post_close_cap
+                recovery_ticks=1 if recovery else 0
+                cap=now+(feedback['request_step']-step-recovery_ticks)*period
+                existing=self.plan.get('first_refresh_cap',{}).get('latest_start',math.inf)
+                if cap<existing:
+                    self.plan['first_refresh_cap']=dict(scope='post_close_feedback',
+                        request_step=feedback['request_step'],recovery_ticks=recovery_ticks,
+                        latest_start=cap,feedback=dict(feedback))
+                    if cap<self.plan['latest_start']:
+                        self.plan.update(latest_start=cap,wait_seconds=max(0.,cap-now),
+                            start_now=cap<=now,start_constraint='first_refresh')
         if self.fast_selection and not inflight and current is not None:
             from perceptbudget.m3_fast_choice import choose_mode
             quiet_since=self.fast_quiet_since
@@ -870,10 +967,11 @@ def compiled_environments(directory, tasks, config):
                 env = base._make_env(cls, task)
                 env._pb_lock_fixtures = True
                 try:
-                    if not config.get('experimental_setup_reuse',False):
+                    if not (config.get('experimental_setup_reuse',False)
+                            or config.get('m4_skip_eval_calibration',False)):
                         calibrate(env, task, np)
-                    # XML/binary parity needs one seeded reset, not control-period
-                    # calibration. The model worker calibrates its own live env.
+                    # Environment preparation needs one seeded reset. Normal
+                    # evaluation uses stored costs and actual control history.
                     observation, _ = base._prepare_env_episode(env, task, np)
                     samples = []
                     for a in [None, *replay]:

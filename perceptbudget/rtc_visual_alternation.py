@@ -16,7 +16,7 @@ def configure_explicit_inputs(config):
     """Worker-level binding; retain state for416, preserve legacy320 behavior."""
     stateful_fast=(config.get('m3_ordinary_fast_context') and
         (config.get('m3_ordinary_fast_visual_mode')=='wrist' or
-         (config.get('m3_fast_alternation') and not config.get('m3_fast_no_state'))))
+         ((config.get('m3_fast_alternation') or config.get('m3_fast_stable') or config.get('m3_fast_critical')) and not config.get('m3_fast_no_state'))))
     config['m2_fast_no_state']=not (config.get('m3_fast_selective416',False) or stateful_fast)
     if config.get('m3_fast_selective416'):
         config.pop('m4_fast_prompt_capacity',None)
@@ -44,6 +44,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
         inputs = select_images(snapshot, 'wrist' if mode=='wrist' else 'full')
         if mode!='full' and self.config.get('m2_fast_no_state',False):
             inputs['state'] = None
+        elif mode!='full' and self.config.get('m3_fast_state_dims',32)==8:
+            inputs['state'] = inputs['state'][:8]
         return inputs
 
     def fast_mode(self):
@@ -58,7 +60,7 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             self._position_fast_prefixes=set()
             self.position_policy=align_expert_positions(self.expert,
                 visual_geometry(self.fast_mode())['visual_tokens'],
-                config['state_prompt_capacity'] if stateful else config['m4_fast_prompt_capacity'],
+                config.get('m3_fast_state_prompt_capacity',config['state_prompt_capacity']) if stateful else config['m4_fast_prompt_capacity'],
                 fast_prefixes=self._position_fast_prefixes if stateful else None)
         self._full_model = model
         self._wrist_model = None
@@ -99,7 +101,8 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             self._resident_step_bank=None
         self._dual_resident_banks=tuple(banks)
         self.step_bank = DualGeometryBank(*banks)
-        return dict(passed=True, backend='dual_geometry_source_order_step_graph',
+        return dict(passed=True if self.config.get('m4_validate_setup',True) else None,
+            prepared=True,validation_performed=self.config.get('m4_validate_setup',True), backend='dual_geometry_source_order_step_graph',
             lengths=lengths, families=reports,
             prepare_seconds=sum(r['prepare_seconds'] for r in reports),
             limitation='Two independently bounded banks; no runtime graph capture')
@@ -180,9 +183,28 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             raise RuntimeError('Planned visual mode differs from executed mode')
         self._activate(mode)
         inputs = self.context_inputs(snapshot, mode)
+        motion=None
+        if mode=='pool2_agent' and hasattr(self.pipeline,'set_motion_indices'):
+            indices=[]
+            if self.config.get('m3_external_motion_tokens'):
+                from perceptbudget.external_divprune import motion_seeds
+                reference=self._motion_reference_image
+                indices,scores=motion_seeds(inputs['images'][0],reference)
+                motion=dict(motion_tokens_requested=16,motion_tokens_used=len(indices),
+                    motion_token_indices=indices.tolist(),
+                    motion_reference_prediction_id=self._motion_reference_prediction_id,
+                    motion_reference_observation_step=self._motion_reference_observation_step,
+                    motion_score_method='mean_abs_rgb_patch16_v1',
+                    motion_patch_max_change=float(scores.max()))
+            self.pipeline.set_motion_indices(indices)
         actions = super()._predict(inputs, prompt, previous_raw, delay, executed, request)
+        if mode=='full' and self.config.get('m3_external_motion_tokens'):
+            self._motion_reference_image=inputs['images'][0].copy()
+            self._motion_reference_prediction_id=request.get('prediction_id')
+            self._motion_reference_observation_step=request.get('observation_step')
         request['context_refresh'] = dict(mode=mode, current_images_encoded=True,
             current_state_encoded=inputs.get('state') is not None,
+            state_dimensions=len(inputs['state']) if inputs.get('state') is not None else 0,
             camera_indices=[1] if mode == 'wrist' else [0, 1],
             num_views=self.pipeline.num_views, visual_tokens=self.pipeline.vision_seq_enc,
             vision_pool_factor=getattr(self.pipeline,'vision_pool_factor',1),
@@ -197,6 +219,13 @@ class FreshViewRTCAdapter(OriginalOpenPiRTCAdapter):
             request['context_refresh'].update(compression='redundancy_selected_32_of64_blocks_per_camera',external_tokens=160,wrist_tokens=160)
         if mode=='selective464':
             request['context_refresh'].update(compression='redundancy_selected_8_of64_blocks_per_camera',external_tokens=232,wrist_tokens=232)
+        if mode=='pool2_agent' and self.config.get('m3_external_token_selector')=='divprune':
+            request['context_refresh'].update(compression='divprune_cosine_max_min_external_v1',
+                external_tokens=64,wrist_tokens=256,pooled_view=None,
+                external_token_indices=self.pipeline._div_mapping[:64].cpu().tolist())
+            if motion is not None:
+                request['context_refresh'].update(motion,
+                    compression='motion16_divprune48_external_v1')
         if self.config.get('m3_ordinary_fast_positions'):
             offset=self.position_policy['action_position_offset'] if mode!='full' else 0
             aligned=getattr(self.pipeline,'_pb_original_visual_positions',False)

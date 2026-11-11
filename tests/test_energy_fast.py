@@ -46,6 +46,48 @@ def test_ordinary_fast_keeps_finite_gripper_operations_full_without_blocking_mot
     assert choose(d,**dict(args,phases=[motion]),policy=FEEDBACK_POLICY)['mode']=='Fast'
 
 
+def test_critical_fast_reverses_stage_choice_without_moving_full_schedule():
+    from perceptbudget.ordinary_fast import CRITICAL_POLICY
+    d=decision();phase=dict(start_step=20,stop_step=40,anchors=[dict(kind='gripper_close',offset=4)])
+    args=dict(step=30,previous_mode='Full',phases=[phase],events=[],costs=ordinary_costs(),fast_delay=5)
+    stable=choose(d,**args,policy=FEEDBACK_POLICY)
+    critical=choose(d,**args,policy=CRITICAL_POLICY)
+    assert stable['mode']=='Full' and critical['mode']=='Fast'
+    assert critical['reason']=='critical_fast' and critical['protected_gripper_phases']==[phase]
+    assert critical['full_schedule']==stable['full_schedule']
+    ordinary=choose(d,**dict(args,phases=[]),policy=CRITICAL_POLICY)
+    assert ordinary['mode']=='Full' and ordinary['reason']=='full_stable_stage'
+
+
+def test_critical_fast_can_respond_to_missed_full_deadline_but_never_repeats():
+    from perceptbudget.ordinary_fast import CRITICAL_POLICY
+    d=dict(decision(),reason='action_event',deadline_already_unreachable=True)
+    args=dict(step=30,previous_mode='Full',phases=[],events=[],costs=ordinary_costs(),fast_delay=5)
+    assert choose(d,**args,policy=CRITICAL_POLICY)['mode']=='Fast'
+    assert choose(d,**dict(args,previous_mode='Fast'),policy=CRITICAL_POLICY)['mode']=='Full'
+    assert choose(d,**dict(args,fast_delay=11),policy=CRITICAL_POLICY)['mode']=='Full'
+
+
+@pytest.mark.parametrize('previous',['Full','Fast'])
+def test_every_event_fast_allows_repeated_critical_refreshes(previous):
+    from perceptbudget.ordinary_fast import CRITICAL_POLICY
+    d=dict(decision(),reason='action_event')
+    r=choose(d,step=30,previous_mode=previous,phases=[],events=[],costs=ordinary_costs(),
+        fast_delay=5,policy=CRITICAL_POLICY,every_event=True)
+    assert r['mode']=='Fast' and r['event_fast_override']
+    assert r['reason']=='critical_event_fast'
+    assert all(d[k]==v for k,v in r['full_schedule'].items())
+
+
+@pytest.mark.parametrize('protected',[False,True])
+def test_every_event_fast_does_not_remove_the_buffer_cadence(protected):
+    from perceptbudget.ordinary_fast import CRITICAL_POLICY
+    phases=[dict(start_step=20,stop_step=40,anchors=[dict(kind='gripper_close')])] if protected else []
+    r=choose(decision(),step=30,previous_mode='Fast',phases=phases,events=[],costs=ordinary_costs(),
+        fast_delay=5,policy=CRITICAL_POLICY,every_event=True)
+    assert r['mode']=='Full' and not r['event_fast_override']
+
+
 def test_idle_threshold_does_not_override_fast_pair_labels():
     from perceptbudget.device_quality import frequency_pair_views
     c=dict(m3_ordinary_fast_pair=True,m3_idle_min_ms=50,m3_three_frequency=True)
@@ -137,6 +179,20 @@ def test_alternating_pool_retains_current_state_in_real_context_inputs():
     result=adapter.context_inputs(snapshot,'selective464')
     assert cfg['m2_fast_no_state'] is False
     assert result['state'] is snapshot['state'] and result['images']==snapshot['images']
+
+
+@pytest.mark.parametrize('flag',['m3_fast_stable','m3_fast_critical'])
+def test_stage_fast_retains_only_real_state_while_full_keeps_padding(flag):
+    from perceptbudget.rtc_visual_alternation import configure_explicit_inputs,FreshViewRTCAdapter
+    cfg=dict(m3_ordinary_fast_context=True,
+        m3_ordinary_fast_visual_mode='pool2_agent',m3_fast_state_dims=8,m2_fast_no_state=True)
+    cfg[flag]=True
+    configure_explicit_inputs(cfg)
+    adapter=object.__new__(FreshViewRTCAdapter);adapter.config=cfg
+    state=list(range(8))+[0.]*24;snapshot=dict(images=[object(),object()],state=state)
+    assert cfg['m2_fast_no_state'] is False
+    assert adapter.context_inputs(snapshot,'pool2_agent')['state']==state[:8]
+    assert adapter.context_inputs(snapshot,'full')['state'] is state
 
 
 @pytest.mark.parametrize('tokens,positions',[(320,False),(464,False),(464,True)])

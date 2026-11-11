@@ -283,7 +283,7 @@ def audit(run):
               and cfg.get('m3_action_events_enabled')==expected_events and cfg.get('m3_merge_slowdown_steps') is None)
         check('formal_request_watchdog',cfg.get('m3_request_timeout_seconds')==3. and bool(cfg.get('m3_watchdog_path')))
     check('sequential_control_steps',[r['step'] for r in controls]==list(range(len(controls))))
-    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','full_fast_alternating_state_v1','full_fast_alternating_no_state_v1'):
+    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','critical_fast_feedback_buffer_v1','full_fast_alternating_state_v1','full_fast_alternating_no_state_v1'):
         check('fast_request_only_capture_enabled',cfg.get('m4_lean_continue') is True
               and cfg.get('m4_request_only_images') is True)
         for row in controls:
@@ -384,12 +384,12 @@ def audit(run):
                         check('alternating_state_contract',f['policy']==cfg['m3_ordinary_fast_policy']
                             and cfg.get('m3_fast_alternation') is True and cfg.get('m2_fast_no_state')==
                             (cfg['m3_ordinary_fast_policy']=='full_fast_alternating_no_state_v1'),pid)
-                    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3'):
+                    if cfg.get('m3_ordinary_fast_policy') in ('ordinary_fast_feedback_buffer_v2','ordinary_fast_feedback_buffer_v3','critical_fast_feedback_buffer_v1'):
                         raw=decision['critical_forecast']['result']['events']
                         near=[dict(e,prediction_id=previous['prediction_id']) for e in raw
                               if e['kind'].startswith('gripper_') and abs(e['target_step']-origin)<=ec.match_steps]
                         ordinary=decision['reason']=='buffer' and not near
-                        if cfg['m3_ordinary_fast_policy']=='ordinary_fast_feedback_buffer_v3':
+                        if cfg['m3_ordinary_fast_policy'] in ('ordinary_fast_feedback_buffer_v3','critical_fast_feedback_buffer_v1'):
                             protected=[p for p in active if any(a['kind'].startswith('gripper_') for a in p.get('anchors',[]))]
                             ordinary=ordinary and not protected
                             check('ordinary_gripper_phase_protection',f.get('protected_gripper_phases')==protected,pid)
@@ -402,7 +402,13 @@ def audit(run):
                     if not alternating:
                         check('ordinary_phase_gate',f['ordinary']==ordinary and f['active_phases']==active,pid)
                     check('ordinary_previous_mode',f['previous_mode']==prior,pid)
-                    check('ordinary_full_schedule_preserved',all(decision[k]==v for k,v in f['full_schedule'].items()),pid)
+                    schedule=f.get('selected_schedule') if decision.get('fast_start_budget') else f.get('full_schedule')
+                    check('ordinary_selected_schedule_recorded',bool(schedule)
+                        and all(decision[k]==v for k,v in schedule.items()),pid)
+                    if decision.get('fast_start_budget'):
+                        check('ordinary_fast_budget_opt_in',cfg.get('m3_fast_own_budget') is True
+                            and decision['reason']=='action_event'
+                            and f.get('timing_basis')=='critical_fast_own_budget_v1',pid)
                     window=max(0.,decision['deadline']-decision['margin_seconds']-max(decision['decision_monotonic'],decision['latest_start']))
                     energy=[]
                     for proposal,mode in zip(f['candidates'],('Full','Fast')):
@@ -416,6 +422,10 @@ def audit(run):
                     allowed=(ordinary and prior!='Fast' and not decision['deadline_already_unreachable']
                         and estimate<=decision['rtc_delay_steps'] and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds'])
                     expected='Fast' if allowed and energy[1]<energy[0] else 'Full'
+                    if cfg.get('m3_ordinary_fast_policy')=='critical_fast_feedback_buffer_v1':
+                        expected='Fast' if (not ordinary and prior!='Fast'
+                            and estimate<=decision['rtc_delay_steps']
+                            and c['modes']['Fast']['mean_seconds']<=c['modes']['Full']['mean_seconds']) else 'Full'
                     if alternating:
                         ratio=cfg.get('m3_fast_full_per_fast',1)
                         streak=0
@@ -428,9 +438,15 @@ def audit(run):
                     if (cfg.get('m3_full_approach_delta') is not None and decision.get('reason')=='action_event'
                             and decision.get('critical_step') in decision.get('full_approach_target_steps',[])):
                         expected='Full'
+                    if cfg.get('m3_fast_every_event'):
+                        force_event=decision['reason']=='action_event'
+                        check('critical_event_fast_explicit_override',f.get('event_fast_override')==force_event,pid)
+                        if force_event:expected='Fast'
                     check('ordinary_choice_formula',f['mode']==expected,pid)
                 check('ordinary_explicit_mode',declared==expected,pid)
-                check('ordinary_no_consecutive_fast',declared!='Fast' or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
+                event_exception=cfg.get('m3_fast_every_event') and decision.get('reason')=='action_event'
+                check('ordinary_no_consecutive_fast',declared!='Fast' or event_exception
+                    or by_id[pid-1]['m3_fast_choice']['mode']=='Full',pid)
                 expected_mode=cfg.get('m3_ordinary_fast_visual_mode','selective320') if declared=='Fast' else 'full'
             if cfg.get('m3_fast_enabled'):
                 choice=request.get('m3_fast_choice',{})
@@ -540,7 +556,27 @@ def audit(run):
                     and visual.get('external_tokens')==160 and visual.get('wrist_tokens')==256
                     and g.get('state_in_prompt') is True,pid)
             if expected_mode=='pool2_agent':
-                check('fresh_visual_pooled_camera',visual.get('pooled_view')=='agent',pid)
+                if cfg.get('m3_external_token_selector')=='divprune':
+                    indices=visual.get('external_token_indices',[])
+                    motion=bool(cfg.get('m3_external_motion_tokens'))
+                    check('fresh_visual_external_divprune',
+                        visual.get('compression')==('motion16_divprune48_external_v1' if motion else 'divprune_cosine_max_min_external_v1')
+                        and visual.get('external_tokens')==64 and visual.get('wrist_tokens')==256
+                        and len(indices)==64 and indices==sorted(set(indices))
+                        and all(type(i) is int and 0<=i<256 for i in indices),pid)
+                    if motion:
+                        seeds=visual.get('motion_token_indices',[])
+                        fulls=[i for i,q in by_id.items() if i<pid and q.get('context_refresh',{}).get('mode')=='full']
+                        reference=max(fulls) if fulls else None
+                        check('fresh_visual_motion16',visual.get('motion_tokens_requested')==16
+                            and visual.get('motion_tokens_used')==len(seeds)
+                            and len(seeds) in (0,16) and len(set(seeds))==len(seeds)
+                            and set(seeds)<=set(indices)
+                            and visual.get('motion_score_method')=='mean_abs_rgb_patch16_v1'
+                            and visual.get('motion_reference_prediction_id')==reference
+                            and reference is not None
+                            and visual.get('motion_reference_observation_step')==by_id[reference]['observation_step'],pid)
+                else:check('fresh_visual_pooled_camera',visual.get('pooled_view')=='agent',pid)
             if expected_mode=='selective320':
                 check('selective320_camera_counts',visual.get('pooled_view')=='both'
                     and visual.get('compression')=='redundancy_selected_32_of64_blocks_per_camera'
@@ -604,6 +640,29 @@ def audit(run):
                                 abs(row['latest_start']-latest)<1e-8 and row['feasible']==(latest>=now-1e-9),pid)
                         expected=candidates[0] if candidates[0]['feasible'] else candidates[1]
                         policy='medium_first_v1'
+                        budget_policy=f.get('budget_policy',f.get('policy'))
+                        if budget_policy=='critical_fast_own_budget_v1':
+                            policy=budget_policy
+                            check('fast_service_budget_opt_in',cfg.get('m3_fast_own_budget') is True
+                                and t['reason']=='action_event',pid)
+                            original=f.get('full_candidates',[])
+                            check('fast_service_full_reference',len(original)==2,pid)
+                            for row,full in zip(candidates,original):
+                                profile=row['profile']
+                                if row['mode']=='Fast':
+                                    from perceptbudget.deadline_controller import percentile
+                                    delay=max(mode_histories[cfg.get('m3_ordinary_fast_visual_mode','selective320')+':'+profile])
+                                    prior=percentile(cfg['ordinary_fast_costs']['cells'][profile]['modes']['Fast']['samples_seconds'],
+                                        cfg['m3_timing']['service_quantile'])
+                                    period=t['estimated_control_period_seconds']
+                                    transition=(full['switch_seconds']+full['ack_reserve_seconds']
+                                        if t['current_profile']!=profile else 0.)
+                                    service=min(full['service_seconds'],max(prior,delay*period)+period+transition)
+                                    check('fast_service_uses_own_history',row['fast_delay_steps']==delay
+                                        and abs(row['fast_prior_seconds']-prior)<1e-8
+                                        and abs(row['service_seconds']-service)<1e-8,pid)
+                                else:
+                                    check('fast_service_full_unchanged',all(row[k]==v for k,v in full.items()),pid)
                         if cfg.get('m3_full_energy'):
                             from perceptbudget.full_energy import audit_record,POLICY
                             policy=POLICY;energy=f.get('energy',{})
@@ -623,7 +682,23 @@ def audit(run):
                                 if energy['selected']:
                                     expected=next(c for c in candidates if c['profile']==energy['profile'])
                             check('full_energy_choice_present',bool(energy),pid)
-                        check('three_frequency_medium_first',f['selected']==expected
+                        if f.get('policy')=='critical_event_high_v1':
+                            anchor=t.get('critical_high_prepare_anchor',{})
+                            supplement=t.get('critical_freshness')
+                            anchor_ok=(not anchor and not f.get('prepare_anchor')
+                                and f.get('supplement_prepare_rule')=='selected_mode_service_budget'
+                                and cfg.get('m3_action_signal_settings',{}).get('critical_freshness_max_age_steps') is not None
+                                if supplement else f.get('prepare_anchor')==anchor
+                                and anchor.get('profile')==expected['profile']
+                                and anchor.get('latest_start')==expected['latest_start'])
+                            check('critical_high_original_trigger',cfg.get('m3_critical_high') is True
+                                and t['reason']=='action_event' and f.get('baseline_selected')==expected
+                                and f.get('budget_policy')==policy
+                                and anchor_ok,pid)
+                            expected=candidates[1];policy='critical_event_high_v1'
+                        elif cfg.get('m3_critical_high') and t['reason']=='action_event':
+                            check('critical_high_event_must_use_high',False,pid)
+                        check('three_frequency_profile_selection',f['selected']==expected
                             and request.get('m4_compute_profile')==expected['profile']
                             and request.get('m3_full_frequency')==expected['profile']
                             and request.get('m3_three_frequency_policy')==policy
@@ -748,13 +823,83 @@ def audit(run):
                                 for e in suppressed) and not any(e['target_step']==d.get('critical_step')
                                 and e['kind'] in d.get('candidate_event_kinds',[])
                                 for e in suppressed),pid)
+                        signal_candidate=None
+                        if cfg.get('m3_action_signal_settings'):
+                            from perceptbudget.action_signal_experiment import prepare
+                            signal=d.get('action_signal_review',{})
+                            signal_reference=(dict(origin=reference_request['observation_step'],
+                                actions=reference_request['actions']) if reference_request else None)
+                            signal_source=source_decisions[0]
+                            signal_phases=(signal_source.get('refresh_phase_history',[])
+                                if cfg.get('m3_phase_coverage_memory') else
+                                [signal_source['refresh_phase_covered']]
+                                if signal_source.get('refresh_phase_covered') else [])
+                            packet=prepare(actions=old['actions'],origin=old['observation_step'],
+                                source_step=at,history={i:by_step[i]['action'] for i in past_steps},
+                                reference=signal_reference,config=ec,settings=cfg['m3_action_signal_settings'],
+                                period=proof['source_period_seconds'],response_seconds=report['response_seconds'],
+                                margin_seconds=t['margin_seconds'],
+                                prediction_count=sum(i<=old['prediction_id'] for i in by_id),
+                                covered_phases=signal_phases)
+                            check('action_signal_budget_and_features',signal==packet['review']
+                                and signal==source_decisions[0].get('action_signal_review'),pid)
+                            if 'action_revision' in d.get('candidate_event_kinds',[]):
+                                check('action_signal_request_interval_budget',
+                                    origin>=signal['earliest_new_request_step'],pid)
+                            signal_candidate=packet['review']['candidate']
                         critical=d.get('critical_step')
+                        freshness=d.get('critical_freshness')
+                        if freshness:
+                            from perceptbudget.critical_wait import covered_by_phase
+                            limit=cfg.get('m3_action_signal_settings',{}).get('critical_freshness_max_age_steps')
+                            prior_freshness=[q.get('m3_timing',{}).get('critical_freshness')
+                                for q in by_id.values() if q['prediction_id']<pid]
+                            covered=any(covered_by_phase(freshness,p)
+                                for p in d.get('refresh_phase_history',[]))
+                            if not covered:
+                                covered=any(q.get('m3_timing',{}).get('critical_step') is not None
+                                    and freshness['kind'] in q['m3_timing'].get('candidate_event_kinds',[])
+                                    and abs(q['m3_timing']['critical_step']-critical)<=ec.match_steps
+                                    and any(c['prediction_id']==q['prediction_id']
+                                        and c['commit_monotonic']<=d['decision_monotonic'] for c in commits)
+                                    for q in by_id.values() if q['prediction_id']<pid)
+                            check('critical_freshness_source_and_age',type(limit) is int
+                                and freshness['source_observation_step']==old['observation_step']
+                                and freshness['source_age_steps']==critical-old['observation_step']>limit
+                                and freshness['maximum_age_steps']==limit and covered
+                                and freshness['target_step']==critical
+                                and any(e['target_step']==critical and e['kind']==freshness['kind'] for e in replay['events']),pid)
+                            wait_steps=cfg.get('m3_action_signal_settings',{}).get('critical_freshness_max_wait_steps',0)
+                            expected_wait=max(0.,t['decision_monotonic']+t['service_seconds']+t['margin_seconds']-t['deadline'])
+                            wait_allowed=(freshness.get('wait_policy')=='critical_freshness_short_wait_v1'
+                                and type(wait_steps) is int and 0<wait_steps<=2
+                                and freshness.get('maximum_wait_steps')==wait_steps
+                                and abs(freshness.get('estimated_wait_seconds',-1.)-expected_wait)<1e-8
+                                and 0.<expected_wait<=wait_steps*t['estimated_control_period_seconds']+1e-8)
+                            check('critical_freshness_once_and_timely',not any(p and p['kind']==freshness['kind']
+                                and p['start_step']<=critical<p['stop_step'] for p in prior_freshness)
+                                and origin<critical and (expected_wait<=1e-8 or wait_allowed)
+                                and request.get('m4_compute_profile')=='baseline'
+                                and freshness['selected_mode']==request.get('m3_fast_choice',{}).get('mode','Full'),pid)
+                            if freshness.get('pause_policy'):
+                                correction=cfg.get('m3_action_signal_settings',{}).get('critical_freshness_correction_steps',0)
+                                at=min(e['step'] for e in events if e.get('event')=='m3_decision'
+                                    and e.get('decision_monotonic')==d['decision_monotonic'])
+                                pause=max(at,critical-correction)
+                                expected_pause=max(0.,t['decision_monotonic']+t['service_seconds']+t['margin_seconds']
+                                    -(t['decision_monotonic']+(pause-at)*t['estimated_control_period_seconds']))
+                                check('critical_freshness_pre_grasp_correction',type(correction) is int and 0<correction<=2
+                                    and freshness['kind']=='gripper_close'
+                                    and freshness['pause_policy']=='pre_grasp_correction_v1'
+                                    and freshness['correction_steps']==correction and freshness['pause_step']==pause
+                                    and abs(freshness['estimated_pause_seconds']-expected_pause)<1e-8,pid)
                         originals=[e for e in events if e['event']=='m3_decision'
                             and e.get('decision_monotonic')==d['decision_monotonic']]
                         decision_step=min(e['step'] for e in originals)
                         expected_time=d['decision_monotonic']+(critical-decision_step)*d['estimated_control_period_seconds'] if critical is not None else None
                         check('remaining_forecast_current_arrival',d.get('critical_time_monotonic')==expected_time
-                            and (critical is None or any(e['target_step']==critical for e in replay['events'])),pid)
+                            and (critical is None or any(e['target_step']==critical for e in replay['events'])
+                                 or signal_candidate is not None and signal_candidate['target_step']==critical),pid)
                         if cfg.get('m3_phase_event_source'):
                             from perceptbudget.key_phases import intervals_for_timing
                             check('remaining_phase_event_source',
@@ -792,7 +937,9 @@ def audit(run):
                                     and (e['prediction_id'],e['target_step']) not in restored
                                     for e in suppressed),pid)
                                 check('ordinary_turn_retains_critical_signal',not any(
-                                    e['target_step']==d.get('critical_step') for e in suppressed),pid)
+                                    e['target_step']==d.get('critical_step')
+                                    and (not cfg.get('m3_action_signal_settings')
+                                         or e['kind'] in d.get('candidate_event_kinds',[])) for e in suppressed),pid)
                 if cfg.get('m3_phase_refresh'):
                     from perceptbudget.key_phases import intervals_for_timing
                     from perceptbudget.action_events import EventConfig
@@ -877,6 +1024,19 @@ def audit(run):
                             target=d['key_phase_response']['target_step']
                             limits.append((now+(target-original_step)*period,'key_phase'))
                         expected_deadline,expected_reason=min(limits)
+                        if d.get('grasp_lead'):
+                            lead=d['grasp_lead'];steps=cfg.get('m3_grasp_lead_steps',0)
+                            physical_deadline=expected_deadline
+                            target=d['critical_step']-steps
+                            expected_deadline=min(expected_deadline,now+(target-original_step)*period)
+                            check('m3_grasp_correction_deadline',steps>0 and expected_reason=='action_event'
+                                and 'gripper_close' in d.get('candidate_event_kinds',[])
+                                and lead.get('policy')=='gripper_close_correction_lead_v1'
+                                and lead.get('lead_steps')==steps
+                                and lead.get('physical_critical_step')==d['critical_step']
+                                and lead.get('refresh_target_step')==target
+                                and abs(lead.get('lead_seconds',-1)-steps*period)<1e-8
+                                and abs(lead.get('physical_deadline',-1)-physical_deadline)<1e-8,pid)
                         check('m3_signal_deadline_and_hard_bounds',
                               abs(d['deadline']-expected_deadline)<1e-8 and d['reason']==expected_reason,pid)
                 expected_start=d['deadline']-d['service_seconds']-d['margin_seconds'] if d else float('nan')
@@ -921,6 +1081,39 @@ def audit(run):
                         and cap.get('observation_step')==old['observation_step']
                         and cap.get('interval_steps')==periodic and origin<=request_step) if periodic is not None else (
                         cfg.get('m3_first_refresh_step')==30 and old['prediction_id']==0 and d.get('critical_step') is None)
+                    if cap.get('scope')=='post_close_feedback':
+                        from perceptbudget.post_close_feedback import confirmed_closure,saturated_lift_warning
+                        proof=cap['feedback']
+                        prior_controls=[by_step[i] for i in sorted(by_step)
+                            if i<proof['activation_step']]
+                        closure=confirmed_closure(prior_controls,EventConfig(**cfg.get('m3_events',{})))
+                        previous_observation=max((r['observation_step'] for r in requests
+                            if r['prediction_id']<pid),default=-1)
+                        request_step=proof['activation_step']+1
+                        signal_settings=cfg.get('m3_action_signal_settings',{})
+                        gated=bool(signal_settings.get('gripper_lift_feedback'))
+                        activation=next((e for e in events if e.get('event')=='m3_decision'
+                            and e.get('decision_monotonic')==proof['activation_monotonic']),None) if gated else None
+                        wait_limit=(2*activation['estimated_control_period_seconds'] if gated and activation
+                            else proof['full_seconds']+proof['margin_seconds'])
+                        gate_valid=True
+                        if gated:
+                            source=old['observation_step']
+                            next_actions=old['actions'][proof['activation_step']-source:
+                                proof['activation_step']-source+ec.confirm_steps]
+                            warning=saturated_lift_warning(prior_controls,next_actions,ec)
+                            gate_valid=(activation is not None and warning is not None and warning==proof.get('gripper_lift_warning')
+                                and abs(proof.get('existing_wait_threshold_seconds',-1.)-wait_limit)<1e-8)
+                        valid_cap=(bool(signal_settings.get('post_close_feedback') or gated) and gate_valid
+                            and proof.get('policy')=='post_close_observation_v1'
+                            and closure=={k:proof[k] for k in ('close_step','confirmed_step')}
+                            and proof['observation_step']==previous_observation
+                            and previous_observation<proof['confirmed_step']<=proof['activation_step']<=origin
+                            and proof['request_step']==request_step
+                            and proof['full_seconds']>0
+                            and proof['ordinary_wait_seconds']>wait_limit
+                            and abs(proof['ordinary_wait_seconds']-(proof['ordinary_latest_start']-
+                                proof['activation_monotonic']))<1e-8)
                     first_start=d['decision_monotonic']+(request_step-decision_step-recovery_ticks)*d['estimated_control_period_seconds']
                     check('m3_first_refresh_cap_inputs',valid_cap
                           and cap['request_step']==request_step and cap['recovery_ticks']==recovery_ticks
@@ -931,6 +1124,9 @@ def audit(run):
                     anchor=d.get('energy_prepare_anchor')
                     if cfg.get('m3_full_energy') and anchor and anchor['latest_start']<expected_start-1e-9:
                         expected_start=anchor['latest_start'];expected_constraint='full_energy_fixed_prepare'
+                    anchor=d.get('critical_high_prepare_anchor')
+                    if cfg.get('m3_critical_high') and anchor and anchor['latest_start']<expected_start-1e-9:
+                        expected_start=anchor['latest_start'];expected_constraint='critical_event_fixed_prepare'
                     check('m3_start_constraint',d['start_constraint']==expected_constraint,pid)
                 if d.get('fast_reserve_full') and request.get('m3_fast_choice',{}).get('mode')=='Fast':
                     expected_start-=math.ceil((d['fast_full_reserve_service_seconds']+d['margin_seconds'])/d['estimated_control_period_seconds']-1e-9)*d['estimated_control_period_seconds']

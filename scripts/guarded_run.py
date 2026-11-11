@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one child command, stopping its process group below 768 MiB free RAM.
+"""Run one child command, stopping its process group below 600 MiB available RAM.
 
 Usage: python scripts/guarded_run.py -- python scripts/eval_q.py --prepare-only
 """
@@ -11,7 +11,7 @@ import sys
 import time
 
 
-RAM_FLOOR_BYTES = 768 * 1024 * 1024
+RAM_FLOOR_BYTES = 600 * 1024 * 1024
 POLL_SECONDS = 0.1
 TERMINATE_GRACE_SECONDS = 2.0
 
@@ -57,8 +57,8 @@ def main(argv=None):
         return 125
     if available < RAM_FLOOR_BYTES:
         print(
-            "可用 RAM {:.1f} MiB 低于 768 MiB，未启动子进程".format(
-                available / (1024 * 1024)
+            "可用 RAM {:.1f} MiB 低于 {} MiB，未启动子进程".format(
+                available / (1024 * 1024), RAM_FLOOR_BYTES // (1024 * 1024)
             ),
             file=sys.stderr,
         )

@@ -211,24 +211,34 @@ def resume_full(source, config):
           'm3_critical_forecast','m3_phase_event_source','m3_phase_coverage_memory',
           'm3_event_identity',
           'm3_ordinary_turn_policy','m3_max_refresh_interval','m3_full_approach_delta',
+          'm3_full_approach_scope','m4_skip_eval_calibration','m3_external_token_selector','m3_external_selector_pair',
           'm3_feedback_policy','m3_feedback_minimum_steps',
+          'm3_action_signal_settings',
           'm3_ordinary_fast','m3_ordinary_fast_context','m3_ordinary_fast_policy','m3_ordinary_fast_visual_mode','m3_ordinary_fast_positions',
-          'm3_fast_alternation','m2_fast_no_state','m3_fast_full_per_fast','m3_fast_cadence_pair',
+          'm3_fast_alternation','m3_fast_stable','m3_fast_critical','m2_fast_no_state','m3_fast_full_per_fast','m3_fast_cadence_pair',
+          'm3_fast_state_dims','m3_fast_state_prompt_capacity',
+          'm3_fast_own_budget','m3_fast_budget_pair','m3_fast_every_event',
+          'm3_grasp_lead_steps','m3_critical_high',
+          'm3_external_motion_tokens','m3_external_motion_pair',
           'm4_common_low_tail_seconds','m4_policy_revision','rtc_critical_wait_prefix_policy')
     if (group not in ('q30','m3') or original.get('m4_acceptance_manifest')!=fixed
             or any(original.get(k)!=config.get(k) for k in keys)):
         raise ValueError('Full resume requires the identical task/model/capture/scheduling configuration')
     record=json.loads((source/'recording.json').read_text())
-    expected={tuple(t) for t in fixed['tasks']};seen=set()
+    paired=config.get('m3_fast_budget_pair') or config.get('m3_external_motion_pair')
+    tasks=record['task_plan'] if paired else fixed['tasks']
+    expected={tuple(t) for t in tasks};seen=set()
+    views={'ordinary_full','ordinary_fast'} if paired else {'full'}
     for row in record['episodes']:
         key=(row['suite'],row['task_id']);run=Path(row['run'])
-        if key not in expected or key in seen or row['view']!='full':
+        episode_key=(*key,row['view'])
+        if key not in expected or episode_key in seen or row['view'] not in views:
             raise ValueError('Unexpected or duplicate completed Full episode')
         saved=json.loads((run/'summary.json').read_text())
         if saved.get('status')!='completed' or not audit(run)['passed'] or not clock_audit(run)['passed']:
             raise ValueError('Completed Full episode failed resume audit: '+str(run))
-        seen.add(key)
-    remaining=[t for t in fixed['tasks'] if tuple(t) not in seen]
+        seen.add(episode_key)
+    remaining=[t for t in tasks if any((*t,view) not in seen for view in views)]
     if not remaining:raise ValueError('Full group is already complete')
     return dict(source=str(source),episodes=copy.deepcopy(record['episodes']),remaining_tasks=remaining,
                 previous_model_loads=record.get('previous_model_loads',0)+record['model_loads'])

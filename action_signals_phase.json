@@ -1,0 +1,19 @@
+{
+  "version": "paired_action_signals_v3",
+  "thresholds": {
+    "translation_change": 0.2574498897650787,
+    "rotation_change": 0.03558379266454035,
+    "translation_disagreement": 0.7609199197775741,
+    "rotation_disagreement": 0.07668477027996262
+  },
+  "minimum_request_steps": 20,
+  "minimum_mean_steps": 22,
+  "threshold_quantile": 0.9,
+  "source_index": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261107T133827.733437Z-critical-high-mixed-expansion3-seeds/results.json",
+  "calibration": "All available matching M4 episodes, pooled without success/task/seed labels; no parameter search",
+  "aggregation": "Both changes and disagreements: per two-step window, same absolute steps",
+  "consumed_prefix": "excluded offline and online; handoff history never supplies new-cue changes",
+  "refresh_budget_enabled": false,
+  "pair_components": false,
+  "experimental_change": "Only honor completed action_revision phase coverage, retaining v2 evidence and thresholds. Same-component restriction disabled."
+}

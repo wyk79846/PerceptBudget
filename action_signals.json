@@ -1,0 +1,16 @@
+{
+  "version": "budgeted_action_signals_v1",
+  "thresholds": {
+    "translation_change": 0.2574498897650787,
+    "rotation_change": 0.03558379266454035,
+    "translation_disagreement": 1.1254511336711575,
+    "rotation_disagreement": 0.10818925715589009
+  },
+  "minimum_request_steps": 20,
+  "minimum_mean_steps": 22,
+  "threshold_quantile": 0.9,
+  "source_index": "/home/wyk/workspace/任务产出/perceptbudget/M4/20261107T133827.733437Z-critical-high-mixed-expansion3-seeds/results.json",
+  "calibration": "All available matching M4 episodes, pooled without success/task/seed labels; no parameter search",
+  "aggregation": "Motion changes: per two-step window; plan disagreements: maximum sustained overlap per chunk",
+  "consumed_prefix": "excluded; first two rows without executed history not used for change quantiles"
+}

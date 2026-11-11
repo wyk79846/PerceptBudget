@@ -7,11 +7,12 @@ import copy
 import math
 
 
-def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,pool_factor=1,pooled_view='both'):
+def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,pool_factor=1,pooled_view='both',state_dimensions=32):
     """8 varying state bins (-1..255), each 2..4 tokenizer tokens.
 
-    The other 24 padded state values and task text stay fixed. No padding or
-    altered model inputs: enumerate exact shapes before the timed episode.
+    In32-dimensional mode the other24 padded values stay fixed;8-dimensional
+    mode omits them from Fast's text. Enumerate exact shapes for the selected
+    representation before the timed episode.
     """
     if type(num_views) is not int or num_views not in (1,2):
         raise ValueError('H50 prefix coverage supports one or two views')
@@ -24,7 +25,7 @@ def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,p
         if num_views!=2 or pool_factor==1:
             raise ValueError('Mixed pooling requires two cameras and factor2/4')
         visual=256+256//pool_factor**2
-    capacity = visual+200
+    capacity = visual+(104 if state_dimensions==8 else 200)
     if type(initial_valid) is not int or not visual<=initial_valid<=capacity:
         raise ValueError('invalid H50 initial prefix for selected view count')
     if tokenizer is None:
@@ -33,7 +34,7 @@ def h50_state_prefix_lengths(initial_valid,prompt,tokenizer=None,*,num_views=2,p
     cleaned=str(prompt).strip().replace('_',' ').replace('\n',' ')
     def count(value):
         # normalize_state pads the last 24 entries with zero, whose bin is127.
-        state=' '.join(map(str,[value]*8+[127]*24))
+        state=' '.join(map(str,[value]*8+[127]*(state_dimensions-8)))
         return min(capacity,visual+len(tokenizer.encode(f'Task: {cleaned}, State: {state};\nAction: ',add_bos=True)))
     low,high=count(0),count(255)
     if not low<=initial_valid<=high or not 1<=high-low+1<=17:
@@ -271,7 +272,7 @@ class SourceStepBank:
     Only setup may build graphs. No runtime padding, recapture or LRU eviction.
     Returned buffers must be consumed before any other graph is replayed.
     """
-    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None,resident=False,pool=None):
+    def __init__(self,expert,lengths,noise,*,progress=None,beta=5.,max_lengths=8,stream=None,resident=False,pool=None,verify=True,cache_limit=None):
         import time
         import torch
         from perceptbudget.openpi_reference import sample_original_rtc
@@ -280,7 +281,13 @@ class SourceStepBank:
             raise ValueError('invalid exact prefix bank size limit')
         if not lengths or len(lengths)>max_lengths or any(type(n) is not int or not 1<=n<=712 for n in lengths):
             raise ValueError('prepare between one and eight exact prefix lengths by default; explicit limit up to17')
+        if cache_limit is not None and (not resident or type(cache_limit) is not int
+                or not max_lengths<=cache_limit<=32):
+            raise ValueError('Resident cache must cover the active family and stay within32 lengths')
+        self.cache_limit=cache_limit
+        self.active_lengths=set(lengths)
         self.fallback=expert
+        self.verify=verify
         self.entries={}
         self.audits=[]
         # Only one exact-length graph may execute at a time. Keep one maximum
@@ -303,7 +310,7 @@ class SourceStepBank:
         self._prepare(lengths,noise,beta,progress)
 
     def prepare_resident(self,lengths,noise,*,beta,progress=None):
-        """Between episodes only: retain overlapping exact graphs, at most17."""
+        """Between episodes only: retain a bounded cache of exact graphs."""
         import torch
         lengths=tuple(sorted(set(lengths)))
         if not self.resident or not lengths or len(lengths)>17 or any(type(n) is not int or not 1<=n<=712 for n in lengths):
@@ -311,16 +318,32 @@ class SourceStepBank:
         if any(a['beta']!=float(beta) for a in self.audits):
             raise ValueError('Resident graph beta changed')
         torch.cuda.synchronize()
-        evicted=[n for n in self.entries if n not in lengths]
+        limit=getattr(self,'cache_limit',None) or len(lengths)
+        if limit<len(lengths):
+            raise ValueError('Resident cache cannot evict a currently required length')
+        missing=set(lengths)-self.entries.keys()
+        evicted=[]
+        for n in self.entries:
+            if len(self.entries)+len(missing)-len(evicted)<=limit:
+                break
+            if n not in lengths:
+                evicted.append(n)
         for n in evicted:
             _,graph=self.entries.pop(n)
             graph.release()
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
+        if evicted:
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
         retained=set(self.entries)
         self.audits=[dict(a,reused=True) for a in self.audits if a['valid'] in retained]
         self._prepare([n for n in lengths if n not in retained],noise,beta,progress)
+        self.active_lengths=set(lengths)
+        # Dict insertion order is the setup-only recency list. All currently
+        # required lengths are protected; inference never evicts or captures.
+        for n in lengths:
+            entry=self.entries.pop(n)
+            self.entries[n]=entry
 
     def _prepare(self,lengths,noise,beta,progress):
         import time
@@ -339,18 +362,21 @@ class SourceStepBank:
             count=min(valid,expert.keys.shape[-2])
             bound.keys[...,:count,:].copy_(expert.keys[...,:count,:])
             bound.values[...,:count,:].copy_(expert.values[...,:count,:])
-            reference,reference_norms=sample_original_rtc(bound,noise,noise[5:].clone(),5,5,beta=beta,author_order=True)
+            if self.verify:
+                reference,reference_norms=sample_original_rtc(bound,noise,noise[5:].clone(),5,5,beta=beta,author_order=True)
             graph=SourceStepGraph(bound,noise,pool=pool,stream=stream,beta=beta)
-            got,norms=graph.replay(noise,noise[5:].clone(),5,5)
-            raw_error=float((reference-got).abs().max())
-            norm_error=float((norms-torch.tensor(reference_norms,device=noise.device)).abs().max())
-            passed=math.isfinite(raw_error) and math.isfinite(norm_error) and max(raw_error,norm_error)<1e-4
+            raw_error=norm_error=passed=None
+            if self.verify:
+                got,norms=graph.replay(noise,noise[5:].clone(),5,5)
+                raw_error=float((reference-got).abs().max())
+                norm_error=float((norms-torch.tensor(reference_norms,device=noise.device)).abs().max())
+                passed=math.isfinite(raw_error) and math.isfinite(norm_error) and max(raw_error,norm_error)<1e-4
             record=dict(valid=valid,beta=float(beta),raw_max_abs=raw_error,vjp_norm_max_abs=norm_error,
-                passed=passed,prepare_seconds=time.monotonic()-started,
+                passed=passed,prepared=True,validation_performed=self.verify,prepare_seconds=time.monotonic()-started,
                 allocated_mib=torch.cuda.memory_allocated()/2**20,reserved_mib=torch.cuda.memory_reserved()/2**20)
             self.audits.append(record)
             if progress is not None: progress(record)
-            if not passed: raise RuntimeError('source-step bank parity failed')
+            if self.verify and not passed: raise RuntimeError('source-step bank parity failed')
             self.entries[valid]=(bound,graph)
 
     def release(self):
@@ -364,4 +390,6 @@ class SourceStepBank:
         self.fallback=None
 
     def select(self,valid):
+        if valid not in getattr(self,'active_lengths',self.entries):
+            return self.fallback,None
         return self.entries.get(valid,(self.fallback,None))

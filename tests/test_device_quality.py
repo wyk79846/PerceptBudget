@@ -2,6 +2,31 @@
 from perceptbudget.device_quality import calibration_plan, select_candidate, SUITES
 
 
+def test_direct_evaluation_does_not_call_full_or_fast_timing_predictions():
+    from unittest.mock import Mock
+    from perceptbudget.device_quality import prediction_timing
+    predict = Mock(side_effect=AssertionError('Evaluation must not add timing predictions'))
+    config = dict(m4_skip_eval_calibration=True, ordinary_fast_costs=dict(cells=dict(
+        baseline=dict(modes={'Full': dict(samples_seconds=[.47, .48, .49]),
+                             'Fast': dict(samples_seconds=[.33, .34, .35])}))))
+    for mode, expected in [('Full', 480.), ('Fast', 340.)]:
+        result = prediction_timing(config, object(), predict, mode)
+        assert result['median_ms'] == expected
+        assert result['measured_during_evaluation'] is False
+    predict.assert_not_called()
+
+
+def test_full_only_evaluation_reuses_full_costs_without_loading_fast_or_probing():
+    from unittest.mock import Mock
+    from perceptbudget.device_quality import prediction_timing
+    predict = Mock(side_effect=AssertionError('No extra prediction'))
+    config = dict(m4_skip_eval_calibration=True, m3_low_full_costs=dict(cells=[
+        dict(mode='Full', profile='baseline', history='hot', service_samples_seconds=[.46, .48]),
+        dict(mode='Full', profile='gpu_emc', history='hot', service_samples_seconds=[.65])]))
+    assert abs(prediction_timing(config, object(), predict)['median_ms'] - 470.) < 1e-9
+    predict.assert_not_called()
+
+
 def test_visual_quality_purposes_fit_run_directory_contract():
     from perceptbudget.device_quality import quality_run_purpose
     from perceptbudget.experiment import _PURPOSE_PATTERN

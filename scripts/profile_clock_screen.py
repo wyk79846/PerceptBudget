@@ -43,7 +43,7 @@ def monitored_worker(command, out, *, request_watchdog=None, watchdog_grace_seco
     # Never send group signals: a finite privileged lease may be a descendant.
     from scripts.guarded_run import available_ram_bytes, RAM_FLOOR_BYTES
     if available_ram_bytes() < RAM_FLOOR_BYTES:
-        raise RuntimeError('Available RAM below 768MiB; not starting worker')
+        raise RuntimeError(f'Available RAM below {RAM_FLOOR_BYTES//2**20}MiB; not starting worker')
     child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
     try:
         while child.poll() is None:

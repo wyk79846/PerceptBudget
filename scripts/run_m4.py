@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--acceptance-group',choices=('q30','joint','m3','m3_fast'),help='Fixed four-suite/three-task acceptance group')
     parser.add_argument('--fixed-q',type=int,choices=(10,20,30),default=30,help='Execution interval for the fixed high-frequency baseline; use with --acceptance-group q30')
     parser.add_argument('--all-tasks',action='store_true',help='With M3 or q30: all10 tasks in each of the four LIBERO suites; preserve the default12-task manifest')
-    parser.add_argument('--reuse-prefix-graphs',action='store_true',help='Reuse the bounded exact-length Full CUDA graph bank across tasks, without skipping resets or calibration')
+    parser.add_argument('--reuse-prefix-graphs',action='store_true',help='Reuse exact-length CUDA graphs across tasks; evaluation reuses stored timing costs')
     parser.add_argument('--first-tasks',type=int,choices=(3,12),default=12,help='Use the first3 fixed tasks for an M3 screen')
     parser.add_argument('--task-indices',type=int,nargs='+',choices=range(40),help='Explicit canonical task indices;0..11 by default,0..39 with --all-tasks')
     parser.add_argument('--result-index',type=Path,help=argparse.SUPPRESS)
@@ -37,11 +37,29 @@ def main():
     parser.add_argument('--ordinary-fast-view',choices=('dual','wrist','pool2_agent'),default='dual',help='Fast geometry: selective dual, wrist only, or external64 plus full wrist256')
     parser.add_argument('--ordinary-fast-costs',type=Path,help='Completed measured costs for the explicitly selected ordinary Fast geometry')
     parser.add_argument('--ordinary-fast-positions',action='store_true',help='Energy Fast: preserve original camera/text coordinates and matching action positions')
+    parser.add_argument('--external-token-selector',choices=('avgpool','divprune'),default='avgpool',
+        help='External64/full-wrist256 Fast: uniform pooling or original-position DivPrune')
+    parser.add_argument('--external-selector-pair',action='store_true',
+        help='One resident model: compare external avgpool versus DivPrune; both alternate Full/Fast')
+    parser.add_argument('--external-motion-tokens',type=int,choices=(0,16),default=0,
+        help='Seed external DivPrune with16 patches changed since the preceding Full image')
+    parser.add_argument('--external-motion-pair',action='store_true',
+        help='One resident model: original64-token DivPrune versus motion16+DivPrune48 on each task')
     parser.add_argument('--ordinary-fast-pair',action='store_true',help='Resident current Full/Continue versus ordinary Fast pair; requires --ordinary-fast')
-    parser.add_argument('--fast-alternate',action='store_true',help='Simple Full/Fast alternation with state in both; retain Full refresh and clock rules')
+    parser.add_argument('--fast-own-budget',action='store_true',help='Critical Fast uses its own measured service budget; Full deadlines and RTC caps remain')
+    parser.add_argument('--fast-every-event',action='store_true',help='Use Fast for every action-event refresh, allowing consecutive Fast only on those events')
+    parser.add_argument('--fast-budget-pair',action='store_true',help='One resident model: current critical Fast timing versus its own service budget')
+    parser.add_argument('--grasp-lead-steps',type=int,choices=range(7),default=0,
+        help='Complete gripper-close refresh this many control steps early; service and RTC unchanged')
+    fast_selection=parser.add_mutually_exclusive_group()
+    fast_selection.add_argument('--fast-alternate',action='store_true',help='Simple Full/Fast alternation with state in both; retain Full refresh and clock rules')
+    fast_selection.add_argument('--fast-stable',action='store_true',help='Existing feedback_v3 template: allow Fast only for ordinary buffer refresh outside gripper operations; retain state and require Full after Fast')
+    fast_selection.add_argument('--fast-critical',action='store_true',help='Use Fast for critical refreshes and Full for ordinary stages; retain Full timing and require Full after Fast')
     parser.add_argument('--full-per-fast',type=int,choices=(1,2),default=1,help='Full requests per Fast in a strict repeating cadence, counting bootstrap Full')
     parser.add_argument('--fast-cadence-pair',action='store_true',help='Resident paired comparison of Full/Fast versus Full/Full/Fast')
     parser.add_argument('--fast-no-state',action='store_true',help='Keep state for Full, omit state only for alternating dual-view Fast')
+    parser.add_argument('--fast-state-dims',type=int,choices=(8,32),default=32,
+        help='Fast only: keep32 padded values or just the8 real state values; Full remains32')
     capture_options=parser.add_mutually_exclusive_group()
     capture_options.add_argument('--lean-continue',dest='lean_continue',action='store_true',default=None,
         help='Skip idle camera rendering and save request frames only; default for new Full/Continue M3 and q30 runs')
@@ -61,21 +79,49 @@ def main():
     parser.add_argument('--phase-refresh',action='store_true',help='M3: suppress repeated event refresh within an already refreshed motion phase')
     parser.add_argument('--simplified-refresh',action='store_true',help='Combine active phase memory, turn-direction identity and smooth-bend filtering; allow the H50 window instead of a20/30-step cap')
     parser.add_argument('--energy-refresh',action='store_true',help='Simplified Full plus prediction-consistency filtering and a20-step ordinary feedback window; no30-step cap')
+    parser.add_argument('--action-signals',type=Path,
+        help='Opt-in pooled action-signal settings JSON; enrich M1 cues with a20/22-step request budget')
     parser.add_argument('--full-approach-delta',type=float,
         help='Retain open-gripper turns into a downward-dominant approach; minimum increase in normalized downward command component')
     parser.add_argument('--first-refresh-step',type=int,choices=(30,),help='M3 experiment: first event-free refresh request at step30')
     parser.add_argument('--critical-wait',action='store_true',help='M3 only: stop simulation at a predicted key action until the pending refresh arrives')
+    parser.add_argument('--critical-high',action='store_true',help='Event-triggered Full/Fast use HIGH at the original preparation point; buffer refresh remains medium-first')
     parser.add_argument('--fast-key-phases',action='store_true',help='Experimental320 key-phase protection and one Full response')
     parser.add_argument('--full-only',action='store_true',help='M3 Fast ablation: retain window/controller but forbid Fast candidates')
     parser.add_argument('--dry-run',action='store_true')
+    parser.add_argument('--validate-setup',action='store_true',
+        help='Explicit setup diagnostics; normal evaluations skip repeated reference/layout/clock preflight checks')
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--prepare-environments',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--environment-cache-from',type=Path,help='Reuse a passed identical M4 task environment preflight')
     parser.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     args=parser.parse_args()
+    if args.action_signals and (args.acceptance_group!='m3' or not args.energy_refresh):
+        parser.error('--action-signals requires --acceptance-group m3 --energy-refresh')
+    if args.fast_every_event and not args.fast_critical:
+        parser.error('--fast-every-event requires --fast-critical')
+    if args.critical_high and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh or args.full_energy):
+        parser.error('--critical-high requires three-frequency M3 energy refresh without Full energy selection')
+    if args.grasp_lead_steps and (args.acceptance_group!='m3' or not args.three_frequency or not args.energy_refresh):
+        parser.error('--grasp-lead-steps requires three-frequency M3 energy refresh')
+    if args.external_motion_pair:
+        args.external_motion_tokens=16
+        args.ordinary_fast_pair=True
+    if args.external_motion_tokens and (not (args.fast_critical or args.fast_alternate) or args.external_token_selector!='divprune'
+            or args.external_selector_pair or args.fast_budget_pair or args.fast_cadence_pair):
+        parser.error('--external-motion-tokens requires critical or alternating DivPrune, without another paired policy')
+    if args.fast_budget_pair:
+        args.fast_own_budget=True
+        args.ordinary_fast_pair=True
+    if args.fast_own_budget and (not (args.fast_critical or args.fast_alternate) or args.external_selector_pair or args.fast_cadence_pair):
+        parser.error('--fast-own-budget requires critical or alternating Fast without another paired policy')
     if args.full_approach_delta is not None and (args.acceptance_group!='m3' or not args.energy_refresh
             or not 0<args.full_approach_delta<1):
         parser.error('--full-approach-delta requires M3 energy refresh and a value between0 and1')
+    if args.external_selector_pair:
+        if args.external_token_selector!='divprune' or not args.fast_alternate:
+            parser.error('--external-selector-pair requires DivPrune and Full/Fast alternation')
+        args.ordinary_fast_pair=True
     if args.full_per_fast!=1 and not args.fast_alternate:parser.error('--full-per-fast requires --fast-alternate')
     if args.fast_cadence_pair:
         if not args.fast_alternate:parser.error('--fast-cadence-pair requires --fast-alternate')
@@ -102,10 +148,18 @@ def main():
     if args.ordinary_fast_pair and not args.ordinary_fast:parser.error('--ordinary-fast-pair requires --ordinary-fast')
     if args.fast_alternate and (not args.ordinary_fast or args.ordinary_fast_costs is None):
         parser.error('--fast-alternate requires --ordinary-fast and a timing prior')
-    if args.fast_no_state and (not args.fast_alternate or args.ordinary_fast_view not in ('dual','pool2_agent')):
-        parser.error('--fast-no-state requires alternating dual-view Fast')
+    if (args.fast_stable or args.fast_critical) and (not args.ordinary_fast or not args.energy_refresh or args.ordinary_fast_costs is None):
+        parser.error('--fast-stable/--fast-critical require energy-refresh ordinary Fast and a timing prior')
+    if args.fast_no_state and (not (args.fast_alternate or args.fast_stable or args.fast_critical) or args.ordinary_fast_view not in ('dual','pool2_agent')):
+        parser.error('--fast-no-state requires alternating or stable dual-view Fast')
+    if args.fast_state_dims==8 and (not (args.fast_alternate or args.fast_stable or args.fast_critical) or args.fast_no_state
+            or args.ordinary_fast_view!='pool2_agent' or not args.ordinary_fast_positions):
+        parser.error('--fast-state-dims8 requires stateful external64/full-wrist Fast with original positions')
     if args.ordinary_fast_view=='pool2_agent' and args.ordinary_fast_tokens!=320:
         parser.error('External64 plus wrist256 uses320 tokens')
+    if args.external_token_selector=='divprune' and not (
+            args.ordinary_fast and args.ordinary_fast_view=='pool2_agent' and args.ordinary_fast_positions):
+        parser.error('--external-token-selector divprune requires external64/full wrist Fast with original positions')
     if args.ordinary_fast_tokens!=320 and not args.ordinary_fast:parser.error('--ordinary-fast-tokens requires --ordinary-fast')
     if args.ordinary_fast_positions and not (args.ordinary_fast and args.energy_refresh):parser.error('--ordinary-fast-positions requires --ordinary-fast and --energy-refresh')
     if (args.ordinary_fast_view!='dual' or args.ordinary_fast_costs is not None) and not args.ordinary_fast:
@@ -153,7 +207,9 @@ def main():
     if args.task_indices and (args.acceptance_group not in ('m3','m3_fast','q30') or args.first_tasks!=12 or len(set(args.task_indices))!=len(args.task_indices)):
         parser.error('Explicit indices require M3 or q30, default first-tasks and unique indices')
     if args.m3_eta_ms!=25 and args.acceptance_group not in ('m3','m3_fast'):parser.error('Margin override requires M3')
-    cfg=load_config(repo_root=ROOT);validate(cfg)
+    cfg=load_config(repo_root=ROOT)
+    if args.validate_setup:validate(cfg)
+    cfg['m4_validate_setup']=args.validate_setup
     cfg['m3_low_full']=args.low_full
     cfg['m3_three_frequency']=args.three_frequency
     cfg['m3_full_energy']=args.full_energy
@@ -166,6 +222,17 @@ def main():
     cfg['m4_request_capture_pair']=args.request_capture_pair
     cfg['m4_all_tasks']=args.all_tasks
     cfg['m4_resident_prefix_graphs']=args.reuse_prefix_graphs
+    cfg['m4_prefix_cache_limit']=24 if args.reuse_prefix_graphs else None
+    cfg['m4_skip_eval_calibration']=True
+    if args.external_token_selector!='avgpool':cfg['m3_external_token_selector']=args.external_token_selector
+    if args.external_selector_pair:cfg['m3_external_selector_pair']=True
+    if args.fast_own_budget:cfg['m3_fast_own_budget']=True
+    if args.fast_every_event:cfg['m3_fast_every_event']=True
+    if args.critical_high:cfg['m3_critical_high']=True
+    if args.fast_budget_pair:cfg['m3_fast_budget_pair']=True
+    if args.grasp_lead_steps:cfg['m3_grasp_lead_steps']=args.grasp_lead_steps
+    if args.external_motion_tokens:cfg['m3_external_motion_tokens']=args.external_motion_tokens
+    if args.external_motion_pair:cfg['m3_external_motion_pair']=True
     if args.three_frequency:
         from perceptbudget.three_frequency import enable_profiles,transition_costs
         enable_profiles()
@@ -182,7 +249,11 @@ def main():
             m3_ordinary_turn_policy='context_v1',m3_max_refresh_interval=50)
     if args.energy_refresh:
         cfg.update(m3_feedback_policy='overlap_pacing_v2',m3_feedback_minimum_steps=20)
-    if args.full_approach_delta is not None:cfg['m3_full_approach_delta']=args.full_approach_delta
+    if args.action_signals:
+        from perceptbudget.action_signal_experiment import load_settings as load_action_signals
+        cfg['m3_action_signal_settings']=load_action_signals(args.action_signals)
+    if args.full_approach_delta is not None:
+        cfg.update(m3_full_approach_delta=args.full_approach_delta,m3_full_approach_scope='joint_v1')
     cfg['m3_critical_wait_phases']=args.critical_wait_phases
     cfg['m3_critical_wait']=args.critical_wait
     if args.critical_wait:
@@ -234,8 +305,8 @@ def main():
         cfg['m3_low_full_rtc_policy']='per_profile_v2'
         cfg['m3_low_full_costs']=load_costs(m4)
     if args.ordinary_fast:
-        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY,FEEDBACK_POLICY,ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY
-        policy=(ALTERNATING_NO_STATE_POLICY if args.fast_no_state else ALTERNATING_POLICY) if args.fast_alternate else FEEDBACK_POLICY if args.energy_refresh else POLICY
+        from perceptbudget.ordinary_fast import load_costs as fast_costs,POLICY,FEEDBACK_POLICY,CRITICAL_POLICY,ALTERNATING_POLICY,ALTERNATING_NO_STATE_POLICY
+        policy=CRITICAL_POLICY if args.fast_critical else (ALTERNATING_NO_STATE_POLICY if args.fast_no_state else ALTERNATING_POLICY) if args.fast_alternate else FEEDBACK_POLICY if args.energy_refresh else POLICY
         cfg.update(m3_ordinary_fast=True,m3_ordinary_fast_context=True,m3_ordinary_fast_pair=args.ordinary_fast_pair,
             m2_fast_no_state=True,m4_fast_prompt_capacity=32 if args.energy_refresh else 20,m4_policy_revision=policy,
             m3_ordinary_fast_policy=policy,m3_ordinary_fast_visual_mode='selective'+str(args.ordinary_fast_tokens),
@@ -244,8 +315,13 @@ def main():
             cfg.update(m3_ordinary_fast_visual_mode='wrist',m2_fast_no_state=False)
         if args.ordinary_fast_view=='pool2_agent':
             cfg.update(m3_ordinary_fast_visual_mode='pool2_agent')
-        if args.fast_alternate:
-            cfg.update(m3_fast_alternation=True,m3_fast_no_state=args.fast_no_state,m2_fast_no_state=args.fast_no_state)
+        if args.fast_alternate or args.fast_stable or args.fast_critical:
+            cfg.update(m3_fast_no_state=args.fast_no_state,m2_fast_no_state=args.fast_no_state)
+            if args.fast_alternate:cfg['m3_fast_alternation']=True
+            if args.fast_stable:cfg['m3_fast_stable']=True
+            if args.fast_critical:cfg['m3_fast_critical']=True
+            if args.fast_state_dims==8:
+                cfg.update(m3_fast_state_dims=8,m3_fast_state_prompt_capacity=104)
             if args.full_per_fast!=1:cfg['m3_fast_full_per_fast']=args.full_per_fast
             if args.fast_cadence_pair:cfg['m3_fast_cadence_pair']=True
         cost_key='ordinary_fast_position_cost_source' if args.ordinary_fast_positions else 'ordinary_fast_cost_source' if args.ordinary_fast_tokens==320 else 'ordinary_fast_464_cost_source'
@@ -281,12 +357,16 @@ def main():
             fixed_q=args.fixed_q if args.acceptance_group=='q30' else None,
             request_only_images=args.request_only_images,request_capture_pair=args.request_capture_pair,
             ordinary_fast_positions=args.ordinary_fast_positions,full_per_fast=args.full_per_fast,fast_cadence_pair=args.fast_cadence_pair,
-            fast_alternate=args.fast_alternate,
+            fast_alternate=args.fast_alternate,fast_stable=args.fast_stable,fast_critical=args.fast_critical,external_token_selector=args.external_token_selector,
+            fast_state_dimensions=None if args.fast_no_state else args.fast_state_dims,
             all_tasks=args.all_tasks,reuse_prefix_graphs=args.reuse_prefix_graphs,
+            evaluation_calibration='disabled; stored costs, then actual control/inference history',
+            setup_validation=args.validate_setup,
             simplified_refresh=args.simplified_refresh,phase_coverage_memory=cfg.get('m3_phase_coverage_memory'),
             event_identity=cfg.get('m3_event_identity'),ordinary_turn_policy=cfg.get('m3_ordinary_turn_policy'),full_approach_delta=args.full_approach_delta,
             max_refresh_interval=cfg.get('m3_max_refresh_interval'),
             feedback_policy=cfg.get('m3_feedback_policy'),feedback_minimum_steps=cfg.get('m3_feedback_minimum_steps'),
+            action_signal_settings=cfg.get('m3_action_signal_settings'),
             compute_profiles=['baseline','gpu_emc'] if cfg['m4_enabled'] or args.low_full else ['baseline'],
             policies=10 if cfg['m4_enabled'] else 1,
             three_frequency=args.three_frequency,full_energy=args.full_energy,idle_min_ms=settings['timing']['minimum_low_idle_seconds']*1000,idle_pair_ms=[args.idle_reference_ms,args.idle_min_ms] if args.full_frequency_pair and args.idle_min_ms is not None else None,start_floor_ms=args.start_floor_ms,full_frequency_pair=args.full_frequency_pair,lean_continue=cfg['m4_lean_continue'],continue_overhead_pair=args.continue_overhead_pair,ordinary_fast=args.ordinary_fast,ordinary_fast_pair=args.ordinary_fast_pair,episodes=len(pending_tasks)*(5 if args.rtc_delay_sensitivity else variant_count if pair else 1),common_low_tail_seconds=cfg.get('m4_common_low_tail_seconds'),low_full=args.low_full,low_full_policy=cfg.get('m3_low_full_policy'),phase_refresh=cfg['m3_phase_refresh'],first_refresh_step=cfg['m3_first_refresh_step'],critical_wait_phases=args.critical_wait_phases,critical_wait=args.critical_wait,key_phase_response_policy=cfg.get('m3_key_phase_response_policy'),fast_key_phases=args.fast_key_phases,fast_selective416=args.fast_selective416,fast_reserve_full=args.fast_reserve_full,full_only=args.full_only,m3_fast_selection=bool(cfg.get('m3_fast_enabled')),perception_policy=cfg.get('m3_fast_policy'),source='original M3 D_joint DeadlineRuntime, Full-high/low-Continue, explicit replay margin' if args.acceptance_group in ('m3','m3_fast') else f'fixed q{args.fixed_q} Full high-frequency actual async' if args.acceptance_group=='q30' else 'complete common-window plans, no inference in Continue')));return 0
@@ -362,10 +442,10 @@ def main():
     try:
         with (Path(cfg['output_root'])/'.async_gpu.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            if args.three_frequency:
+            if args.validate_setup and args.three_frequency:
                 from perceptbudget.three_frequency import preflight
                 preflight(run)
-            else:clock_preflight(run)
+            elif args.validate_setup:clock_preflight(run)
             command=[cfg['python_executable'],'-u',str(Path(__file__).resolve()),'--worker','--run-dir',str(run),
                 '--task-id',str(args.task_id),'--suites',*args.suites]
             if args.acceptance_group in ('m3','m3_fast'):command.extend(['--m3-eta-ms',str(args.m3_eta_ms)])
@@ -378,6 +458,7 @@ def main():
             if args.phase_refresh:command.append('--phase-refresh')
             if args.simplified_refresh:command.append('--simplified-refresh')
             if args.energy_refresh:command.append('--energy-refresh')
+            if args.action_signals:command.extend(['--action-signals',str(args.action_signals.resolve())])
             if args.full_approach_delta is not None:command.extend(['--full-approach-delta',str(args.full_approach_delta)])
             if args.low_full:command.append('--low-full')
             if args.three_frequency:command.append('--three-frequency')
@@ -388,11 +469,24 @@ def main():
             if args.ordinary_fast_view!='dual':command.extend(['--ordinary-fast-view',args.ordinary_fast_view])
             if args.ordinary_fast_costs is not None:command.extend(['--ordinary-fast-costs',str(args.ordinary_fast_costs)])
             if args.ordinary_fast_positions:command.append('--ordinary-fast-positions')
+            if args.external_token_selector!='avgpool':command.extend(['--external-token-selector',args.external_token_selector])
+            if args.external_selector_pair:command.append('--external-selector-pair')
+            if args.external_motion_tokens:command.extend(['--external-motion-tokens',str(args.external_motion_tokens)])
+            if args.external_motion_pair:command.append('--external-motion-pair')
+            if args.validate_setup:command.append('--validate-setup')
             if args.ordinary_fast_pair:command.append('--ordinary-fast-pair')
             if args.fast_alternate:command.append('--fast-alternate')
+            if args.fast_stable:command.append('--fast-stable')
+            if args.fast_critical:command.append('--fast-critical')
+            if args.fast_own_budget:command.append('--fast-own-budget')
+            if args.fast_every_event:command.append('--fast-every-event')
+            if args.critical_high:command.append('--critical-high')
+            if args.fast_budget_pair:command.append('--fast-budget-pair')
+            if args.grasp_lead_steps:command.extend(['--grasp-lead-steps',str(args.grasp_lead_steps)])
             if args.full_per_fast!=1:command.extend(['--full-per-fast',str(args.full_per_fast)])
             if args.fast_cadence_pair:command.append('--fast-cadence-pair')
             if args.fast_no_state:command.append('--fast-no-state')
+            if args.fast_state_dims!=32:command.extend(['--fast-state-dims',str(args.fast_state_dims)])
             if cfg['m4_lean_continue']:command.append('--lean-continue')
             elif args.lean_continue is False:command.append('--full-capture')
             if args.continue_overhead_pair:command.append('--continue-overhead-pair')

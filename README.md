@@ -1,3 +1,11 @@
+## 当前最终版 v4（2026-11-11）
+
+按用户决定固定[最终v4](docs/MECHANISM1_V4.md)，唯一正式信号配置为[action_signals_v4.json](action_signals_v4.json)。在37版上关闭关键动作前16步补刷新，保留夹爪抬起反馈、Full/Fast选择、三频调度与RTC。87回合配对补测中，开关两组均25成功；关闭版总能量少2.95%。后续基础参数标定使用独立实验配置，不覆盖最终v4，不按具体任务或seed设置规则。
+
+以下为此前阶段记录；“当前”均指记录时的状态。
+
+> 最新2026-11-06：下探联合候选在seed27开发13/15，冻结seed37/init2全40为30/40（8/7/10/5），未替换下方原33/40锚点。mode_only拆分候选已撤回。固定输入重复性诊断及原因排查见[实验记录末节](docs/FAST_ORDINARY_INTEGRATION_20261103.md)。
+
 # 当前工作锚点（2026-11-06）
 
 按用户决定，保留 **Full→Fast直接交替、33/40成功** 的版本作为后续工作参考。Full→Full→Fast的32/40版本不替换它。
@@ -25,9 +33,15 @@ M4已有动作前瞻、时限与设备准备、Fast闭环实现及实验。按Wo
 
 实验约束：禁止针对seed17的具体失败或任务编号调参、加例外。通用参数在开发任务上校准并冻结，再按授权范围评测；策略不读取seed或task ID。
 
-新增显式参数`--full-approach-delta 0.1`：张开夹爪的预测运动转向明显下探时，保留该转向信号，通过普通弯道与反馈窗口过滤，并在其截止时间选择Full。只使用已有动作预测，不新增模型或图像采集。原33/40配置与默认值保留；用户现已授权冻结参数后重测seed17/init1全40，禁止针对该组调参。
+显式参数`--full-approach-delta 0.1`的首版同时改变刷新时机和Full选择；下述5例为该首版的开发结果。随后seed17/init1全40为32/40，Long退化至5/10，不替换原33/40。现已修正为`mode_only_v2`，仅在正常刷新时选择Full，阈值不变，修正版闭环待开发集验证。
 
 开发seed27/init1同5任务成功2/5→5/5：Object0/5/7为143/118/130步，Goal3/5为182/136步。Object0、5的闭合次数从4/3次降为各1次；33次刷新中仍有13次Fast，零断供，一次模型加载，79项相关CPU检查及回合/频率/输入记录检查通过。这个开发结果不替换原40任务成功率。[运行计划与参数](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/plan.json) · [逐任务结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T053022.501676Z-full-approach-seed27-07cf77ff/results.md)。实现Git`7e0127b`，模型/RTC/FlashRT沿用原配置。
+
+## 最新评测与排查（2026-11-06）
+
+下探首版40项：Spatial9、Object8、Goal10、Long5，合计32/40；全部尝试5447.25J，比原Full/Fast多7.55%。发现新质量信号绕过原过滤、额外提前刷新，已将两者解耦；82项相关检查通过，修正后尚未闭环重测。原33/40工作锚点保留。
+
+M4评测入口已默认取消额外12步速度探测及3次Full＋3次Fast计时，直接使用已有成本表，正式回合内记录实际耗时。模型与必要CUDA图准备保留，跨任务复用缓存；FlashRT未改。[完整排查](docs/FAST_ORDINARY_INTEGRATION_20261103.md) · [本轮40项结果](/home/wyk/workspace/任务产出/perceptbudget/M4/20261106T054757.215511Z-full-approach-seed17-all40-b3dae820/results.md)。
 
 # 历史状态（2026-11-03）
 
@@ -104,6 +118,8 @@ M3开始按相同任务、初始状态和计量范围比较**整任务能量、�
 - `tests/`：功能、数值、记录及供给时序检查。
 - `patches/`：既有FlashRT加载与tokenizer补丁及说明。
 - `docs/`：必要的操作和恢复说明。
+
+FlashRT相对官方基点目前仅保留低内存加载和分词器缓存两项源码补丁。旧SEAM、早期native RTC模块及其CUDA源码改动已撤回；当前RTC、Fast和调度扩展放在本项目侧。完整清单见[FlashRT修改说明](/home/wyk/workspace/FlashRT-upstream/PERCEPTBUDGET_CHANGES.md)。
 
 生成结果统一放在`/home/wyk/workspace/任务产出/perceptbudget/`，不上传模型、数据或大体积运行输出。阶段报告统一放在`任务指导与相关参考/PerceptBudget归档/`。新批次优先常驻模型，保留内存保护、GPU锁和异常记录。
 

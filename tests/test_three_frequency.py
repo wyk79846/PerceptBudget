@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from perceptbudget.three_frequency import select_full,ThreeFullRuntime
+from perceptbudget.three_frequency import select_full,ThreeFullRuntime,advance_grasp_deadline,critical_high
 from perceptbudget.device_clocks import runtime_trace
+from perceptbudget.closed_loop import DeadlineRuntime
 
 
 @pytest.mark.parametrize('point,expected',[(30.2,True),(30.3,True),(30.6,False),(30.,True)])
@@ -39,6 +40,31 @@ def decision(end=12.):
         estimated_control_period_seconds=.05,service_seconds=.55,latest_start=end-.575)
 
 
+def test_grasp_lead_reserves_three_action_steps_without_faking_service_or_rtc():
+    d=dict(decision(12.),reason='action_event',critical_step=140,
+        candidate_event_kinds=['gripper_close'],rtc_delay_steps=11)
+    result=advance_grasp_deadline(d,step=100,lead_steps=3)
+    assert result['deadline']==pytest.approx(11.85)
+    assert result['latest_start']==pytest.approx(11.275)
+    assert result['critical_step']==140 and result['rtc_delay_steps']==11
+    assert result['service_seconds']==d['service_seconds'] and result['margin_seconds']==d['margin_seconds']
+    assert result['grasp_lead']['refresh_target_step']==137
+    assert advance_grasp_deadline(result,step=100,lead_steps=3) is result
+    assert d['deadline']==12.
+
+
+@pytest.mark.parametrize('reason,kinds',[('action_event',['gripper_open']),('buffer',[]),('action_event',['turn','slowdown'])])
+def test_grasp_lead_preserves_opening_transport_and_other_events(reason,kinds):
+    d=dict(decision(),reason=reason,critical_step=140,candidate_event_kinds=kinds)
+    assert advance_grasp_deadline(d,step=100,lead_steps=3) is d
+
+
+def test_grasp_lead_preserves_a_tighter_rtc_cap_and_zero_default():
+    d=dict(decision(),reason='action_event',critical_step=140,candidate_event_kinds=['gripper_close'],latest_start=10.8)
+    assert advance_grasp_deadline(d,step=100,lead_steps=0) is d
+    assert advance_grasp_deadline(d,step=100,lead_steps=3)['latest_start']==10.8
+
+
 @pytest.mark.parametrize('profile',['baseline','gpu_emc','deep_idle'])
 def test_medium_is_preferred_even_when_high_is_faster(profile):
     f=select_full(decision(),medium_seconds=.75,medium_cap=20.,current_profile=profile,
@@ -55,6 +81,33 @@ def test_high_only_when_medium_cannot_meet_deadline():
     assert not f['candidates'][0]['feasible'] and f['selected']['profile']=='baseline'
     assert f['reason']=='high_medium_too_late'
     assert select_full(decision(10.3),**args)['reason']=='high_emergency'
+
+
+def test_critical_high_keeps_original_prepare_point_and_changes_only_event_frequency():
+    d=dict(decision(),reason='action_event')
+    f=select_full(d,medium_seconds=.75,medium_cap=20.,current_profile='deep_idle',
+        transitions=dict(medium_seconds=.0032,high_seconds=.019,high_to_medium_seconds=.018))
+    result=critical_high(f,d)
+    assert f['selected']['profile']=='gpu_emc'
+    assert result['selected']['profile']=='baseline'
+    assert result['prepare_anchor']['latest_start']==f['selected']['latest_start']
+    assert result['prepare_anchor']['latest_start']<result['selected']['latest_start']
+    assert result['candidates']==f['candidates']
+    assert critical_high(f,dict(d,reason='buffer')) is f
+
+
+def test_critical_high_retains_fast_own_budget_and_no_consecutive_fast_full():
+    for mode in ('Fast','Full'):
+        d=dict(decision(),reason='action_event')
+        f=select_full(d,medium_seconds=.75,medium_cap=20.,current_profile='deep_idle',
+            transitions=dict(medium_seconds=.0032,high_seconds=.019,high_to_medium_seconds=.018))
+        f=dict(f,policy='critical_fast_own_budget_v1',full_candidates=f['candidates'])
+        f['candidates']=[dict(r,mode=mode) for r in f['candidates']]
+        f['selected']=f['candidates'][0]
+        result=critical_high(f,d)
+        assert result['selected']['mode']==mode
+        assert result['budget_policy']=='critical_fast_own_budget_v1'
+        assert result['full_candidates']==f['full_candidates']
 
 
 def test_medium_rtc_prefix_and_first_refresh_caps_are_respected():
@@ -86,6 +139,26 @@ def config():
         rtc_initial_control_period_seconds=.05)
 
 
+def test_runtime_critical_high_uses_high_rtc_prefix_but_original_earlier_start():
+    r=ThreeFullRuntime(dict(config(),m3_critical_high=True))
+    r.clocks=SimpleNamespace(profile='deep_idle',pending=None,last_low=9.,poll=lambda:None)
+    r.low_delay_steps=14
+    r.chunks={0:dict(origin=0)}
+    d=dict(decision(),reason='action_event',current_profile='deep_idle',
+        service_budget_history='short',rtc_latest_submit_step=40,rtc_submit_guard_steps=2)
+    with patch.object(DeadlineRuntime,'decide',return_value=d):
+        result=r.decide(now=10.,step=10,queue={10:([0.]*7,0,0,10)},rows=[],
+            inflight=False,rtc_delay_steps=10)
+    assert result['compute_profile']=='baseline'
+    assert result['rtc_delay_steps']==10 and result['rtc_latest_submit_step']==40
+    assert result['rtc_submit_guard_steps']==2
+    f=result['three_frequency_formula']
+    assert result['latest_start']==f['baseline_selected']['latest_start']
+    assert result['latest_start']<f['selected']['latest_start']
+    assert result['service_seconds']==f['selected']['service_seconds']
+    assert result['start_constraint']=='critical_event_fixed_prepare'
+
+
 def test_no_inference_in_deep_idle_and_no_switch_during_compute():
     r=ThreeFullRuntime(config())
     changes=[]
@@ -102,6 +175,17 @@ def test_no_inference_in_deep_idle_and_no_switch_during_compute():
     assert r.control_clocks(d,inflight=True)==d
     r.clocks.profile='deep_idle'
     with pytest.raises(RuntimeError):r.control_clocks(d,inflight=True)
+
+
+def test_pending_continue_transition_keeps_fast_timing_until_ack():
+    r=ThreeFullRuntime(dict(config(),m3_fast_own_budget=True))
+    r.plan=dict(start_now=False,compute_profile='baseline',latest_start=10.4,
+        decision_monotonic=10.,path='three_frequency')
+    r.clocks=SimpleNamespace(profile='gpu_emc',pending='deep_idle',poll=lambda:None)
+    with patch.object(DeadlineRuntime,'decide',side_effect=AssertionError('Full-only plan must not replace pending Fast timing')):
+        d=r.decide(now=10.2,step=126,queue={},rows=[],inflight=False,rtc_delay_steps=10)
+    assert d['compute_profile']=='baseline' and not d['start_now']
+    assert d['latest_start']==10.4 and d['clock_wait']
 
 
 def test_wait_can_enter_low_but_short_gap_does_not_switch():

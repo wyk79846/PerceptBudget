@@ -5,7 +5,12 @@ def wait_target(request):
     if not request:
         return None
     timing = request.get('m3_timing', {})
-    return timing.get('critical_step') if timing.get('reason') == 'action_event' else None
+    if timing.get('reason') != 'action_event':
+        return None
+    supplement=timing.get('critical_freshness',{})
+    if supplement.get('pause_policy')=='pre_grasp_correction_v1':
+        return supplement['pause_step']
+    return timing.get('critical_step')
 
 
 def should_wait(request, step):
@@ -45,12 +50,18 @@ class PhaseWait:
             ('gripper_close' in kinds and 'gripper_open' in old['kinds'])))
         same_kind = (not old or old.get('event_source')!='remaining_v2'
                      or bool(kinds) and set(kinds)<=set(old['kinds']))
-        if old and target is not None and old['start_step'] <= target < old['stop_step'] and not opposite and same_kind:
+        supplement=request.get('m3_timing',{}).get('critical_freshness',{})
+        correction=supplement.get('pause_policy')=='pre_grasp_correction_v1'
+        short_wait=(supplement.get('wait_policy')=='critical_freshness_short_wait_v1'
+                    and supplement.get('estimated_wait_seconds',0.)>0.) or correction
+        if old and target is not None and old['start_step'] <= target < old['stop_step'] and not opposite and same_kind and not short_wait:
             return dict(wait=False, reason='phase_already_waited', covered_phase=dict(old))
         phases = intervals_for_timing(actions, origin, config, request.get('m3_timing', {}))
         phase = next((p for p in phases if p['end_observed'] and target is not None
                       and p['start_step'] <= target < p['stop_step']), None)
-        result=dict(wait=True, reason='new_phase' if phase else 'point_event', phase=phase,
+        result=dict(wait=True, reason='critical_freshness_approach_wait' if correction else
+                    'critical_freshness_short_wait' if short_wait else
+                    'new_phase' if phase else 'point_event', phase=phase,
                     kinds=list(kinds))
         if request.get('m3_timing',{}).get('phase_event_source')=='remaining_v2':
             result['event_source']='remaining_v2'
